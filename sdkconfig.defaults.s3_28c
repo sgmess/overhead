@@ -1,0 +1,43 @@
+# Waveshare ESP32-S3-Touch-LCD-2.8C: ESP32-S3R8, 480x480 ST7701 RGB, GT911 touch.
+#
+# Panel settings are traffic-display's, which ran stable on this board with WiFi
+# up (see ~/traffic-display/HARDWARE.md). The ST7701 has no GRAM: the S3 scans
+# the frame out of PSRAM continuously, and anything that starves that bus
+# shifts or tears the picture.
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# Required, not a speed-up: without XIP every NVS/flash write disables the cache
+# and the scanout's bounce-buffer refill faults.
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+# Makes the RGB driver reject the LVGL adapter's PSRAM context; XIP makes it moot.
+# CONFIG_LCD_RGB_ISR_IRAM_SAFE is not set
+# One glitched frame after an underrun instead of a permanent shift
+CONFIG_LCD_RGB_RESTART_IN_VSYNC=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+CONFIG_ESP32S3_DATA_CACHE_32KB=y
+CONFIG_BSP_LCD_RGB_PCLK_MHZ=16
+CONFIG_BSP_LCD_RGB_BOUNCE_LINES=20
+CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT=12
+
+# Internal RAM is the scarce resource here: WiFi alone takes ~77 KB of it.
+# Unlike traffic-display this app also runs TLS, so mbedTLS goes to PSRAM
+# (safe with XIP, the cache is never disabled) and WiFi code runs from cache.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+# CONFIG_ESP_WIFI_IRAM_OPT is not set
+# CONFIG_ESP_WIFI_RX_IRAM_OPT is not set
+# CONFIG_LV_ATTRIBUTE_FAST_MEM_USE_IRAM is not set
+# CONFIG_ESP_WIFI_SOFTAP_SUPPORT is not set
+
+# Full-frame software rendering can hold a core past the idle watchdog
+# CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0 is not set
+# CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1 is not set
+
+# The sweep ticks at 33 ms; refreshing faster than that only queues work
+CONFIG_LV_DEF_REFR_PERIOD=30
+
+# Fewer tags on a smaller scope
+CONFIG_OVERHEAD_MAX_LABELS=25

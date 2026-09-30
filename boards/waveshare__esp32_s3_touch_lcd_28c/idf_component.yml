@@ -1,0 +1,14 @@
+dependencies:
+  espressif/esp_lcd_touch: '*'
+  espressif/esp_lcd_touch_gt911: '^1'
+  espressif/esp_lvgl_adapter:
+    public: true
+    version: ~0.7
+  idf: '>=5.5'
+  # A range, like the 1.43's. The exact version is pinned once, in main/idf_component.yml, so
+  # both boards move together.
+  lvgl/lvgl: '>=8,<10'
+description: Board Support Package (BSP) for Waveshare ESP32-S3-Touch-LCD-2.8C
+targets:
+- esp32s3
+version: 1.0.0

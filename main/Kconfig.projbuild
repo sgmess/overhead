@@ -1,0 +1,54 @@
+menu "Overhead radar"
+
+    config OVERHEAD_WIFI_SSID
+        string "WiFi SSID"
+        default ""
+
+    config OVERHEAD_WIFI_PASSWORD
+        string "WiFi password"
+        default ""
+
+    config OVERHEAD_CENTER_LAT
+        string "Radar centre latitude (decimal degrees)"
+        default "51.4700"
+
+    config OVERHEAD_CENTER_LON
+        string "Radar centre longitude (decimal degrees, west is negative)"
+        default "-0.4543"
+
+    config OVERHEAD_DEFAULT_RANGE_INDEX
+        int "Starting range (0=5, 1=10, 2=25, 3=50, 4=100 NM)"
+        range 0 4
+        default 2
+
+    choice OVERHEAD_FEED
+        prompt "Primary aircraft feed"
+        default OVERHEAD_FEED_ADSB_LOL
+        help
+            The other feed is tried automatically when the primary one fails.
+
+        config OVERHEAD_FEED_ADSB_LOL
+            bool "adsb.lol"
+        config OVERHEAD_FEED_ADSB_FI
+            bool "adsb.fi"
+    endchoice
+
+    config OVERHEAD_FETCH_INTERVAL_SEC
+        int "Seconds between feed requests"
+        range 2 60
+        default 5
+
+    config OVERHEAD_SHOW_GROUND
+        bool "Show aircraft on the ground"
+        default y
+
+    config OVERHEAD_SWEEP
+        bool "Animated radar sweep"
+        default y
+
+    config OVERHEAD_MAX_LABELS
+        int "Label at most this many aircraft (nearest first)"
+        range 0 200
+        default 40
+
+endmenu

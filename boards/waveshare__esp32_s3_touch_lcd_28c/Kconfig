@@ -1,0 +1,67 @@
+menu "Board Support Package"
+
+    config BSP_ERROR_CHECK
+        bool "Enable error check in BSP"
+        default y
+        help
+            Error check assert the application before returning the error code.
+
+    menu "I2C"
+        config BSP_I2C_NUM
+            int "I2C peripheral index"
+            default 0
+            range 0 1
+            help
+                ESP32-S3 has two I2C peripherals, pick the one you want to use.
+                The IO expander, touch controller, IMU and RTC all share this bus.
+
+        config BSP_I2C_FAST_MODE
+            bool "Enable I2C fast mode"
+            default y
+            help
+                I2C has two speed modes: normal (100kHz) and fast (400kHz).
+
+        config BSP_I2C_CLK_SPEED_HZ
+            int
+            default 400000 if BSP_I2C_FAST_MODE
+            default 100000
+    endmenu
+
+    menu "Display"
+        config BSP_LCD_RGB_PCLK_MHZ
+            int "RGB pixel clock in MHz"
+            default 16
+            range 8 30
+            help
+                Pixel clock of the parallel RGB bus. Every frame is read out of PSRAM at this
+                rate, continuously, so it trades refresh rate directly against the PSRAM
+                bandwidth left for WiFi, LWIP and LVGL. 16 MHz is about 57 Hz. The vendor
+                demo's 30 MHz (~107 Hz) saturates PSRAM once network traffic starts, and the
+                picture drifts sideways. 18 MHz was marginal on the capsule-radar port.
+
+        config BSP_LCD_RGB_BOUNCE_LINES
+            int "RGB bounce buffer height in lines"
+            default 20
+            range 4 60
+            help
+                Height of each of the two internal-RAM bounce buffers the RGB scanout DMA reads
+                from. Each costs 480 * this * 2 bytes, so 20 lines is 19.2 KB per buffer and
+                38.4 KB for the pair. Deeper buffers ride out longer PSRAM stalls but take
+                internal RAM from WiFi.
+
+        config BSP_DISPLAY_LVGL_BUF_HEIGHT
+            int "LVGL draw buffer height in lines"
+            default 12
+            range 10 480
+            help
+                Height of each of the two LVGL draw buffers, in display lines. The buffers live
+                in INTERNAL RAM: LVGL blends into them and only the finished strip is copied to
+                the PSRAM frame buffer, which keeps blend traffic off the bus the scanout reads
+                from. Each costs 480 * this * 2 bytes, so 12 lines is about 11.5 KB per buffer.
+
+                This trades directly against WiFi and the RGB bounce buffers, both of which
+                need internal RAM. Raise it only while watching int= and blk= (free
+                internal RAM and its largest block) in the application's periodic log line.
+    endmenu
+
+endmenu
