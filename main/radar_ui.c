@@ -77,6 +77,8 @@
 #define F_LIST_HEAD lv_font_montserrat_14
 #define PANEL_PAD 16
 #define ROW_H 44
+#define BATT_W 46 // battery outline, about 4 x 2 mm on the Tab5
+#define BATT_H 22
 #elif defined(OVERHEAD_BOARD_P4_34C) // 800x800 round
 #define R_SCOPE 350
 #define TAP_RADIUS 40
@@ -212,7 +214,7 @@ static float s_sweep_deg;
 static lv_obj_t *s_rows[LIST_ROWS];
 static lv_obj_t *s_cells[LIST_ROWS][6];
 static char s_row_hex[LIST_ROWS][8];
-static lv_obj_t *s_batt_level, *s_batt_detail;
+static lv_obj_t *s_batt_row, *s_batt_level, *s_batt_body, *s_batt_fill, *s_batt_nub, *s_batt_detail;
 #endif
 
 // ---------------------------------------------------------------- helpers
@@ -886,6 +888,68 @@ static void create_panel(lv_obj_t *scr)
 }
 #endif
 
+#ifdef HAS_LIST
+// "78%" and a battery outline whose fill is as wide as the charge, then the
+// state underneath. Hidden until the first reading.
+static void create_battery(lv_obj_t *parent)
+{
+    s_batt_row = make_box(parent);
+    lv_obj_set_size(s_batt_row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(s_batt_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s_batt_row, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(s_batt_row, 10, 0);
+    lv_obj_align(s_batt_row, LV_ALIGN_TOP_RIGHT, -18, 14);
+
+    s_batt_level = make_label(s_batt_row, &F_CLOCK, C_TEXT);
+
+    // Body and terminal nub sit touching, so they get their own gapless row
+    lv_obj_t *icon = make_box(s_batt_row);
+    lv_obj_set_size(icon, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(icon, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(icon, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    s_batt_body = make_box(icon);
+    lv_obj_set_size(s_batt_body, BATT_W, BATT_H);
+    lv_obj_set_style_border_width(s_batt_body, 2, 0);
+    lv_obj_set_style_radius(s_batt_body, 4, 0);
+    lv_obj_set_style_pad_all(s_batt_body, 3, 0);
+
+    // Percent widths are of the body's inside, so the fill tracks the charge
+    // exactly rather than in the icon font's five steps
+    s_batt_fill = make_box(s_batt_body);
+    lv_obj_set_height(s_batt_fill, LV_PCT(100));
+    lv_obj_set_style_radius(s_batt_fill, 2, 0);
+    lv_obj_set_style_bg_opa(s_batt_fill, LV_OPA_COVER, 0);
+
+    s_batt_nub = make_box(icon);
+    lv_obj_set_size(s_batt_nub, 4, BATT_H / 2);
+    lv_obj_set_style_radius(s_batt_nub, 1, 0);
+    lv_obj_set_style_bg_opa(s_batt_nub, LV_OPA_COVER, 0);
+
+    s_batt_detail = make_label(parent, &F_STATUS, C_DIM);
+    lv_obj_align(s_batt_detail, LV_ALIGN_TOP_RIGHT, -18, 14 + lv_font_get_line_height(&F_CLOCK) + 2);
+
+    lv_obj_set_hidden(s_batt_row, true);
+    lv_obj_set_hidden(s_batt_detail, true);
+}
+
+static void show_battery(int percent, uint32_t outline, uint32_t fill, const char *level, const char *detail,
+                         uint32_t detail_color)
+{
+    lv_obj_set_style_border_color(s_batt_body, lv_color_hex(outline), 0);
+    lv_obj_set_style_bg_color(s_batt_nub, lv_color_hex(outline), 0);
+    lv_obj_set_style_bg_color(s_batt_fill, lv_color_hex(fill), 0);
+    lv_obj_set_width(s_batt_fill, LV_PCT(LV_CLAMP(0, percent, 100)));
+    lv_label_set_text(s_batt_level, level);
+    lv_obj_set_style_text_color(s_batt_level, lv_color_hex(outline), 0);
+    lv_obj_set_hidden(s_batt_level, level[0] == '\0');
+    lv_label_set_text(s_batt_detail, detail);
+    lv_obj_set_style_text_color(s_batt_detail, lv_color_hex(detail_color), 0);
+    lv_obj_set_hidden(s_batt_row, false);
+    lv_obj_set_hidden(s_batt_detail, false);
+}
+#endif
+
 // ---------------------------------------------------------------- public
 
 void radar_ui_create(double center_lat, double center_lon, void (*on_range_change)(void))
@@ -936,12 +1000,7 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
 
     // Battery in the scope square's top-right corner, outside the circle.
     // Hidden until the first reading, so it never shows on a board without one.
-    s_batt_level = make_label(s_scope, &F_CLOCK, C_TEXT);
-    lv_obj_align(s_batt_level, LV_ALIGN_TOP_RIGHT, -18, 14);
-    s_batt_detail = make_label(s_scope, &F_STATUS, C_DIM);
-    lv_obj_align(s_batt_detail, LV_ALIGN_TOP_RIGHT, -18, 14 + lv_font_get_line_height(&F_CLOCK));
-    lv_obj_set_hidden(s_batt_level, true);
-    lv_obj_set_hidden(s_batt_detail, true);
+    create_battery(s_scope);
 #else
     create_card(scr);
 #endif
@@ -976,38 +1035,19 @@ int radar_ui_range_nm(void)
 void radar_ui_set_battery(const battery_status_t *st)
 {
 #ifdef HAS_LIST
-    char detail[40];
-    uint32_t color = C_TEXT;
-    const char *icon;
-
     if (st->state == BATT_NO_PACK || st->state == BATT_CHECKING) {
-        lv_label_set_text(s_batt_level, LV_SYMBOL_BATTERY_EMPTY);
-        lv_label_set_text(s_batt_detail, st->state == BATT_NO_PACK ? "No battery" : "Checking battery");
-        lv_obj_set_style_text_color(s_batt_level, lv_color_hex(C_DIM), 0);
-        lv_obj_set_hidden(s_batt_level, false);
-        lv_obj_set_hidden(s_batt_detail, false);
+        show_battery(0, C_DIM, C_DIM, "", st->state == BATT_NO_PACK ? "No battery" : "Checking battery", C_DIM);
         return;
     }
 
-    if (st->state == BATT_CHARGING) {
-        icon = LV_SYMBOL_CHARGE;
-    } else if (st->percent >= 80) {
-        icon = LV_SYMBOL_BATTERY_FULL;
-    } else if (st->percent >= 55) {
-        icon = LV_SYMBOL_BATTERY_3;
-    } else if (st->percent >= 30) {
-        icon = LV_SYMBOL_BATTERY_2;
-    } else if (st->percent >= 10) {
-        icon = LV_SYMBOL_BATTERY_1;
-    } else {
-        icon = LV_SYMBOL_BATTERY_EMPTY;
-    }
-
+    char level[8], detail[40];
+    uint32_t color = C_TEXT, fill = C_TEXT;
     if (st->shutdown_in_s > 0) {
         snprintf(detail, sizeof(detail), "Battery flat, off in %d s", st->shutdown_in_s);
-        color = C_EMERG;
+        color = fill = C_EMERG;
     } else if (st->state == BATT_CHARGING) {
         snprintf(detail, sizeof(detail), "Charging  %.2f A", -st->amps);
+        fill = C_SWEEP;
     } else if (st->state == BATT_EXTERNAL) {
         strlcpy(detail, "External power", sizeof(detail));
     } else if (st->minutes_left >= 0) {
@@ -1016,16 +1056,12 @@ void radar_ui_set_battery(const battery_status_t *st)
         strlcpy(detail, "On battery", sizeof(detail));
     }
     if (st->state == BATT_DISCHARGING && st->low) {
-        color = st->percent <= 5 ? C_EMERG : C_WARN;
+        color = fill = st->percent <= 5 ? C_EMERG : C_WARN;
     }
 
     // Percent is read off the voltage curve, so it is an estimate
-    lv_label_set_text_fmt(s_batt_level, "%s  %d%%", icon, st->percent);
-    lv_obj_set_style_text_color(s_batt_level, lv_color_hex(color), 0);
-    lv_label_set_text(s_batt_detail, detail);
-    lv_obj_set_style_text_color(s_batt_detail, lv_color_hex(st->shutdown_in_s > 0 ? C_EMERG : C_DIM), 0);
-    lv_obj_set_hidden(s_batt_level, false);
-    lv_obj_set_hidden(s_batt_detail, false);
+    snprintf(level, sizeof(level), "%d%%", st->percent);
+    show_battery(st->percent, color, fill, level, detail, st->shutdown_in_s > 0 ? C_EMERG : C_DIM);
 #else
     (void)st;
 #endif
