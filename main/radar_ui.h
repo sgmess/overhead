@@ -3,9 +3,10 @@
 #include <stdbool.h>
 
 #include "aircraft.h"
+#include "battery.h"
 
 // All functions except radar_ui_range_nm() must be called with the
-// display lock held (bsp_display_lock).
+// display lock held (board_lock).
 
 void radar_ui_create(double center_lat, double center_lon, void (*on_range_change)(void));
 
@@ -14,6 +15,10 @@ void radar_ui_set_aircraft(const aircraft_t *list, int count, const char *feed);
 
 // Status line shown under the range, e.g. "Connecting to WiFi".
 void radar_ui_set_status(const char *text);
+
+// Battery indicator, shown where the layout has room for it (the Tab5's
+// top-right corner); ignored on the round boards, which have no battery.
+void radar_ui_set_battery(const battery_status_t *st);
 
 // Current range in NM. Safe to call without the lock.
 int radar_ui_range_nm(void);

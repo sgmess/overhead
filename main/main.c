@@ -1,12 +1,13 @@
 #include <stdlib.h>
 
-#include "bsp/esp-bsp.h"
+#include "board.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
 
+#include "battery.h"
 #include "feed.h"
 #include "net.h"
 #include "radar_ui.h"
@@ -24,9 +25,9 @@ static double s_lat, s_lon;
 
 static void set_status(const char *text)
 {
-    bsp_display_lock(-1);
+    board_lock();
     radar_ui_set_status(text);
-    bsp_display_unlock();
+    board_unlock();
 }
 
 // Runs in the LVGL task: wake the fetcher so the new range fills in at once.
@@ -53,14 +54,14 @@ static void fetch_task(void *arg)
         int n = 0;
         esp_err_t err = feed_fetch(s_lat, s_lon, range + range / 10 + 1, buf, AC_MAX, &n);
 
-        bsp_display_lock(-1);
+        board_lock();
         if (err == ESP_OK) {
             radar_ui_set_aircraft(buf, n, feed_name());
             radar_ui_set_status("");
         } else {
             radar_ui_set_status("Feed error, retrying");
         }
-        bsp_display_unlock();
+        board_unlock();
 
         // Internal RAM is the constraint on the S3. The IDF low-water mark is
         // not logged: it misreads the DMA reserve pool as once full.
@@ -86,25 +87,17 @@ void app_main(void)
     s_lon = strtod(CONFIG_OVERHEAD_CENTER_LON, NULL);
     ESP_LOGI(TAG, "centre %.4f, %.4f", s_lat, s_lon);
 
-#if CONFIG_IDF_TARGET_ESP32P4
-    bsp_display_cfg_t cfg = {
-        .lv_adapter_cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG(),
-        .rotation = ESP_LV_ADAPTER_ROTATE_0,
-        .tear_avoid_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_TRIPLE_PARTIAL,
-    };
-    bsp_display_start_with_config(&cfg);
-#else
-    // The 2.8C BSP's defaults: one PSRAM frame buffer, since every extra one is
-    // more PSRAM bandwidth competing with the panel scanout.
-    bsp_display_start();
-#endif
-    bsp_display_backlight_on();
+    board_display_start();
 
-    bsp_display_lock(-1);
+    board_lock();
     radar_ui_create(s_lat, s_lon, on_range_change);
     radar_ui_set_status("Starting WiFi");
-    bsp_display_unlock();
+    board_unlock();
 
+    // Before WiFi: on the Tab5 this also turns charging on
+    battery_start();
+
+    board_wifi_power_on();
     net_start();
     // TLS and JSON parsing buffers are in PSRAM; this is just call depth.
     xTaskCreate(fetch_task, "fetch", FETCH_STACK, NULL, 5, &s_fetch_task);

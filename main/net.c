@@ -1,5 +1,6 @@
 #include "net.h"
 
+#include <inttypes.h>
 #include <string.h>
 
 #include "esp_event.h"
@@ -9,6 +10,10 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+
+#if CONFIG_ESP_HOSTED_ENABLED
+#include "esp_hosted.h"
+#endif
 
 static const char *TAG = "net";
 
@@ -42,6 +47,18 @@ void net_start(void)
     // Calls go to the ESP32-C6 over SDIO via esp_wifi_remote / esp_hosted.
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&init));
+
+#if CONFIG_ESP_HOSTED_ENABLED
+    // The host library and the C6's firmware must speak the same esp_hosted
+    // protocol; log both so a mismatch after a C6 update is easy to spot.
+    esp_hosted_coprocessor_fwver_t fw = {0};
+    if (esp_hosted_get_coprocessor_fwversion(&fw) == ESP_OK) {
+        ESP_LOGI(TAG, "co-processor esp_hosted firmware %" PRIu32 ".%" PRIu32 ".%" PRIu32,
+                 fw.major1, fw.minor1, fw.patch1);
+    } else {
+        ESP_LOGW(TAG, "co-processor firmware version unavailable");
+    }
+#endif
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_wifi_event, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_wifi_event, NULL));
 

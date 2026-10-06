@@ -1,0 +1,39 @@
+# M5Stack Tab5: ESP32-P4 rev v1.x, 5" 720x1280 MIPI DSI (portrait native),
+# WiFi via an ESP32-C6 over SDIO.
+CONFIG_IDF_TARGET="esp32p4"
+
+# The Tab5's P4 is rev v1.3. IDF builds pre-v3 and v3+ P4 images differently,
+# so this board can't share the 3.4C's settings.
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y
+
+# As M5Stack's Tab5 demo firmware
+CONFIG_SPIRAM_SPEED_200M=y
+CONFIG_CACHE_L2_CACHE_256KB=y
+CONFIG_CACHE_L2_CACHE_LINE_128B=y
+CONFIG_LV_DEF_REFR_PERIOD=15
+
+# TLS buffers in PSRAM. esp_hosted 2.x left ~50 KB of internal RAM free with
+# a largest block of ~14 KB, under the size of a full TLS record (measured
+# 2026-10-06); with 1.4 it had been ~129 KB.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+
+# ESP32-C6 link. esp_hosted 2.x knows the Tab5 (SDIO CMD 13, CLK 12,
+# D0-D3 11/10/9/8, C6 reset on GPIO 15 active low, which matches M5Stack's
+# pin table). In 2.x the SDIO pin options are derived from this board choice,
+# so setting them directly, as 1.4 needed, is silently ignored.
+CONFIG_ESP32P4_TAB5_C6_BOARD=y
+# GPIO 15 must end high for the C6 to run, i.e. it behaves as an enable
+# line. esp_hosted's Tab5 option defaults to active low, which 2.x honours by
+# leaving the pin low and the C6 held in reset (SDIO init times out). 1.4.x
+# only worked with "active low" because a bug made it ignore the setting
+# (#ifdef on a macro that is always defined) and always drive the pin high.
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
+CONFIG_ESP_HOSTED_SDIO_4_BIT_BUS=y
+CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_STREAMING_MODE=y
+CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=20
+CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=20
+
+# Extra font sizes for the larger, finer-pitched panel
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_32=y

@@ -3,18 +3,5 @@ dependencies:
   lvgl/lvgl:
     version: "^9.*"
     public: true
-
-  # P4 3.4C: BSP from the registry, WiFi through the ESP32-C6 over SDIO.
-  # The S3 2.8C BSP is vendored under boards/ and has native WiFi.
-  waveshare/esp32_p4_wifi6_touch_lcd_xc:
-    version: "3.0.1"
-    rules:
-      - if: "target == esp32p4"
-  espressif/esp_wifi_remote:
-    version: "0.14.*"
-    rules:
-      - if: "target == esp32p4"
-  espressif/esp_hosted:
-    version: "1.4.*"
-    rules:
-      - if: "target == esp32p4"
+  # Board support and WiFi bridges come from the board component in
+  # boards/<board>/board/, chosen by OVERHEAD_BOARD.

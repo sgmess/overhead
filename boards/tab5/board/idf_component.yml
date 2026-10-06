@@ -1,0 +1,15 @@
+dependencies:
+  idf: ">=5.5"
+  # Detects all three panel revisions at boot: ILI9881C + GT911,
+  # ST7123 (Oct 2025) and ST7121 (Apr 2026).
+  espressif/m5stack_tab5:
+    version: "1.3.1"
+    public: true
+  # WiFi through the ESP32-C6 over SDIO. The host side must match the
+  # esp_hosted major version on the C6: this Tab5's C6 was updated to 2.12.6
+  # (2026-10-06), and the 1.4 host then asserted in netif_add on connect.
+  espressif/esp_wifi_remote:
+    version: "1.6.*"
+  espressif/esp_hosted:
+    version: "2.12.*"
+    public: true # net.c logs the co-processor's firmware version

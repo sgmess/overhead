@@ -11,15 +11,57 @@
 #include "esp_timer.h"
 #include "lvgl.h"
 
-#define SCR BSP_LCD_H_RES
-#define CX (SCR / 2)
-#define CY (SCR / 2)
+// The scope is the top SCR_W x SCR_W square: the whole panel on the round
+// boards, the upper part of the Tab5's portrait 720x1280 with the traffic
+// list below it.
+#define SCR_W BSP_LCD_H_RES
+#define CX (SCR_W / 2)
+#define CY (SCR_W / 2)
 #define DEG2RAD ((float)M_PI / 180.0f)
 
-// Sizes per panel. They follow physical size, not resolution: the 2.8C's
-// pixels are ~1.4x larger (0.148 mm vs 0.107 mm), so it gets smaller fonts
-// and shapes in pixels for about the same size on the glass.
-#if SCR >= 700 // P4 3.4C, 800x800
+// Sizes per board. They follow physical size, not resolution: pixel pitch is
+// 0.107 mm on the P4 3.4C, 0.148 mm on the 2.8C and 0.0865 mm on the Tab5.
+#if defined(OVERHEAD_BOARD_TAB5) // 720x1280, scope 720x720 on top
+#define HAS_LIST 1
+#define R_SCOPE 306
+#define TAP_RADIUS 48
+#define TICK_LEN_30 16
+#define TICK_LEN_10 10
+#define TICK_LEN_5 5
+#define ROSE_TEXT_R (R_SCOPE + 32)
+#define ARROW_SCALE 1.2f
+#define VECTOR_MAX 80
+#define SEL_RING 22
+#define HOME_ARM 11
+#define TAG_DX 15
+#define TAG_DY 11
+#define TAG_W 150
+#define CLOCK_Y 18
+#define RANGE_Y 50
+#define STATUS_Y 24
+#define CARD_W (SCR_W - 2 * PANEL_PAD)
+#define CARD_H 200
+#define CARD_PAD 16
+#define CARD_SUB_Y 40
+#define CARD_ROWS_Y 76
+#define CARD_LINE_SPACE 6
+#define CARD_COLS {0, 70, 340, 410}
+#define F_CARDINAL lv_font_montserrat_24
+#define F_ROSE lv_font_montserrat_16
+#define F_RING lv_font_montserrat_14
+#define F_TAG lv_font_montserrat_16
+#define F_CLOCK lv_font_montserrat_24
+#define F_RANGE lv_font_montserrat_32
+#define F_STATUS lv_font_montserrat_16
+#define F_TITLE lv_font_montserrat_32
+#define F_CARD lv_font_montserrat_20
+#define F_LIST lv_font_montserrat_20
+#define F_LIST_HEAD lv_font_montserrat_14
+#define PANEL_PAD 16
+#define LIST_ROWS 11
+#define ROW_H 44
+#define LIST_COLS {0, 170, 270, 390, 490, 600}
+#elif defined(OVERHEAD_BOARD_P4_34C) // 800x800 round
 #define R_SCOPE 350
 #define TAP_RADIUS 40
 #define TICK_LEN_30 14
@@ -52,7 +94,7 @@
 #define F_STATUS lv_font_montserrat_14
 #define F_TITLE lv_font_montserrat_28
 #define F_CARD lv_font_montserrat_16
-#else // S3 2.8C, 480x480
+#else // S3 2.8C, 480x480 round
 #define R_SCOPE 206
 #define TAP_RADIUS 30
 #define TICK_LEN_30 9
@@ -119,6 +161,7 @@ static const range_t RANGES[] = {{5, 1}, {10, 2}, {25, 5}, {50, 10}, {100, 25}};
 #define C_UNKNOWN 0xb0c4bc
 #define C_EMERG 0xff3b3b
 #define C_SELECT 0xffffff
+#define C_WARN 0xffb020
 
 typedef struct {
     int16_t x, y;
@@ -132,6 +175,8 @@ static aircraft_t *s_ac;
 static ac_screen_t *s_scr;
 static int s_count;
 static int s_visible;
+static int s_order[AC_MAX]; // visible, taggable aircraft, nearest first
+static int s_order_n;
 static double s_lat0, s_lon0, s_coslat0;
 static volatile int s_range_idx = CONFIG_OVERHEAD_DEFAULT_RANGE_INDEX;
 static char s_sel_hex[8];
@@ -142,9 +187,17 @@ static void (*s_on_range_change)(void);
 
 static lv_obj_t *s_scope, *s_clock, *s_range_lbl, *s_status_lbl;
 static lv_obj_t *s_card, *s_card_title, *s_card_sub, *s_card_k1, *s_card_v1, *s_card_k2, *s_card_v2;
+#ifdef CONFIG_OVERHEAD_SWEEP
 static lv_obj_t *s_sweep[SWEEP_SEGS];
 static lv_point_precise_t s_sweep_pts[SWEEP_SEGS][2];
 static float s_sweep_deg;
+#endif
+#ifdef HAS_LIST
+static lv_obj_t *s_rows[LIST_ROWS];
+static lv_obj_t *s_cells[LIST_ROWS][6];
+static char s_row_hex[LIST_ROWS][8];
+static lv_obj_t *s_batt_level, *s_batt_detail;
+#endif
 
 // ---------------------------------------------------------------- helpers
 
@@ -205,11 +258,10 @@ static int cmp_by_dist(const void *pa, const void *pb)
 // since its last position report. Runs once a second, not per frame.
 static void layout(void)
 {
-    static int order[AC_MAX];
     const range_t *r = &RANGES[s_range_idx];
     const float ppn = (float)R_SCOPE / r->nm;
     const int64_t now = esp_timer_get_time();
-    int candidates = 0;
+    s_order_n = 0;
     s_visible = 0;
 
     for (int i = 0; i < s_count; i++) {
@@ -242,17 +294,19 @@ static void layout(void)
         s->visible = true;
         s_visible++;
 
-        if (is_selected(a) || a->emergency) {
-            s->labelled = true;
-        } else if (!a->on_ground || s_range_idx == 0) {
-            order[candidates++] = i;
+        bool flagged = is_selected(a) || a->emergency;
+        s->labelled = flagged;
+        // Ground traffic would swamp an airport-centred view, so it only
+        // gets a tag or a list row at the closest range
+        if (flagged || !a->on_ground || s_range_idx == 0) {
+            s_order[s_order_n++] = i;
         }
     }
 
     // Label the nearest aircraft first so busy airspace stays readable
-    qsort(order, candidates, sizeof(order[0]), cmp_by_dist);
-    for (int k = 0; k < candidates && k < CONFIG_OVERHEAD_MAX_LABELS; k++) {
-        s_scr[order[k]].labelled = true;
+    qsort(s_order, s_order_n, sizeof(s_order[0]), cmp_by_dist);
+    for (int k = 0; k < s_order_n && k < CONFIG_OVERHEAD_MAX_LABELS; k++) {
+        s_scr[s_order[k]].labelled = true;
     }
 }
 
@@ -555,10 +609,74 @@ static void update_card(void)
     lv_obj_set_hidden(s_card, false);
 }
 
+#ifdef HAS_LIST
+// Setting a label's text redraws it even when nothing changed; at 1 Hz across
+// a whole table that is most of the panel, so only touch what changed.
+static void set_text_if_changed(lv_obj_t *label, const char *text)
+{
+    if (strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
+}
+
+static void update_list(void)
+{
+    static bool row_sel[LIST_ROWS];
+    static lv_color_t row_color[LIST_ROWS];
+    char buf[24];
+
+    for (int r = 0; r < LIST_ROWS; r++) {
+        if (r >= s_order_n) {
+            s_row_hex[r][0] = '\0';
+            lv_obj_set_hidden(s_rows[r], true);
+            continue;
+        }
+        const aircraft_t *a = &s_ac[s_order[r]];
+        const ac_screen_t *s = &s_scr[s_order[r]];
+        const bool sel = is_selected(a);
+        const lv_color_t color = sel ? lv_color_hex(C_SELECT) : alt_color(a);
+        strlcpy(s_row_hex[r], a->hex, sizeof(s_row_hex[r]));
+        lv_obj_set_hidden(s_rows[r], false);
+
+        if (sel != row_sel[r]) {
+            lv_obj_set_style_bg_opa(s_rows[r], sel ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+            row_sel[r] = sel;
+        }
+        if (!lv_color_eq(color, row_color[r])) {
+            lv_obj_set_style_text_color(s_cells[r][0], color, 0);
+            row_color[r] = color;
+        }
+
+        set_text_if_changed(s_cells[r][0], ac_name(a));
+        set_text_if_changed(s_cells[r][1], a->type[0] ? a->type : "-");
+        if (a->on_ground) {
+            strlcpy(buf, "GND", sizeof(buf));
+        } else if (a->alt_ft == AC_ALT_UNKNOWN) {
+            strlcpy(buf, "---", sizeof(buf));
+        } else {
+            const char *trend = a->vs_fpm > 300 ? " " LV_SYMBOL_UP : a->vs_fpm < -300 ? " " LV_SYMBOL_DOWN : "";
+            snprintf(buf, sizeof(buf), "%03d%s", (int)(a->alt_ft + 50) / 100, trend);
+        }
+        set_text_if_changed(s_cells[r][2], buf);
+        if (a->gs_kt >= 0) {
+            snprintf(buf, sizeof(buf), "%.0f", a->gs_kt);
+        } else {
+            strlcpy(buf, "-", sizeof(buf));
+        }
+        set_text_if_changed(s_cells[r][3], buf);
+        snprintf(buf, sizeof(buf), "%.1f", s->dist_nm);
+        set_text_if_changed(s_cells[r][4], buf);
+        snprintf(buf, sizeof(buf), "%03.0f\xC2\xB0", s->brg_deg);
+        set_text_if_changed(s_cells[r][5], buf);
+    }
+}
+#endif
+
 static void refresh(void)
 {
     layout();
     update_card();
+#ifdef HAS_LIST
+    update_list();
+#endif
     update_status_label();
     lv_obj_invalidate(s_scope);
 }
@@ -607,6 +725,16 @@ static void on_card_click(lv_event_t *e)
     select_aircraft(NULL);
 }
 
+#ifdef HAS_LIST
+// Tapping a row selects that aircraft; tapping the selected row clears it.
+static void on_row_click(lv_event_t *e)
+{
+    int r = (int)(intptr_t)lv_event_get_user_data(e);
+    if (!s_row_hex[r][0]) return;
+    select_aircraft(strcmp(s_row_hex[r], s_sel_hex) == 0 ? NULL : s_row_hex[r]);
+}
+#endif
+
 static void on_tick(lv_timer_t *t)
 {
     update_clock();
@@ -616,6 +744,7 @@ static void on_tick(lv_timer_t *t)
     refresh();
 }
 
+#ifdef CONFIG_OVERHEAD_SWEEP
 // Each segment is its own small line object so a frame only redraws the
 // thin band the sweep actually crosses, not one huge bounding box.
 static void on_sweep(lv_timer_t *t)
@@ -634,6 +763,7 @@ static void on_sweep(lv_timer_t *t)
         lv_line_set_points(s_sweep[i], s_sweep_pts[i], 2);
     }
 }
+#endif
 
 static lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font, uint32_t color)
 {
@@ -648,7 +778,10 @@ static void create_card(lv_obj_t *parent)
 {
     s_card = lv_obj_create(parent);
     lv_obj_set_size(s_card, CARD_W, CARD_H);
-    lv_obj_align(s_card, LV_ALIGN_CENTER, 0, SCR * 18 / 100);
+#ifndef HAS_LIST
+    // Over the lower half of the scope; on the Tab5 the panel places it
+    lv_obj_align(s_card, LV_ALIGN_CENTER, 0, SCR_W * 18 / 100);
+#endif
     lv_obj_set_style_bg_color(s_card, lv_color_hex(0x0a1813), 0);
     lv_obj_set_style_bg_opa(s_card, LV_OPA_90, 0);
     lv_obj_set_style_border_color(s_card, lv_color_hex(C_TICK), 0);
@@ -678,6 +811,64 @@ static void create_card(lv_obj_t *parent)
     lv_obj_set_hidden(s_card, true);
 }
 
+#ifdef HAS_LIST
+static lv_obj_t *make_box(lv_obj_t *parent)
+{
+    lv_obj_t *o = lv_obj_create(parent);
+    lv_obj_remove_style_all(o);
+    lv_obj_set_scrollable(o, false);
+    lv_obj_set_clickable(o, false);
+    return o;
+}
+
+// The panel below the scope: the details card on top while something is
+// selected, then the nearest aircraft. Rows that don't fit are clipped.
+static void create_panel(lv_obj_t *scr)
+{
+    lv_obj_t *panel = make_box(scr);
+    lv_obj_set_pos(panel, 0, SCR_W);
+    lv_obj_set_size(panel, SCR_W, BSP_LCD_V_RES - SCR_W);
+    lv_obj_set_style_pad_all(panel, PANEL_PAD, 0);
+    lv_obj_set_style_pad_row(panel, 12, 0);
+    lv_obj_set_style_border_side(panel, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_border_color(panel, lv_color_hex(C_RING), 0);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+
+    create_card(panel); // flex skips it while hidden, so the list moves up
+
+    lv_obj_t *list = make_box(panel);
+    lv_obj_set_width(list, LV_PCT(100));
+    lv_obj_set_flex_grow(list, 1);
+
+    static const char *const HEAD[] = {"CALLSIGN", "TYPE", "ALT", "GS KT", "NM", "BRG"};
+    const int xs[] = LIST_COLS;
+    for (int k = 0; k < 6; k++) {
+        lv_obj_t *h = make_label(list, &F_LIST_HEAD, C_DIM);
+        lv_label_set_text(h, HEAD[k]);
+        lv_obj_set_pos(h, xs[k] + 8, 0);
+    }
+
+    const int head_h = lv_font_get_line_height(&F_LIST_HEAD) + 6;
+    for (int r = 0; r < LIST_ROWS; r++) {
+        lv_obj_t *row = make_box(list);
+        lv_obj_set_pos(row, 0, head_h + r * ROW_H);
+        lv_obj_set_size(row, LV_PCT(100), ROW_H);
+        lv_obj_set_style_radius(row, 8, 0);
+        lv_obj_set_style_bg_color(row, lv_color_hex(0x0e2a20), 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_clickable(row, true);
+        lv_obj_add_event_cb(row, on_row_click, LV_EVENT_CLICKED, (void *)(intptr_t)r);
+        for (int k = 0; k < 6; k++) {
+            s_cells[r][k] = make_label(row, &F_LIST, k == 0 ? C_SELECT : C_TEXT);
+            lv_obj_align(s_cells[r][k], LV_ALIGN_LEFT_MID, xs[k] + 8, 0);
+        }
+        lv_obj_set_hidden(row, true);
+        s_rows[r] = row;
+    }
+}
+#endif
+
 // ---------------------------------------------------------------- public
 
 void radar_ui_create(double center_lat, double center_lon, void (*on_range_change)(void))
@@ -696,7 +887,7 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
 
     s_scope = lv_obj_create(scr);
     lv_obj_remove_style_all(s_scope);
-    lv_obj_set_size(s_scope, SCR, SCR);
+    lv_obj_set_size(s_scope, SCR_W, SCR_W);
     lv_obj_set_clickable(s_scope, true);
     lv_obj_add_event_cb(s_scope, on_scope_draw, LV_EVENT_DRAW_MAIN, NULL);
     lv_obj_add_event_cb(s_scope, on_scope_click, LV_EVENT_CLICKED, NULL);
@@ -714,14 +905,29 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     lv_timer_create(on_sweep, SWEEP_TICK_MS, NULL);
 #endif
 
-    s_clock = make_label(scr, &F_CLOCK, C_TEXT);
+    // Children of the scope, so they sit against its edges on every board.
+    // Labels aren't clickable, so taps still reach the scope.
+    s_clock = make_label(s_scope, &F_CLOCK, C_TEXT);
     lv_obj_align(s_clock, LV_ALIGN_TOP_MID, 0, CY - R_SCOPE + CLOCK_Y);
-    s_range_lbl = make_label(scr, &F_RANGE, C_TEXT);
+    s_range_lbl = make_label(s_scope, &F_RANGE, C_TEXT);
     lv_obj_align(s_range_lbl, LV_ALIGN_BOTTOM_MID, 0, -(CY - R_SCOPE + RANGE_Y));
-    s_status_lbl = make_label(scr, &F_STATUS, C_DIM);
+    s_status_lbl = make_label(s_scope, &F_STATUS, C_DIM);
     lv_obj_align(s_status_lbl, LV_ALIGN_BOTTOM_MID, 0, -(CY - R_SCOPE + STATUS_Y));
 
+#ifdef HAS_LIST
+    create_panel(scr);
+
+    // Battery in the scope square's top-right corner, outside the circle.
+    // Hidden until the first reading, so it never shows on a board without one.
+    s_batt_level = make_label(s_scope, &F_CLOCK, C_TEXT);
+    lv_obj_align(s_batt_level, LV_ALIGN_TOP_RIGHT, -18, 14);
+    s_batt_detail = make_label(s_scope, &F_STATUS, C_DIM);
+    lv_obj_align(s_batt_detail, LV_ALIGN_TOP_RIGHT, -18, 14 + lv_font_get_line_height(&F_CLOCK));
+    lv_obj_set_hidden(s_batt_level, true);
+    lv_obj_set_hidden(s_batt_detail, true);
+#else
     create_card(scr);
+#endif
 
     update_clock();
     update_range_label();
@@ -748,4 +954,62 @@ void radar_ui_set_status(const char *text)
 int radar_ui_range_nm(void)
 {
     return RANGES[s_range_idx].nm;
+}
+
+void radar_ui_set_battery(const battery_status_t *st)
+{
+#ifdef HAS_LIST
+    char detail[40];
+    uint32_t color = C_TEXT;
+    const char *icon;
+
+    if (st->state == BATT_NO_PACK || st->state == BATT_CHECKING) {
+        lv_label_set_text(s_batt_level, LV_SYMBOL_BATTERY_EMPTY);
+        lv_label_set_text(s_batt_detail, st->state == BATT_NO_PACK ? "No battery" : "Checking battery");
+        lv_obj_set_style_text_color(s_batt_level, lv_color_hex(C_DIM), 0);
+        lv_obj_set_hidden(s_batt_level, false);
+        lv_obj_set_hidden(s_batt_detail, false);
+        return;
+    }
+
+    if (st->state == BATT_CHARGING) {
+        icon = LV_SYMBOL_CHARGE;
+    } else if (st->percent >= 80) {
+        icon = LV_SYMBOL_BATTERY_FULL;
+    } else if (st->percent >= 55) {
+        icon = LV_SYMBOL_BATTERY_3;
+    } else if (st->percent >= 30) {
+        icon = LV_SYMBOL_BATTERY_2;
+    } else if (st->percent >= 10) {
+        icon = LV_SYMBOL_BATTERY_1;
+    } else {
+        icon = LV_SYMBOL_BATTERY_EMPTY;
+    }
+
+    if (st->shutdown_in_s > 0) {
+        snprintf(detail, sizeof(detail), "Battery flat, off in %d s", st->shutdown_in_s);
+        color = C_EMERG;
+    } else if (st->state == BATT_CHARGING) {
+        snprintf(detail, sizeof(detail), "Charging  %.2f A", -st->amps);
+    } else if (st->state == BATT_EXTERNAL) {
+        strlcpy(detail, "External power", sizeof(detail));
+    } else if (st->minutes_left >= 0) {
+        snprintf(detail, sizeof(detail), "~%dh %02dm left", st->minutes_left / 60, st->minutes_left % 60);
+    } else {
+        strlcpy(detail, "On battery", sizeof(detail));
+    }
+    if (st->state == BATT_DISCHARGING && st->low) {
+        color = st->percent <= 5 ? C_EMERG : C_WARN;
+    }
+
+    // Percent is read off the voltage curve, so it is an estimate
+    lv_label_set_text_fmt(s_batt_level, "%s  %d%%", icon, st->percent);
+    lv_obj_set_style_text_color(s_batt_level, lv_color_hex(color), 0);
+    lv_label_set_text(s_batt_detail, detail);
+    lv_obj_set_style_text_color(s_batt_detail, lv_color_hex(st->shutdown_in_s > 0 ? C_EMERG : C_DIM), 0);
+    lv_obj_set_hidden(s_batt_level, false);
+    lv_obj_set_hidden(s_batt_detail, false);
+#else
+    (void)st;
+#endif
 }
