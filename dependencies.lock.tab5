@@ -369,6 +369,16 @@ dependencies:
     targets:
     - esp32p4
     version: 1.3.1
+  espressif/mdns:
+    component_hash: b5b30022c46302eab89c1d2e3b6fb5918a627563a7462f0ee284b22b9a934967
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.14.0
   espressif/sensor_hub:
     component_hash: ea30db551c34aee2862482abf8b3164dd3855ecb4b4659b1e6878455c9cb9e22
     dependencies:
@@ -480,8 +490,9 @@ direct_dependencies:
 - espressif/esp_hosted
 - espressif/esp_wifi_remote
 - espressif/m5stack_tab5
+- espressif/mdns
 - idf
 - lvgl/lvgl
-manifest_hash: 9a80254c26f83f36e61903120082b5a2cc357af30c6ab025ecdd9606085c0401
+manifest_hash: bc5b6df9d91a235514dce235263ee63b77b916501b2a037d4ff19f452d98e670
 target: esp32p4
 version: 2.0.0

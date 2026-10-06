@@ -1,4 +1,4 @@
-#include <stdlib.h>
+#include <stdio.h>
 
 #include "board.h"
 #include "esp_heap_caps.h"
@@ -11,6 +11,7 @@
 #include "feed.h"
 #include "net.h"
 #include "radar_ui.h"
+#include "settings.h"
 
 static const char *TAG = "overhead";
 
@@ -23,17 +24,44 @@ static const char *TAG = "overhead";
 static TaskHandle_t s_fetch_task;
 static double s_lat, s_lon;
 
-static void set_status(const char *text)
-{
-    board_lock();
-    radar_ui_set_status(text);
-    board_unlock();
-}
-
 // Runs in the LVGL task: wake the fetcher so the new range fills in at once.
 static void on_range_change(void)
 {
     xTaskNotifyGive(s_fetch_task);
+}
+
+// Until connected: say what we're joining, and how to reach the setup
+// portal while it's open
+static void wait_for_network(void)
+{
+    char text[64];
+    bool shown = false, setup = false;
+    do {
+        const char *ssid, *url;
+        bool now = net_setup_open(&ssid, &url);
+        if (!shown || now != setup) {
+            board_lock();
+            if (now) {
+                radar_ui_show_setup(ssid, url);
+                radar_ui_set_status("WiFi setup");
+            } else {
+                snprintf(text, sizeof(text), "Connecting to %s", settings()->ssid);
+                radar_ui_set_status(text);
+            }
+            board_unlock();
+            shown = true;
+            setup = now;
+        }
+    } while (!net_wait_connected(1000));
+
+    char ip[16] = "";
+    net_get_ip(ip, sizeof(ip));
+    // Until the first traffic arrives, which is usually a second or two
+    snprintf(text, sizeof(text), "Settings at http://%s", ip);
+    board_lock();
+    radar_ui_show_setup(NULL, NULL);
+    radar_ui_set_status(text);
+    board_unlock();
 }
 
 static void fetch_task(void *arg)
@@ -43,10 +71,7 @@ static void fetch_task(void *arg)
 
     for (;;) {
         if (!net_is_connected()) {
-            set_status("Connecting to " CONFIG_OVERHEAD_WIFI_SSID);
-            while (!net_wait_connected(5000)) {
-            }
-            set_status("Loading traffic");
+            wait_for_network();
         }
 
         // Ask for a little beyond the scope edge so aircraft don't pop in at the rim
@@ -70,7 +95,7 @@ static void fetch_task(void *arg)
                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(CONFIG_OVERHEAD_FETCH_INTERVAL_SEC * 1000));
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(settings()->fetch_s * 1000));
     }
 }
 
@@ -83,11 +108,11 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(err);
 
-    s_lat = strtod(CONFIG_OVERHEAD_CENTER_LAT, NULL);
-    s_lon = strtod(CONFIG_OVERHEAD_CENTER_LON, NULL);
-    ESP_LOGI(TAG, "centre %.4f, %.4f", s_lat, s_lon);
+    settings_load();
+    s_lat = settings()->lat;
+    s_lon = settings()->lon;
 
-    board_display_start();
+    board_display_start(settings()->rotation);
 
     board_lock();
     radar_ui_create(s_lat, s_lon, on_range_change);

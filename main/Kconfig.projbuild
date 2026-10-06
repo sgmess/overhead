@@ -1,8 +1,13 @@
 menu "Overhead radar"
 
+    comment "Defaults: the setup portal and configuration page override these"
+
     config OVERHEAD_WIFI_SSID
         string "WiFi SSID"
         default ""
+        help
+            Optional. Left empty, the first boot opens the setup portal (an
+            open access point named Overhead-XXXX) to choose a network.
 
     config OVERHEAD_WIFI_PASSWORD
         string "WiFi password"

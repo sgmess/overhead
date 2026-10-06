@@ -23,3 +23,6 @@ typedef struct {
 // Monitor the battery and push its status to the UI. Enables charging.
 // Does nothing on boards without a battery monitor.
 void battery_start(void);
+
+// The latest status. False on boards without a battery monitor.
+bool battery_get(battery_status_t *out);

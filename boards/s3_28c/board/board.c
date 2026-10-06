@@ -3,8 +3,9 @@
 
 #include "bsp/esp-bsp.h"
 
-void board_display_start(void)
+void board_display_start(int rotation_deg)
 {
+    (void)rotation_deg;
     // The BSP's defaults: one PSRAM frame buffer, since every extra one is
     // more PSRAM bandwidth competing with the panel scanout.
     bsp_display_start();

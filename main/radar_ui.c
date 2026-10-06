@@ -10,6 +10,7 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "lvgl.h"
+#include "settings.h"
 
 // The scope is the top SCR_W x SCR_W square: the whole panel on the round
 // boards, the upper part of the Tab5's portrait 720x1280 with the traffic
@@ -23,25 +24,7 @@
 // 0.107 mm on the P4 3.4C, 0.148 mm on the 2.8C and 0.0865 mm on the Tab5.
 #if defined(OVERHEAD_BOARD_TAB5) // 720x1280 panel, scope 720x720 plus the list
 #define HAS_LIST 1
-// The scope square is the same either way up; the list panel goes below it
-// in portrait and to its right in landscape (720x560 vs 560x720).
-#if defined(CONFIG_OVERHEAD_TAB5_LANDSCAPE) || defined(CONFIG_OVERHEAD_TAB5_LANDSCAPE_FLIPPED)
-#define PANEL_X SCR_W
-#define PANEL_Y 0
-#define PANEL_W (BSP_LCD_V_RES - SCR_W)
-#define PANEL_H SCR_W
-#define CARD_COLS {0, 64, 268, 332}
-#define LIST_ROWS 15
-#define LIST_COLS {0, 140, 222, 322, 404, 476}
-#else
-#define PANEL_X 0
-#define PANEL_Y SCR_W
-#define PANEL_W SCR_W
-#define PANEL_H (BSP_LCD_V_RES - SCR_W)
-#define CARD_COLS {0, 70, 340, 410}
-#define LIST_ROWS 11
-#define LIST_COLS {0, 170, 270, 390, 490, 600}
-#endif
+#define LIST_ROWS_MAX 15
 #define R_SCOPE 306
 #define TAP_RADIUS 48
 #define TICK_LEN_30 16
@@ -58,7 +41,7 @@
 #define CLOCK_Y 18
 #define RANGE_Y 50
 #define STATUS_Y 24
-#define CARD_W (PANEL_W - 2 * PANEL_PAD)
+#define CARD_W (s_panel->w - 2 * PANEL_PAD)
 #define CARD_H 200
 #define CARD_PAD 16
 #define CARD_SUB_Y 40
@@ -79,6 +62,7 @@
 #define ROW_H 44
 #define BATT_W 46 // battery outline, about 4 x 2 mm on the Tab5
 #define BATT_H 22
+#define QR_SIZE 240
 #elif defined(OVERHEAD_BOARD_P4_34C) // 800x800 round
 #define R_SCOPE 350
 #define TAP_RADIUS 40
@@ -112,6 +96,7 @@
 #define F_STATUS lv_font_montserrat_14
 #define F_TITLE lv_font_montserrat_28
 #define F_CARD lv_font_montserrat_16
+#define QR_SIZE 220
 #else // S3 2.8C, 480x480 round
 #define R_SCOPE 206
 #define TAP_RADIUS 30
@@ -145,6 +130,7 @@
 #define F_STATUS lv_font_montserrat_12
 #define F_TITLE lv_font_montserrat_20
 #define F_CARD lv_font_montserrat_14
+#define QR_SIZE 130
 #endif
 
 #define SWEEP_SEGS 8
@@ -152,12 +138,6 @@
 #define SWEEP_TICK_MS 33
 #define MAX_EXTRAPOLATE_S 60
 #define DROP_STALE_S 90
-
-#ifdef CONFIG_OVERHEAD_SHOW_GROUND
-#define SHOW_GROUND true
-#else
-#define SHOW_GROUND false
-#endif
 
 typedef struct {
     int nm;
@@ -196,7 +176,7 @@ static int s_visible;
 static int s_order[AC_MAX]; // visible, taggable aircraft, nearest first
 static int s_order_n;
 static double s_lat0, s_lon0, s_coslat0;
-static volatile int s_range_idx = CONFIG_OVERHEAD_DEFAULT_RANGE_INDEX;
+static volatile int s_range_idx;
 static char s_sel_hex[8];
 static int64_t s_last_update_us;
 static char s_feed[16];
@@ -205,15 +185,32 @@ static void (*s_on_range_change)(void);
 
 static lv_obj_t *s_scope, *s_clock, *s_range_lbl, *s_status_lbl;
 static lv_obj_t *s_card, *s_card_title, *s_card_sub, *s_card_k1, *s_card_v1, *s_card_k2, *s_card_v2;
-#ifdef CONFIG_OVERHEAD_SWEEP
 static lv_obj_t *s_sweep[SWEEP_SEGS];
 static lv_point_precise_t s_sweep_pts[SWEEP_SEGS][2];
 static float s_sweep_deg;
+static lv_obj_t *s_setup, *s_setup_text;
+#if LV_USE_QRCODE
+static lv_obj_t *s_setup_qr;
 #endif
 #ifdef HAS_LIST
-static lv_obj_t *s_rows[LIST_ROWS];
-static lv_obj_t *s_cells[LIST_ROWS][6];
-static char s_row_hex[LIST_ROWS][8];
+// The scope square is the same either way up; the list panel goes below it
+// in portrait and to its right in landscape (720x560 vs 560x720).
+typedef struct {
+    int x, y, w, h;
+    int card_cols[4];
+    int list_rows;
+    int list_cols[6];
+} panel_layout_t;
+static const panel_layout_t PANEL_PORTRAIT = {
+    0, SCR_W, SCR_W, BSP_LCD_V_RES - SCR_W, {0, 70, 340, 410}, 11, {0, 170, 270, 390, 490, 600},
+};
+static const panel_layout_t PANEL_LANDSCAPE = {
+    SCR_W, 0, BSP_LCD_V_RES - SCR_W, SCR_W, {0, 64, 268, 332}, 15, {0, 140, 222, 322, 404, 476},
+};
+static const panel_layout_t *s_panel = &PANEL_PORTRAIT;
+static lv_obj_t *s_rows[LIST_ROWS_MAX];
+static lv_obj_t *s_cells[LIST_ROWS_MAX][6];
+static char s_row_hex[LIST_ROWS_MAX][8];
 static lv_obj_t *s_batt_row, *s_batt_level, *s_batt_body, *s_batt_fill, *s_batt_nub, *s_batt_detail;
 #endif
 
@@ -286,7 +283,7 @@ static void layout(void)
         const aircraft_t *a = &s_ac[i];
         ac_screen_t *s = &s_scr[i];
         s->visible = s->labelled = false;
-        if (a->on_ground && !SHOW_GROUND) continue;
+        if (a->on_ground && !settings()->show_ground) continue;
 
         double lat = a->lat, lon = a->lon;
         if (!a->on_ground && a->gs_kt > 0 && a->track_deg >= 0) {
@@ -323,7 +320,7 @@ static void layout(void)
 
     // Label the nearest aircraft first so busy airspace stays readable
     qsort(s_order, s_order_n, sizeof(s_order[0]), cmp_by_dist);
-    for (int k = 0; k < s_order_n && k < CONFIG_OVERHEAD_MAX_LABELS; k++) {
+    for (int k = 0; k < s_order_n && k < settings()->max_labels; k++) {
         s_scr[s_order[k]].labelled = true;
     }
 }
@@ -558,7 +555,7 @@ static void update_status_label(void)
         return;
     }
     int age = (int)((esp_timer_get_time() - s_last_update_us) / 1000000);
-    if (age > 3 * CONFIG_OVERHEAD_FETCH_INTERVAL_SEC + 10) {
+    if (age > 3 * settings()->fetch_s + 10) {
         lv_label_set_text_fmt(s_status_lbl, "%d aircraft  " LV_SYMBOL_BULLET "  %s  " LV_SYMBOL_BULLET "  %ds old",
                               s_visible, s_feed, age);
     } else {
@@ -637,11 +634,11 @@ static void set_text_if_changed(lv_obj_t *label, const char *text)
 
 static void update_list(void)
 {
-    static bool row_sel[LIST_ROWS];
-    static lv_color_t row_color[LIST_ROWS];
+    static bool row_sel[LIST_ROWS_MAX];
+    static lv_color_t row_color[LIST_ROWS_MAX];
     char buf[24];
 
-    for (int r = 0; r < LIST_ROWS; r++) {
+    for (int r = 0; r < s_panel->list_rows; r++) {
         if (r >= s_order_n) {
             s_row_hex[r][0] = '\0';
             lv_obj_set_hidden(s_rows[r], true);
@@ -762,7 +759,6 @@ static void on_tick(lv_timer_t *t)
     refresh();
 }
 
-#ifdef CONFIG_OVERHEAD_SWEEP
 // Each segment is its own small line object so a frame only redraws the
 // thin band the sweep actually crosses, not one huge bounding box.
 static void on_sweep(lv_timer_t *t)
@@ -781,7 +777,6 @@ static void on_sweep(lv_timer_t *t)
         lv_line_set_points(s_sweep[i], s_sweep_pts[i], 2);
     }
 }
-#endif
 
 static lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font, uint32_t color)
 {
@@ -818,7 +813,11 @@ static void create_card(lv_obj_t *parent)
     s_card_k2 = make_label(s_card, &F_CARD, C_DIM);
     s_card_v2 = make_label(s_card, &F_CARD, C_SELECT);
     lv_obj_t *cols[] = {s_card_k1, s_card_v1, s_card_k2, s_card_v2};
-    const int xs[] = CARD_COLS;
+#ifdef HAS_LIST
+    const int *xs = s_panel->card_cols;
+#else
+    static const int xs[] = CARD_COLS;
+#endif
     for (int k = 0; k < 4; k++) {
         lv_obj_set_pos(cols[k], xs[k], CARD_ROWS_Y);
         lv_obj_set_style_text_line_space(cols[k], CARD_LINE_SPACE, 0);
@@ -844,12 +843,12 @@ static lv_obj_t *make_box(lv_obj_t *parent)
 static void create_panel(lv_obj_t *scr)
 {
     lv_obj_t *panel = make_box(scr);
-    lv_obj_set_pos(panel, PANEL_X, PANEL_Y);
-    lv_obj_set_size(panel, PANEL_W, PANEL_H);
+    lv_obj_set_pos(panel, s_panel->x, s_panel->y);
+    lv_obj_set_size(panel, s_panel->w, s_panel->h);
     lv_obj_set_style_pad_all(panel, PANEL_PAD, 0);
     lv_obj_set_style_pad_row(panel, 12, 0);
     // Divider on the side facing the scope
-    lv_obj_set_style_border_side(panel, PANEL_X ? LV_BORDER_SIDE_LEFT : LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_border_side(panel, s_panel->x ? LV_BORDER_SIDE_LEFT : LV_BORDER_SIDE_TOP, 0);
     lv_obj_set_style_border_width(panel, 1, 0);
     lv_obj_set_style_border_color(panel, lv_color_hex(C_RING), 0);
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
@@ -861,7 +860,7 @@ static void create_panel(lv_obj_t *scr)
     lv_obj_set_flex_grow(list, 1);
 
     static const char *const HEAD[] = {"CALLSIGN", "TYPE", "ALT", "GS KT", "NM", "BRG"};
-    const int xs[] = LIST_COLS;
+    const int *xs = s_panel->list_cols;
     for (int k = 0; k < 6; k++) {
         lv_obj_t *h = make_label(list, &F_LIST_HEAD, C_DIM);
         lv_label_set_text(h, HEAD[k]);
@@ -869,7 +868,7 @@ static void create_panel(lv_obj_t *scr)
     }
 
     const int head_h = lv_font_get_line_height(&F_LIST_HEAD) + 6;
-    for (int r = 0; r < LIST_ROWS; r++) {
+    for (int r = 0; r < s_panel->list_rows; r++) {
         lv_obj_t *row = make_box(list);
         lv_obj_set_pos(row, 0, head_h + r * ROW_H);
         lv_obj_set_size(row, LV_PCT(100), ROW_H);
@@ -950,6 +949,40 @@ static void show_battery(int percent, uint32_t outline, uint32_t fill, const cha
 }
 #endif
 
+// Over the middle of the scope while the setup portal is open: how to join
+// it, with a QR code that does it for you (phone cameras read WIFI: codes).
+static void create_setup(lv_obj_t *parent)
+{
+    s_setup = lv_obj_create(parent);
+    lv_obj_set_size(s_setup, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_center(s_setup);
+    lv_obj_set_style_bg_color(s_setup, lv_color_hex(0x0a1813), 0);
+    lv_obj_set_style_bg_opa(s_setup, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(s_setup, lv_color_hex(C_TICK), 0);
+    lv_obj_set_style_border_width(s_setup, 2, 0);
+    lv_obj_set_style_radius(s_setup, CARD_PAD + 6, 0);
+    lv_obj_set_style_pad_all(s_setup, CARD_PAD, 0);
+    lv_obj_set_style_pad_row(s_setup, CARD_PAD / 2, 0);
+    lv_obj_set_flex_flow(s_setup, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_setup, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_scrollable(s_setup, false);
+
+    lv_obj_t *title = make_label(s_setup, &F_TITLE, C_SELECT);
+    lv_label_set_text(title, "WiFi setup");
+#if LV_USE_QRCODE
+    s_setup_qr = lv_qrcode_create(s_setup);
+    lv_qrcode_set_size(s_setup_qr, QR_SIZE);
+    lv_qrcode_set_dark_color(s_setup_qr, lv_color_black());
+    lv_qrcode_set_light_color(s_setup_qr, lv_color_white());
+    lv_qrcode_set_quiet_zone(s_setup_qr, true);
+#endif
+    s_setup_text = make_label(s_setup, &F_CARD, C_TEXT);
+    lv_obj_set_style_text_align(s_setup_text, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_line_space(s_setup_text, CARD_LINE_SPACE, 0);
+
+    lv_obj_set_hidden(s_setup, true);
+}
+
 // ---------------------------------------------------------------- public
 
 void radar_ui_create(double center_lat, double center_lon, void (*on_range_change)(void))
@@ -960,6 +993,13 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     s_lon0 = center_lon;
     s_coslat0 = cos(center_lat * M_PI / 180.0);
     s_on_range_change = on_range_change;
+    s_range_idx = settings()->range_idx;
+#ifdef HAS_LIST
+    // The board has already rotated the display, if the settings asked
+    if (lv_display_get_horizontal_resolution(NULL) > lv_display_get_vertical_resolution(NULL)) {
+        s_panel = &PANEL_LANDSCAPE;
+    }
+#endif
 
     lv_obj_t *scr = lv_screen_active();
     lv_obj_set_style_bg_color(scr, lv_color_hex(C_BG), 0);
@@ -973,18 +1013,18 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     lv_obj_add_event_cb(s_scope, on_scope_draw, LV_EVENT_DRAW_MAIN, NULL);
     lv_obj_add_event_cb(s_scope, on_scope_click, LV_EVENT_CLICKED, NULL);
 
-#ifdef CONFIG_OVERHEAD_SWEEP
-    for (int i = 0; i < SWEEP_SEGS; i++) {
-        s_sweep[i] = lv_line_create(scr);
-        lv_obj_set_style_line_color(s_sweep[i], lv_color_hex(C_SWEEP), 0);
-        lv_obj_set_style_line_width(s_sweep[i], 3, 0);
-        // Brighter towards the rim, like a phosphor trace
-        lv_obj_set_style_line_opa(s_sweep[i], 40 + 170 * i / (SWEEP_SEGS - 1), 0);
-        lv_obj_set_clickable(s_sweep[i], false);
+    if (settings()->sweep) {
+        for (int i = 0; i < SWEEP_SEGS; i++) {
+            s_sweep[i] = lv_line_create(scr);
+            lv_obj_set_style_line_color(s_sweep[i], lv_color_hex(C_SWEEP), 0);
+            lv_obj_set_style_line_width(s_sweep[i], 3, 0);
+            // Brighter towards the rim, like a phosphor trace
+            lv_obj_set_style_line_opa(s_sweep[i], 40 + 170 * i / (SWEEP_SEGS - 1), 0);
+            lv_obj_set_clickable(s_sweep[i], false);
+        }
+        on_sweep(NULL);
+        lv_timer_create(on_sweep, SWEEP_TICK_MS, NULL);
     }
-    on_sweep(NULL);
-    lv_timer_create(on_sweep, SWEEP_TICK_MS, NULL);
-#endif
 
     // Children of the scope, so they sit against its edges on every board.
     // Labels aren't clickable, so taps still reach the scope.
@@ -1004,6 +1044,7 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
 #else
     create_card(scr);
 #endif
+    create_setup(s_scope);
 
     update_clock();
     update_range_label();
@@ -1065,4 +1106,20 @@ void radar_ui_set_battery(const battery_status_t *st)
 #else
     (void)st;
 #endif
+}
+
+void radar_ui_show_setup(const char *ssid, const char *url)
+{
+    if (!ssid) {
+        lv_obj_set_hidden(s_setup, true);
+        return;
+    }
+#if LV_USE_QRCODE
+    char qr[64];
+    snprintf(qr, sizeof(qr), "WIFI:T:nopass;S:%s;;", ssid);
+    lv_qrcode_update(s_setup_qr, qr, strlen(qr));
+#endif
+    lv_label_set_text_fmt(s_setup_text, "Scan, or join the WiFi network\n%s\nThe setup page opens itself,\nor browse to %s",
+                          ssid, url);
+    lv_obj_set_hidden(s_setup, false);
 }

@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Overhead settings</title>
+<style>
+:root{--bg:#030806;--card:#06120d;--line:#1c4535;--tick:#3d7a61;--text:#cfe9dc;--dim:#7fa996;--accent:#46ffa8;--ink:#02140b;--warn:#ffb020;--bad:#ff6b6b}
+*{box-sizing:border-box}
+body{margin:0 auto;max-width:560px;min-height:100vh;padding:20px 16px 48px;background:radial-gradient(circle at 50% -20%,#0b2419,var(--bg) 70%);color:var(--text);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.scope{flex:none;width:46px;height:46px;border-radius:50%;border:2px solid var(--accent);position:relative;overflow:hidden;box-shadow:0 0 18px rgba(70,255,168,.35)}
+.scope::before{content:"";position:absolute;inset:0;background:conic-gradient(from 0deg,rgba(70,255,168,.7),transparent 55%);animation:sweep 3s linear infinite}
+@keyframes sweep{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.scope::before{animation:none}}
+h1{margin:0;font-size:22px;color:var(--accent);letter-spacing:.5px}
+header p{margin:0;color:var(--dim);font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+h2{margin:0 0 6px;font-size:12px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--accent)}
+label{display:block;margin:14px 0 4px;font-size:14px;color:var(--dim)}
+input,select{width:100%;padding:10px 12px;border-radius:9px;border:1px solid var(--line);background:#081a12;color:#effff6;font-size:16px}
+input:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(70,255,168,.2)}
+.check{display:flex;align-items:center;gap:10px;margin:14px 0 0;color:var(--text);font-size:15px}
+.check input{width:20px;height:20px;flex:none;accent-color:var(--accent)}
+button,.button{font:inherit;cursor:pointer;text-decoration:none;display:inline-block;text-align:center}
+.primary{width:100%;padding:13px;border:0;border-radius:10px;background:var(--accent);color:var(--ink);font-weight:700}
+.primary:disabled{opacity:.5}
+.ghost{padding:9px 14px;border-radius:9px;border:1px solid var(--line);background:transparent;color:var(--accent)}
+.danger{color:var(--bad);border-color:#4a2222}
+.row{display:flex;gap:10px}.row>div{flex:1;min-width:0}
+.buttons{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.hint{margin:6px 0 0;font-size:13px;color:var(--dim)}
+dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:8px 0 0;font-size:15px}
+dt{color:var(--dim)}dd{margin:0;overflow-wrap:anywhere}
+#map{height:240px;border-radius:10px;border:1px solid var(--line);margin-top:10px;z-index:0}
+.save{position:sticky;bottom:12px;margin-top:6px}
+#msg{min-height:1.4em;margin:8px 0 0;text-align:center}
+#msg.bad{color:var(--bad)}
+.hidden{display:none!important}
+.overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(3,8,6,.88);z-index:10}
+.overlay .card{max-width:360px;text-align:center}
+footer{margin-top:22px;text-align:center;font-size:13px;color:var(--dim)}
+footer button{background:none;border:0;color:var(--dim);text-decoration:underline;padding:4px}
+.leaflet-container{background:#0b1a13}
+</style>
+</head>
+<body>
+<header><div class="scope" aria-hidden="true"></div><div><h1>Overhead</h1><p id="sub">Live ADS-B radar &middot; settings</p></div></header>
+
+<section class="card">
+  <h2>Status</h2>
+  <dl id="status"><dt>Loading</dt><dd>&hellip;</dd></dl>
+</section>
+
+<form id="form" novalidate>
+  <section class="card">
+    <h2>Location</h2>
+    <p class="hint">The centre of the radar. Tap the map or drag the pin.</p>
+    <div id="map" class="hidden"></div>
+    <div class="row">
+      <div><label for="lat">Latitude</label><input id="lat" autocomplete="off"></div>
+      <div><label for="lon">Longitude</label><input id="lon" autocomplete="off"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Radar</h2>
+    <label for="range_idx">Starting range</label>
+    <select id="range_idx">
+      <option value="0">5 NM</option><option value="1">10 NM</option><option value="2">25 NM</option>
+      <option value="3">50 NM</option><option value="4">100 NM</option>
+    </select>
+    <p class="hint">Tap an empty part of the scope to step through the ranges.</p>
+    <label for="max_labels">Label the nearest</label>
+    <select id="max_labels">
+      <option value="0">None</option><option value="10">10 aircraft</option><option value="20">20 aircraft</option>
+      <option value="40">40 aircraft</option><option value="80">80 aircraft</option><option value="200">All aircraft</option>
+    </select>
+    <label class="check"><input type="checkbox" id="sweep"> Animated sweep</label>
+    <label class="check"><input type="checkbox" id="show_ground"> Show aircraft on the ground</label>
+  </section>
+
+  <section class="card">
+    <h2>Traffic feed</h2>
+    <label for="feed">Primary feed</label>
+    <select id="feed"><option value="0">adsb.lol</option><option value="1">adsb.fi</option></select>
+    <p class="hint">The other one takes over whenever the primary fails.</p>
+    <label for="fetch_s">Update every</label>
+    <select id="fetch_s">
+      <option value="2">2 seconds</option><option value="3">3 seconds</option><option value="5">5 seconds</option>
+      <option value="10">10 seconds</option><option value="15">15 seconds</option><option value="30">30 seconds</option>
+      <option value="60">60 seconds</option>
+    </select>
+    <p class="hint">Positions are extrapolated between updates. Both feeds are free; please be gentle with them.</p>
+  </section>
+
+  <section class="card hidden" id="display-card">
+    <h2>Display</h2>
+    <label for="rotation">Orientation</label>
+    <select id="rotation">
+      <option value="0">Portrait: scope on top, list below</option>
+      <option value="90">Landscape: scope left, list right</option>
+      <option value="270">Landscape, the other way up</option>
+    </select>
+  </section>
+
+  <section class="card hidden" id="battery-card">
+    <h2>Battery</h2>
+    <label class="check"><input type="checkbox" id="batt_auto_off"> Power off before the pack runs flat</label>
+    <label for="batt_shutdown_mv">Power off below</label>
+    <select id="batt_shutdown_mv"></select>
+    <p class="hint">Held for 30 seconds, then a 10 second warning. Below 6.0 V the NP-F550 pack locks out and must be refitted before it charges again.</p>
+  </section>
+
+  <div class="save">
+    <button id="save" class="primary">Save and restart</button>
+    <p id="msg" role="status"></p>
+  </div>
+</form>
+
+<section class="card">
+  <h2>WiFi</h2>
+  <p id="wifi" class="hint"></p>
+  <div class="buttons">
+    <a class="button ghost" href="/setup">Change network</a>
+    <button type="button" class="ghost danger" id="forget">Forget network</button>
+  </div>
+  <p class="hint">Forgetting it restarts Overhead into its setup network, shown on the radar.</p>
+</section>
+
+<footer>
+  <span id="fw"></span><br>
+  <button type="button" id="defaults">Reset all settings to defaults</button>
+</footer>
+
+<div id="restarting" class="overlay hidden">
+  <div class="card"><h2>Restarting</h2><p id="restart-text">Overhead is restarting with the new settings. This page reloads when it's back.</p></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const FIELDS = ['range_idx', 'max_labels', 'feed', 'fetch_s', 'rotation', 'batt_shutdown_mv'];
+const CHECKS = ['sweep', 'show_ground', 'batt_auto_off'];
+let map, pin;
+
+for (let mv = 6100; mv <= 7400; mv += 100) {
+  $('batt_shutdown_mv').add(new Option((mv / 1000).toFixed(1) + ' V' + (mv === 6300 ? ' (recommended)' : ''), mv));
+}
+
+async function api(url, body) {
+  const opts = body === undefined ? {} : {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+  };
+  const r = await fetch(url, opts);
+  const j = await r.json();
+  if (j.ok === false) throw new Error(j.error || 'Failed');
+  return j;
+}
+
+// A value the select lacks (set in menuconfig, say) still shows, as itself
+function setSelect(el, v) {
+  if (![...el.options].some(o => +o.value === v)) el.add(new Option(String(v), v));
+  el.value = v;
+}
+
+function uptime(s) {
+  const d = Math.floor(s / 86400), h = Math.floor(s / 3600) % 24, m = Math.floor(s / 60) % 60;
+  return (d ? d + 'd ' : '') + (d || h ? h + 'h ' : '') + m + 'm';
+}
+
+function signal(rssi) {
+  const q = rssi > -55 ? 'excellent' : rssi > -67 ? 'good' : rssi > -78 ? 'fair' : 'weak';
+  return q + ' (' + rssi + ' dBm)';
+}
+
+function showStatus(j) {
+  const rows = [
+    ['Board', j.board],
+    ['Network', j.settings.ssid + (j.rssi ? ', ' + signal(j.rssi) : '')],
+    ['Address', (j.ip ? j.ip + ' · ' : '') + j.hostname],
+    ['Up', uptime(j.uptime_s)],
+    ['Free memory', Math.round(j.heap_internal / 1024) + ' KB internal, ' +
+                    (j.heap_psram / 1048576).toFixed(1) + ' MB PSRAM'],
+  ];
+  if (j.battery) {
+    rows.push(['Battery', j.battery.state + (j.battery.percent !== undefined ?
+      ', ' + j.battery.percent + '% (' + j.battery.volts.toFixed(2) + ' V)' : '')]);
+  }
+  const dl = $('status');
+  dl.textContent = '';
+  for (const [k, v] of rows) {
+    const dt = document.createElement('dt'), dd = document.createElement('dd');
+    dt.textContent = k;
+    dd.textContent = v; // the SSID is anyone's choice: never as HTML
+    dl.append(dt, dd);
+  }
+  $('wifi').textContent = 'Connected to ' + j.settings.ssid + '.';
+  $('fw').textContent = 'Firmware ' + j.firmware;
+}
+
+function placePin() {
+  const lat = parseFloat($('lat').value), lon = parseFloat($('lon').value);
+  if (pin && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) pin.setLatLng([lat, lon]);
+}
+
+function setLatLon(p) {
+  $('lat').value = p.lat.toFixed(4);
+  $('lon').value = p.lng.toFixed(4);
+}
+
+// The map needs the internet as well as the radar; without it the fields still work
+function loadMap(lat, lon) {
+  const css = document.createElement('link');
+  css.rel = 'stylesheet';
+  css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+  document.head.append(css);
+  const js = document.createElement('script');
+  js.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+  js.onload = () => {
+    $('map').classList.remove('hidden');
+    map = L.map('map').setView([lat, lon], 9);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18, attribution: '&copy; OpenStreetMap contributors',
+    }).addTo(map);
+    pin = L.marker([lat, lon], {draggable: true}).addTo(map);
+    pin.on('dragend', () => setLatLon(pin.getLatLng()));
+    map.on('click', e => { pin.setLatLng(e.latlng); setLatLon(e.latlng); });
+  };
+  document.head.append(js);
+}
+
+async function load() {
+  const j = await api('/api/state');
+  const s = j.settings;
+  showStatus(j);
+  $('lat').value = s.lat.toFixed(4);
+  $('lon').value = s.lon.toFixed(4);
+  for (const f of FIELDS) setSelect($(f), s[f]);
+  for (const c of CHECKS) $(c).checked = s[c];
+  $('display-card').classList.toggle('hidden', !j.can_rotate);
+  $('battery-card').classList.toggle('hidden', !j.has_battery);
+  $('batt_shutdown_mv').disabled = !s.batt_auto_off;
+  if (!map) loadMap(s.lat, s.lon);
+}
+
+$('batt_auto_off').onchange = e => { $('batt_shutdown_mv').disabled = !e.target.checked; };
+$('lat').onchange = $('lon').onchange = placePin;
+
+// Poll until it answers again, then show the new settings
+function waitForRestart(text) {
+  if (text) $('restart-text').textContent = text;
+  $('restarting').classList.remove('hidden');
+  if (!text) {
+    setTimeout(function poll() {
+      fetch('/api/state', {cache: 'no-store'}).then(r => r.ok ? location.reload() : setTimeout(poll, 2000),
+                                                   () => setTimeout(poll, 2000));
+    }, 4000);
+  }
+}
+
+$('form').onsubmit = async e => {
+  e.preventDefault();
+  const msg = $('msg');
+  const lat = parseFloat($('lat').value), lon = parseFloat($('lon').value);
+  msg.className = 'bad';
+  if (!(lat >= -90 && lat <= 90) || !(lon >= -180 && lon <= 180)) {
+    msg.textContent = 'Latitude -90 to 90 and longitude -180 to 180, please.';
+    return;
+  }
+  const body = {lat, lon};
+  for (const f of FIELDS) body[f] = +$(f).value;
+  for (const c of CHECKS) body[c] = $(c).checked;
+  $('save').disabled = true;
+  msg.textContent = '';
+  try {
+    await api('/api/settings', body);
+    waitForRestart();
+  } catch (err) {
+    msg.textContent = err.message || 'Could not save. Try again.';
+    $('save').disabled = false;
+  }
+};
+
+$('forget').onclick = async () => {
+  if (!confirm('Forget this network? Overhead restarts into its setup network, and this page stops working until it is set up again.')) return;
+  try {
+    await api('/api/forget', {});
+    waitForRestart('Overhead is restarting into setup. Join the network shown on the radar to choose a new one.');
+  } catch (err) { alert(err.message); }
+};
+
+$('defaults').onclick = async () => {
+  if (!confirm('Reset every setting, the WiFi network included, to the firmware defaults?')) return;
+  try {
+    await api('/api/defaults', {});
+    waitForRestart('Overhead is restarting with the defaults. If they include no network, join the setup network shown on the radar.');
+  } catch (err) { alert(err.message); }
+};
+
+load().catch(() => { $('status').innerHTML = '<dt>Error</dt><dd>Could not reach Overhead. Reload to try again.</dd>'; });
+</script>
+</body>
+</html>

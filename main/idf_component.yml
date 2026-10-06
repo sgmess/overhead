@@ -3,5 +3,6 @@ dependencies:
   lvgl/lvgl:
     version: "^9.*"
     public: true
+  espressif/mdns: "^1.8"
   # Board support and WiFi bridges come from the board component in
   # boards/<board>/board/, chosen by OVERHEAD_BOARD.

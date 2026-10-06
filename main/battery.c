@@ -7,6 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "radar_ui.h"
+#include "settings.h"
 
 static const char *TAG = "battery";
 
@@ -48,6 +49,9 @@ static const struct {
 };
 #define CURVE_N ((int)(sizeof(CURVE) / sizeof(CURVE[0])))
 
+static battery_status_t s_last;
+static volatile bool s_running, s_have_reading;
+
 static int percent_from_cell(float v)
 {
     if (v <= CURVE[0].volts) return 0;
@@ -68,10 +72,9 @@ static void battery_task(void *arg)
     int64_t in_range_ms = -1; // how long the voltage has stayed in a pack's range
     int discharging_ms = 0, since_ui = UI_EVERY_MS, since_log = LOG_EVERY_MS;
     batt_state_t last_state = BATT_CHECKING;
-#ifdef CONFIG_OVERHEAD_BATTERY_AUTO_OFF
-    const float shutdown_volts = CONFIG_OVERHEAD_BATTERY_SHUTDOWN_MV / 1000.0f;
+    const bool auto_off = settings()->batt_auto_off;
+    const float shutdown_volts = settings()->batt_shutdown_mv / 1000.0f;
     int critical_ms = 0, countdown_ms = -1; // -1: no countdown running
-#endif
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(POLL_MS));
@@ -130,11 +133,10 @@ static void battery_task(void *arg)
         }
 
         bool power_off = false;
-#ifdef CONFIG_OVERHEAD_BATTERY_AUTO_OFF
         // Below 6.0 V the pack latches into protection and has to be taken out
         // and refitted, so power off cleanly before it gets there. Only with a
         // confirmed pack; plugging in during the countdown cancels it.
-        if (st.state == BATT_DISCHARGING && volts < shutdown_volts) {
+        if (auto_off && st.state == BATT_DISCHARGING && volts < shutdown_volts) {
             critical_ms += POLL_MS;
         } else {
             critical_ms = 0;
@@ -150,7 +152,8 @@ static void battery_task(void *arg)
             power_off = countdown_ms == 0;
             countdown_ms = countdown_ms > POLL_MS ? countdown_ms - POLL_MS : 0;
         }
-#endif
+        s_last = st;
+        s_have_reading = true;
 
         // Redraw every 2 s, or at once when the state changes
         since_ui += POLL_MS;
@@ -162,13 +165,11 @@ static void battery_task(void *arg)
         }
         last_state = st.state;
 
-#ifdef CONFIG_OVERHEAD_BATTERY_AUTO_OFF
         if (power_off) {
             board_power_off();
             critical_ms = 0; // still running: start over
             countdown_ms = -1;
         }
-#endif
 
         since_log += POLL_MS;
         if (since_log >= LOG_EVERY_MS) {
@@ -185,5 +186,17 @@ static void battery_task(void *arg)
 void battery_start(void)
 {
     if (!board_battery_init()) return;
+    s_running = true;
     xTaskCreate(battery_task, "battery", 4096, NULL, 3, NULL);
+}
+
+bool battery_get(battery_status_t *out)
+{
+    if (!s_running) return false;
+    if (s_have_reading) {
+        *out = s_last; // a torn copy only mixes two neighbouring readings
+    } else {
+        *out = (battery_status_t){.state = BATT_CHECKING, .minutes_left = -1};
+    }
+    return true;
 }

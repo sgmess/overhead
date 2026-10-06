@@ -42,7 +42,7 @@ and `dependencies.lock.<board>`, so building one never touches the other.
 . ~/esp/esp-idf/export.sh
 
 # P4 3.4C
-idf.py menuconfig                  # Overhead radar -> WiFi, centre lat/lon
+idf.py menuconfig                  # optional: Overhead radar -> defaults
 idf.py build flash monitor
 
 # S3 2.8C
@@ -54,9 +54,35 @@ idf.py -B build_tab5 -D OVERHEAD_BOARD=tab5 menuconfig
 idf.py -B build_tab5 build flash monitor
 ```
 
-Every setting lives under **Overhead radar** in menuconfig: WiFi, centre
-position, starting range, primary feed, poll interval, ground traffic, sweep,
-and the label limit. The default centre is Heathrow.
+## Setup and settings
+
+With no network configured, the first boot opens a setup portal: an open
+access point named `Overhead-XXXX` (the last four hex digits of the MAC).
+The radar shows its name and a QR code that joins it. Phones then open the
+setup page by themselves (DNS answers every name with the device, and DHCP
+option 114 names the page); otherwise browse to `http://192.168.4.1`. The page
+lists nearby networks and takes the password and the radar centre. Saving
+restarts the device onto that network. If a saved network hasn't connected
+30 s after boot, the portal opens as well. The saved network is retried every
+15 s meanwhile, and the portal closes once it connects.
+
+Once connected, the configuration page is at `http://overhead.local` (mDNS),
+or at the address shown on the radar until the first traffic arrives. It
+covers the centre (with a map), starting range, labels, sweep, ground
+traffic, primary feed, poll interval, the Tab5's orientation and battery
+cut-off, and changing or forgetting the network. Every save restarts the
+device. The pages are unauthenticated, so anyone on the same network can
+change the settings.
+
+Settings are kept in NVS (namespace `overhead`). Everything under **Overhead
+radar** in menuconfig is only the default, used until something is saved, so
+a build with the WiFi set there still connects without the portal. "Reset all
+settings to defaults" on the page erases the saved ones. The default centre
+is Heathrow.
+
+The web server's task stack is in PSRAM. PSRAM is unreachable while flash is
+written, so a save is written to NVS from the esp_timer task just before the
+restart, not from the request handler.
 
 ### S3 2.8C notes
 
@@ -72,7 +98,8 @@ non-touch 2.8C aborts at boot because its GT911 never answers.
 Portrait by default, the panel's native orientation: the scope fills the top
 720x720 and the nearest aircraft are listed below it, with the details card
 above the list while something is selected. Landscape (scope left, list right,
-15 rows) is under Overhead radar: Tab5 display > Orientation in menuconfig.
+15 rows) is set on the configuration page; menuconfig (Overhead radar: Tab5
+display) only sets the default.
 In landscape LVGL renders 1280x720 and the P4's PPA rotates each strip into
 the portrait frame buffer, so the CPU never rotates pixels. Measured against
 portrait: about 65 ms more per once-a-second redraw (mostly from the smaller
@@ -104,8 +131,7 @@ charging, measured on this hardware. Level and charging state show in the
 scope's top-right corner. The percentage is read off a Li-ion voltage curve,
 so it's an estimate. Below 6.0 V the pack latches into a protection mode
 and has to be refitted, so after 30 s under 6.3 V on battery the screen counts
-down and the firmware powers off (Overhead radar > Battery in menuconfig). The
-With no pack fitted the charger's output doesn't
+down and the firmware powers off (configuration page, Battery). With no pack fitted the charger's output doesn't
 read 0 V. It alternates about 11 s at 8.38 V and 5.5 s at 4.2 V (measured on
 this unit; also noted in yejun/tab5-fancy-clock). So one reading outside
 5.5 to 9.0 V means no pack, and a pack is only shown once it has stayed in
@@ -118,7 +144,10 @@ nobody has measured, so it reports none.
 | File | Purpose |
 | --- | --- |
 | `main/main.c` | Starts the display, WiFi and the fetch task |
-| `main/net.c` | WiFi station (via the ESP32-C6 on the P4 boards, native on the S3), SNTP |
+| `main/settings.c` | Settings in NVS over the menuconfig defaults |
+| `main/net.c` | WiFi (via the ESP32-C6 on the P4 boards, native on the S3), setup portal, mDNS, SNTP |
+| `main/dns_server.c` | The portal's DNS: every name answers with the device |
+| `main/web.c`, `main/web/` | Web server, JSON API, and the setup and configuration pages |
 | `main/feed.c` | HTTPS poll and readsb JSON parsing (buffers in PSRAM) |
 | `main/battery.c` | Battery state, charge estimate, time left, low-voltage power-off |
 | `main/radar_ui.c` | LVGL scope, aircraft rendering, touch, detail card, Tab5 list; per-board sizes at the top |

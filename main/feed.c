@@ -10,6 +10,7 @@
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "settings.h"
 
 static const char *TAG = "feed";
 
@@ -28,11 +29,7 @@ static const feed_def_t FEEDS[] = {
 };
 #define FEED_COUNT (sizeof(FEEDS) / sizeof(FEEDS[0]))
 
-#if CONFIG_OVERHEAD_FEED_ADSB_FI
-static int s_feed = 1;
-#else
-static int s_feed = 0;
-#endif
+static int s_feed = -1; // the primary from settings() until one fails
 
 typedef struct {
     char *data;
@@ -177,6 +174,7 @@ esp_err_t feed_fetch(double lat, double lon, int radius_nm,
         hooks_set = true;
     }
 
+    if (s_feed < 0) s_feed = settings()->feed;
     const feed_def_t *f = &FEEDS[s_feed];
     char url[160];
     snprintf(url, sizeof(url), f->url_fmt, lat, lon, radius_nm);
@@ -220,5 +218,5 @@ esp_err_t feed_fetch(double lat, double lon, int radius_nm,
 
 const char *feed_name(void)
 {
-    return FEEDS[s_feed].name;
+    return FEEDS[s_feed < 0 ? settings()->feed : s_feed].name;
 }

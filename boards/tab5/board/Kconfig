@@ -1,9 +1,10 @@
 menu "Overhead radar: Tab5 display"
 
     choice OVERHEAD_TAB5_ORIENTATION
-        prompt "Orientation"
+        prompt "Default orientation"
         default OVERHEAD_TAB5_PORTRAIT
         help
+            The configuration web page can change it later.
             Portrait is the panel's native orientation. Landscape renders
             1280x720 and has the P4's PPA rotate each strip into the
             portrait frame buffer, so it costs DMA time, not CPU.

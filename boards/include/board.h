@@ -8,8 +8,10 @@
 // Each also defines one of OVERHEAD_BOARD_P4_34C, OVERHEAD_BOARD_S3_28C or
 // OVERHEAD_BOARD_TAB5 for code that lays out differently per board.
 
-// Panel, touch and the LVGL task, with the backlight on.
-void board_display_start(void);
+// Panel, touch and the LVGL task, with the backlight on. rotation_deg is
+// clockwise from the panel's native orientation: 0, 90 or 270 on the Tab5;
+// the round boards ignore it.
+void board_display_start(int rotation_deg);
 
 // Power the WiFi radio. Call before esp_wifi_init().
 void board_wifi_power_on(void);

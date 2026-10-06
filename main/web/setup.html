@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Overhead setup</title>
+<style>
+:root{--bg:#030806;--card:#06120d;--line:#1c4535;--tick:#3d7a61;--text:#cfe9dc;--dim:#7fa996;--accent:#46ffa8;--ink:#02140b;--warn:#ffb020;--bad:#ff6b6b}
+*{box-sizing:border-box}
+body{margin:0 auto;max-width:480px;min-height:100vh;padding:20px 16px 40px;background:radial-gradient(circle at 50% -20%,#0b2419,var(--bg) 70%);color:var(--text);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.scope{flex:none;width:46px;height:46px;border-radius:50%;border:2px solid var(--accent);position:relative;overflow:hidden;box-shadow:0 0 18px rgba(70,255,168,.35)}
+.scope::before{content:"";position:absolute;inset:0;background:conic-gradient(from 0deg,rgba(70,255,168,.7),transparent 55%);animation:sweep 3s linear infinite}
+@keyframes sweep{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.scope::before{animation:none}}
+h1{margin:0;font-size:22px;color:var(--accent);letter-spacing:.5px}
+header p{margin:0;color:var(--dim);font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+h2{margin:0 0 10px;font-size:12px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--accent)}
+label{display:block;margin:12px 0 4px;font-size:14px;color:var(--dim)}
+input{width:100%;padding:11px 12px;border-radius:9px;border:1px solid var(--line);background:#081a12;color:#effff6;font-size:16px}
+input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(70,255,168,.2)}
+button{font:inherit;cursor:pointer}
+.primary{width:100%;margin-top:4px;padding:13px;border:0;border-radius:10px;background:var(--accent);color:var(--ink);font-weight:700}
+.primary:disabled{opacity:.5}
+.ghost{padding:8px 12px;border-radius:9px;border:1px solid var(--line);background:transparent;color:var(--accent)}
+.list{display:flex;flex-direction:column;gap:6px;max-height:300px;overflow-y:auto;margin-bottom:10px}
+.net{display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;border-radius:9px;border:1px solid var(--line);background:#081a12;color:var(--text);text-align:left}
+.net[aria-pressed=true]{border-color:var(--accent);background:#0d2a1d}
+.net .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lock{font-size:12px;color:var(--dim)}
+.bars{display:inline-flex;align-items:flex-end;gap:2px;height:14px}
+.bars i{width:3px;background:var(--line);border-radius:1px}
+.bars i:nth-child(1){height:4px}.bars i:nth-child(2){height:7px}.bars i:nth-child(3){height:10px}.bars i:nth-child(4){height:14px}
+.bars i.on{background:var(--accent)}
+.pw{display:flex;gap:8px}
+.row{display:flex;gap:10px}.row>div{flex:1;min-width:0}
+.hint{margin:8px 0 0;font-size:13px;color:var(--dim)}
+.dim{color:var(--dim);margin:4px 0}
+#msg{min-height:1.4em;margin:10px 0 0;text-align:center;color:var(--bad)}
+.hidden{display:none}
+b{color:#effff6}
+</style>
+</head>
+<body>
+<header><div class="scope" aria-hidden="true"></div><div><h1>Overhead</h1><p>WiFi setup</p></div></header>
+
+<form id="form" novalidate>
+  <section class="card">
+    <h2>Network</h2>
+    <div id="list" class="list"><p class="dim">Looking for networks&hellip;</p></div>
+    <button type="button" id="rescan" class="ghost">Scan again</button>
+    <label for="ssid">Network name</label>
+    <input id="ssid" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false">
+    <label for="pw">Password</label>
+    <div class="pw">
+      <input id="pw" type="password" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false">
+      <button type="button" id="show" class="ghost">Show</button>
+    </div>
+    <p class="hint">Leave the password empty for an open network.</p>
+  </section>
+
+  <section class="card">
+    <h2>Radar centre</h2>
+    <div class="row">
+      <div><label for="lat">Latitude</label><input id="lat" autocomplete="off"></div>
+      <div><label for="lon">Longitude</label><input id="lon" autocomplete="off"></div>
+    </div>
+    <p class="hint">Decimal degrees, south and west negative. The settings page has a map for this later.</p>
+  </section>
+
+  <button id="save" class="primary">Save and connect</button>
+  <p id="msg" role="status"></p>
+</form>
+
+<section id="done" class="card hidden">
+  <h2>Saved</h2>
+  <p>Overhead is restarting to join <b id="done-ssid"></b>. This page stops responding now, so reconnect to your usual network.</p>
+  <p>Its settings are then at <b>http://overhead.local</b>, or at the address shown on the radar.</p>
+  <p class="hint">If it can't connect, the <b id="done-ap">setup</b> network comes back within a minute to try again.</p>
+</section>
+
+<script>
+const $ = id => document.getElementById(id);
+let chosen = null;
+
+async function getJSON(url, opts) {
+  const r = await fetch(url, opts);
+  const j = await r.json();
+  if (!j.ok && j.ok !== undefined) throw new Error(j.error || 'Failed');
+  return j;
+}
+
+function bars(rssi) {
+  const n = rssi > -55 ? 4 : rssi > -67 ? 3 : rssi > -78 ? 2 : 1;
+  const s = document.createElement('span');
+  s.className = 'bars';
+  s.setAttribute('aria-label', n + ' of 4 bars');
+  for (let i = 1; i <= 4; i++) {
+    const b = document.createElement('i');
+    if (i <= n) b.className = 'on';
+    s.append(b);
+  }
+  return s;
+}
+
+function render(nets) {
+  const list = $('list');
+  list.textContent = '';
+  if (!nets.length) {
+    list.innerHTML = '<p class="dim">No networks found. Scan again, or type the name below.</p>';
+    return;
+  }
+  for (const n of nets) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'net';
+    b.setAttribute('aria-pressed', n.ssid === $('ssid').value);
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = n.ssid; // names come from the air: never as HTML
+    b.append(bars(n.rssi), name);
+    if (!n.open) {
+      const lock = document.createElement('span');
+      lock.className = 'lock';
+      lock.textContent = 'secured';
+      b.append(lock);
+    }
+    b.onclick = () => {
+      $('ssid').value = n.ssid;
+      $('pw').value = '';
+      $('pw').placeholder = n.open ? 'Open network, no password' : '';
+      for (const o of list.children) o.setAttribute('aria-pressed', o === b);
+      if (!n.open) $('pw').focus();
+    };
+    list.append(b);
+  }
+}
+
+async function scan() {
+  $('rescan').disabled = true;
+  $('list').innerHTML = '<p class="dim">Scanning&hellip;</p>';
+  try {
+    render((await getJSON('/api/scan')).networks);
+  } catch (e) {
+    $('list').innerHTML = '<p class="dim">Scan failed. Scan again, or type the name below.</p>';
+  }
+  $('rescan').disabled = false;
+}
+
+async function load() {
+  try {
+    const j = await getJSON('/api/state');
+    $('lat').value = j.settings.lat.toFixed(4);
+    $('lon').value = j.settings.lon.toFixed(4);
+    if (j.settings.ssid) $('ssid').value = j.settings.ssid;
+    if (j.setup_ssid) $('done-ap').textContent = j.setup_ssid;
+  } catch (e) {}
+  scan(); // after: the server answers one request at a time and a scan takes seconds
+}
+
+$('rescan').onclick = scan;
+$('show').onclick = () => {
+  const hidden = $('pw').type === 'password';
+  $('pw').type = hidden ? 'text' : 'password';
+  $('show').textContent = hidden ? 'Hide' : 'Show';
+};
+
+$('form').onsubmit = async e => {
+  e.preventDefault();
+  const msg = $('msg');
+  const ssid = $('ssid').value.trim();
+  const lat = parseFloat($('lat').value), lon = parseFloat($('lon').value);
+  if (!ssid) { msg.textContent = 'Choose or type a network name.'; return; }
+  if (!(lat >= -90 && lat <= 90) || !(lon >= -180 && lon <= 180)) {
+    msg.textContent = 'Latitude -90 to 90 and longitude -180 to 180, please.';
+    return;
+  }
+  $('save').disabled = true;
+  msg.textContent = '';
+  try {
+    await getJSON('/api/wifi', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ssid, password: $('pw').value, lat, lon}),
+    });
+    $('done-ssid').textContent = ssid;
+    $('form').classList.add('hidden');
+    $('done').classList.remove('hidden');
+  } catch (err) {
+    msg.textContent = err.message || 'Could not save. Try again.';
+    $('save').disabled = false;
+  }
+};
+
+load();
+</script>
+</body>
+</html>

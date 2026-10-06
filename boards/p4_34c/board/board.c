@@ -3,8 +3,9 @@
 
 #include "bsp/esp-bsp.h"
 
-void board_display_start(void)
+void board_display_start(int rotation_deg)
 {
+    (void)rotation_deg;
     bsp_display_cfg_t cfg = {
         .lv_adapter_cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG(),
         .rotation = ESP_LV_ADAPTER_ROTATE_0,

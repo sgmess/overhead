@@ -20,5 +20,8 @@ void radar_ui_set_status(const char *text);
 // top-right corner); ignored on the round boards, which have no battery.
 void radar_ui_set_battery(const battery_status_t *st);
 
+// Show how to join the setup portal's network, or hide that with NULL.
+void radar_ui_show_setup(const char *ssid, const char *url);
+
 // Current range in NM. Safe to call without the lock.
 int radar_ui_range_nm(void);
