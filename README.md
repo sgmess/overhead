@@ -69,9 +69,16 @@ non-touch 2.8C aborts at boot because its GT911 never answers.
 
 ### Tab5 notes
 
-Portrait, the panel's native orientation: the scope fills the top 720x720 and
-the nearest aircraft are listed below it, with the details card above the list
-while something is selected. The BSP (`espressif/m5stack_tab5`) detects the
+Portrait by default, the panel's native orientation: the scope fills the top
+720x720 and the nearest aircraft are listed below it, with the details card
+above the list while something is selected. Landscape (scope left, list right,
+15 rows) is under Overhead radar: Tab5 display > Orientation in menuconfig.
+In landscape LVGL renders 1280x720 and the P4's PPA rotates each strip into
+the portrait frame buffer, so the CPU never rotates pixels. Measured against
+portrait: about 65 ms more per once-a-second redraw (mostly from the smaller
+24-line strips, about 15 ms the rotation itself), and about 33 KB more
+internal RAM free, because its three draw buffers are smaller than
+portrait's two. The BSP (`espressif/m5stack_tab5`) detects the
 three panel revisions at boot by which touch controller answers on I2C. The
 board code releases the panel and touch resets and waits for that controller
 first, because without it detection failed on a revision-3 (ST7121) unit. The

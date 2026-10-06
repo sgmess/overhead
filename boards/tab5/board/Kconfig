@@ -1,0 +1,19 @@
+menu "Overhead radar: Tab5 display"
+
+    choice OVERHEAD_TAB5_ORIENTATION
+        prompt "Orientation"
+        default OVERHEAD_TAB5_PORTRAIT
+        help
+            Portrait is the panel's native orientation. Landscape renders
+            1280x720 and has the P4's PPA rotate each strip into the
+            portrait frame buffer, so it costs DMA time, not CPU.
+
+        config OVERHEAD_TAB5_PORTRAIT
+            bool "Portrait: scope on top, aircraft list below"
+        config OVERHEAD_TAB5_LANDSCAPE
+            bool "Landscape: scope left, aircraft list right"
+        config OVERHEAD_TAB5_LANDSCAPE_FLIPPED
+            bool "Landscape, turned the other way up"
+    endchoice
+
+endmenu

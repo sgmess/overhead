@@ -21,8 +21,27 @@
 
 // Sizes per board. They follow physical size, not resolution: pixel pitch is
 // 0.107 mm on the P4 3.4C, 0.148 mm on the 2.8C and 0.0865 mm on the Tab5.
-#if defined(OVERHEAD_BOARD_TAB5) // 720x1280, scope 720x720 on top
+#if defined(OVERHEAD_BOARD_TAB5) // 720x1280 panel, scope 720x720 plus the list
 #define HAS_LIST 1
+// The scope square is the same either way up; the list panel goes below it
+// in portrait and to its right in landscape (720x560 vs 560x720).
+#if defined(CONFIG_OVERHEAD_TAB5_LANDSCAPE) || defined(CONFIG_OVERHEAD_TAB5_LANDSCAPE_FLIPPED)
+#define PANEL_X SCR_W
+#define PANEL_Y 0
+#define PANEL_W (BSP_LCD_V_RES - SCR_W)
+#define PANEL_H SCR_W
+#define CARD_COLS {0, 64, 268, 332}
+#define LIST_ROWS 15
+#define LIST_COLS {0, 140, 222, 322, 404, 476}
+#else
+#define PANEL_X 0
+#define PANEL_Y SCR_W
+#define PANEL_W SCR_W
+#define PANEL_H (BSP_LCD_V_RES - SCR_W)
+#define CARD_COLS {0, 70, 340, 410}
+#define LIST_ROWS 11
+#define LIST_COLS {0, 170, 270, 390, 490, 600}
+#endif
 #define R_SCOPE 306
 #define TAP_RADIUS 48
 #define TICK_LEN_30 16
@@ -39,13 +58,12 @@
 #define CLOCK_Y 18
 #define RANGE_Y 50
 #define STATUS_Y 24
-#define CARD_W (SCR_W - 2 * PANEL_PAD)
+#define CARD_W (PANEL_W - 2 * PANEL_PAD)
 #define CARD_H 200
 #define CARD_PAD 16
 #define CARD_SUB_Y 40
 #define CARD_ROWS_Y 76
 #define CARD_LINE_SPACE 6
-#define CARD_COLS {0, 70, 340, 410}
 #define F_CARDINAL lv_font_montserrat_24
 #define F_ROSE lv_font_montserrat_16
 #define F_RING lv_font_montserrat_14
@@ -58,9 +76,7 @@
 #define F_LIST lv_font_montserrat_20
 #define F_LIST_HEAD lv_font_montserrat_14
 #define PANEL_PAD 16
-#define LIST_ROWS 11
 #define ROW_H 44
-#define LIST_COLS {0, 170, 270, 390, 490, 600}
 #elif defined(OVERHEAD_BOARD_P4_34C) // 800x800 round
 #define R_SCOPE 350
 #define TAP_RADIUS 40
@@ -826,11 +842,12 @@ static lv_obj_t *make_box(lv_obj_t *parent)
 static void create_panel(lv_obj_t *scr)
 {
     lv_obj_t *panel = make_box(scr);
-    lv_obj_set_pos(panel, 0, SCR_W);
-    lv_obj_set_size(panel, SCR_W, BSP_LCD_V_RES - SCR_W);
+    lv_obj_set_pos(panel, PANEL_X, PANEL_Y);
+    lv_obj_set_size(panel, PANEL_W, PANEL_H);
     lv_obj_set_style_pad_all(panel, PANEL_PAD, 0);
     lv_obj_set_style_pad_row(panel, 12, 0);
-    lv_obj_set_style_border_side(panel, LV_BORDER_SIDE_TOP, 0);
+    // Divider on the side facing the scope
+    lv_obj_set_style_border_side(panel, PANEL_X ? LV_BORDER_SIDE_LEFT : LV_BORDER_SIDE_TOP, 0);
     lv_obj_set_style_border_width(panel, 1, 0);
     lv_obj_set_style_border_color(panel, lv_color_hex(C_RING), 0);
     lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);

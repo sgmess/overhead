@@ -34,6 +34,10 @@ CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_STREAMING_MODE=y
 CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=20
 CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=20
 
+# Landscape: esp_lvgl_port rotates each LVGL strip with the P4's PPA rather
+# than the CPU. Only used when the orientation option is a landscape one.
+CONFIG_LVGL_PORT_ENABLE_PPA=y
+
 # Extra font sizes for the larger, finer-pitched panel
 CONFIG_LV_FONT_MONTSERRAT_24=y
 CONFIG_LV_FONT_MONTSERRAT_32=y

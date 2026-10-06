@@ -42,11 +42,11 @@ void board_display_start(void)
     bsp_i2c_init();
     wait_for_touch_controller();
 
-    // Not bsp_display_start(): its defaults turn on software rotation, whose
-    // extra buffer doesn't fit in internal DMA RAM next to the two draw
-    // buffers, and the panel is used in its native portrait orientation
-    // anyway. LVGL renders changed areas into two 50-line internal buffers
-    // and DMA2D copies them into the panel's frame buffer.
+    // Not bsp_display_start(): its defaults turn on rotation with 50-line
+    // buffers, and the rotation buffer then doesn't fit in internal DMA RAM.
+    // LVGL renders changed areas into two internal buffers and DMA2D copies
+    // them into the panel's (portrait) frame buffer.
+#if CONFIG_OVERHEAD_TAB5_PORTRAIT
     bsp_display_cfg_t cfg = {
         .lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG(),
         .buffer_size = BSP_LCD_H_RES * CONFIG_BSP_LCD_DRAW_BUF_HEIGHT,
@@ -58,6 +58,31 @@ void board_display_start(void)
         },
     };
     bsp_display_start_with_config(&cfg);
+#else
+    // Landscape: LVGL renders 1280x720 and the P4's PPA rotates each strip
+    // into the portrait frame buffer (CONFIG_LVGL_PORT_ENABLE_PPA), so the CPU
+    // never touches the rotation. The PPA's output buffer is the same size as
+    // a draw buffer, so the strips are 24 lines (in panel terms) instead of
+    // 50: three 34.5 KB internal buffers, less than portrait's two of 72 KB.
+    bsp_display_cfg_t cfg = {
+        .lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG(),
+        .buffer_size = BSP_LCD_H_RES * 24,
+        .double_buffer = true,
+        .flags = {
+            .buff_dma = true,
+            .buff_spiram = false,
+            .sw_rotate = true,
+        },
+    };
+    lv_display_t *disp = bsp_display_start_with_config(&cfg);
+    bsp_display_lock(0);
+#if CONFIG_OVERHEAD_TAB5_LANDSCAPE
+    bsp_display_rotate(disp, LV_DISPLAY_ROTATION_90);
+#else
+    bsp_display_rotate(disp, LV_DISPLAY_ROTATION_270);
+#endif
+    bsp_display_unlock();
+#endif
     bsp_display_backlight_on();
 }
 
