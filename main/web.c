@@ -13,6 +13,7 @@
 #include "esp_wifi.h"
 #include "net.h"
 #include "openaip.h"
+#include "ota.h"
 #include "settings.h"
 
 static const char *TAG = "web";
@@ -181,6 +182,8 @@ static esp_err_t on_state(httpd_req_t *req)
 
     cJSON_AddStringToObject(json, "board", BOARD_NAME);
     cJSON_AddStringToObject(json, "firmware", app->version);
+    cJSON_AddStringToObject(json, "project", app->project_name);
+    cJSON_AddStringToObject(json, "update_repo", CONFIG_OVERHEAD_OTA_REPO);
     cJSON_AddBoolToObject(json, "can_rotate", CAN_ROTATE);
     cJSON_AddNumberToObject(json, "uptime_s", (double)(esp_timer_get_time() / 1000000));
     cJSON_AddNumberToObject(json, "heap_internal", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
@@ -354,6 +357,34 @@ static esp_err_t on_settings(httpd_req_t *req)
     return send_result(req, commit(&s), NULL);
 }
 
+static esp_err_t on_ota_status(httpd_req_t *req)
+{
+    ota_status_t st;
+    ota_get_status(&st);
+    cJSON *json = cJSON_CreateObject();
+    cJSON_AddStringToObject(json, "state", st.state);
+    cJSON_AddStringToObject(json, "detail", st.detail);
+    cJSON_AddStringToObject(json, "latest", st.latest);
+    cJSON_AddStringToObject(json, "published", st.published);
+    cJSON_AddStringToObject(json, "notes_url", st.notes_url);
+    cJSON_AddBoolToObject(json, "has_image", st.has_image);
+    cJSON_AddNumberToObject(json, "progress", st.progress);
+    cJSON_AddStringToObject(json, "running", esp_app_get_description()->version);
+    return send_json(req, json);
+}
+
+static esp_err_t on_ota_check(httpd_req_t *req)
+{
+    esp_err_t err = ota_check();
+    return send_result(req, err, err == ESP_ERR_INVALID_STATE ? "Already busy" : NULL);
+}
+
+static esp_err_t on_ota_install(httpd_req_t *req)
+{
+    esp_err_t err = ota_install();
+    return send_result(req, err, err == ESP_ERR_INVALID_STATE ? "Check for an update first" : NULL);
+}
+
 static esp_err_t on_forget(httpd_req_t *req)
 {
     settings_t s = *settings();
@@ -377,7 +408,7 @@ void web_start(void)
 #if CONFIG_SPIRAM && CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
     cfg.task_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT; // see commit_and_restart()
 #endif
-    cfg.max_uri_handlers = 10;
+    cfg.max_uri_handlers = 14;
     cfg.max_open_sockets = 5;
     // A phone opens several connections at once and leaves them open
     cfg.lru_purge_enable = true;
@@ -397,6 +428,9 @@ void web_start(void)
         {.uri = "/api/settings", .method = HTTP_POST, .handler = on_settings},
         {.uri = "/api/forget", .method = HTTP_POST, .handler = on_forget},
         {.uri = "/api/defaults", .method = HTTP_POST, .handler = on_defaults},
+        {.uri = "/api/ota", .method = HTTP_GET, .handler = on_ota_status},
+        {.uri = "/api/ota/check", .method = HTTP_POST, .handler = on_ota_check},
+        {.uri = "/api/ota/install", .method = HTTP_POST, .handler = on_ota_install},
     };
     for (size_t i = 0; i < sizeof(URIS) / sizeof(URIS[0]); i++) httpd_register_uri_handler(server, &URIS[i]);
     httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, on_not_found);

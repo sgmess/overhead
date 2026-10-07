@@ -54,6 +54,41 @@ idf.py -B build_tab5 -D OVERHEAD_BOARD=tab5 menuconfig
 idf.py -B build_tab5 build flash monitor
 ```
 
+## Releases, web flasher and updates
+
+`.github/workflows/firmware.yml` builds the firmware on every push to main.
+A version tag publishes it:
+
+```bash
+git tag v0.2.0
+```
+
+```bash
+git push origin v0.2.0
+```
+
+That makes a GitHub release holding, for each board,
+`overhead-<board>-full.bin` (the whole flash image, at `0x0`) and
+`overhead-<board>-ota.bin` (the app alone). It also deploys the web flasher
+(`web/flash/`, using [ESP Web Tools](https://esphome.github.io/esp-web-tools/))
+to GitHub Pages at https://sgmess.github.io/overhead/, serving that release.
+Release builds start from the `sdkconfig.defaults*` files, never a local
+`sdkconfig`, so they contain no WiFi network and open the setup portal on
+first boot. Only the Tab5 is built while the other boards are parked.
+
+Updates install over WiFi from the configuration page: *Firmware > Check
+for updates* reads the latest release of `sgmess/overhead` (menuconfig:
+`OVERHEAD_OTA_REPO`) and installs `<project>-ota.bin`. The project name
+includes the board (`overhead-tab5`), and an image whose name doesn't match
+the running one is refused before anything is written. Flash has two app
+slots (`partitions.csv`), and rollback is on. A new image is only kept once
+it reaches the network. If it restarts before then, the bootloader goes back
+to the previous one.
+
+Moving from the old single-app layout needs one USB flash
+(`idf.py -B build_tab5 flash`). The NVS partition stays where it was, so
+saved settings survive.
+
 ## Setup and settings
 
 With no network configured, the first boot opens a setup portal: an open
@@ -176,6 +211,8 @@ nobody has measured, so it reports none.
 | `main/web.c`, `main/web/` | Web server, JSON API, and the setup and configuration pages |
 | `main/feed.c` | HTTPS poll and readsb JSON parsing (buffers in PSRAM) |
 | `main/battery.c` | Battery state, charge estimate, time left, low-voltage power-off |
+| `main/ota.c` | Updates from GitHub releases, image check, rollback confirmation |
+| `web/flash/`, `.github/workflows/` | Web flasher page and the build, release and Pages workflow |
 | `main/openaip.c` | OpenAIP airspace and airfields: fetch by country, trim to range, project to NM |
 | `main/radar_ui.c` | LVGL scope, aircraft rendering, touch, detail card, Tab5 list; per-board sizes at the top |
 | `boards/<board>/board/` | Per-board bring-up: display start, WiFi power, LVGL lock; the BSP is its dependency |

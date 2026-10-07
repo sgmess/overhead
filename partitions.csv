@@ -1,4 +1,8 @@
 # Name,   Type, SubType, Offset,  Size, Flags
+# Two app slots for over-the-air updates. nvs keeps its offset, so saved
+# settings survive the change from the old single factory app.
 nvs,      data, nvs,     0x9000,  0x6000,
-phy_init, data, phy,     0xf000,  0x1000,
-factory,  app,  factory, ,        8M,
+otadata,  data, ota,     0xf000,  0x2000,
+phy_init, data, phy,     0x11000, 0x1000,
+ota_0,    app,  ota_0,   0x20000, 7M,
+ota_1,    app,  ota_1,   ,        7M,

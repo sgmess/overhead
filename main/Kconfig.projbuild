@@ -56,6 +56,13 @@ menu "Overhead radar"
         range 0 200
         default 40
 
+    config OVERHEAD_OTA_REPO
+        string "GitHub repository for firmware updates (owner/name)"
+        default "sgmess/overhead"
+        help
+            The configuration page checks this repository's latest release
+            for <project>-ota.bin, e.g. overhead-tab5-ota.bin.
+
     menu "Battery (boards with a battery monitor)"
 
         config OVERHEAD_BATTERY_AUTO_OFF

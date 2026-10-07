@@ -47,6 +47,9 @@ a{color:var(--accent)}
 .legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:13px;color:var(--dim)}
 .legend span{display:inline-flex;align-items:center;gap:6px}
 .legend i{display:inline-block;width:18px;height:0;border-top:2px solid}
+.buttons .primary{width:auto;padding:9px 16px}
+.bar{height:8px;border-radius:4px;background:#081a12;border:1px solid var(--line);margin-top:12px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .4s}
 </style>
 </head>
 <body>
@@ -160,6 +163,17 @@ a{color:var(--accent)}
   <p class="hint">Forgetting it restarts Overhead into its setup network, shown on the radar.</p>
 </section>
 
+<section class="card">
+  <h2>Firmware</h2>
+  <p class="hint" id="fw-running"></p>
+  <div class="buttons">
+    <button type="button" class="ghost" id="ota-check">Check for updates</button>
+    <button type="button" class="primary hidden" id="ota-install"></button>
+  </div>
+  <p class="hint" id="ota-state" role="status"></p>
+  <div class="bar hidden" id="ota-bar"><i id="ota-fill"></i></div>
+</section>
+
 <footer>
   <span id="fw"></span><br>
   <button type="button" id="defaults">Reset all settings to defaults</button>
@@ -228,6 +242,8 @@ function showStatus(j) {
   }
   $('wifi').textContent = 'Connected to ' + j.settings.ssid + '.';
   $('fw').textContent = 'Firmware ' + j.firmware;
+  $('fw-running').textContent = 'Running ' + j.firmware + ' (' + j.project + '). Updates come from the latest release of ' +
+    j.update_repo + ' on GitHub.';
 }
 
 function ago(s) {
@@ -293,7 +309,77 @@ async function load() {
   $('battery-card').classList.toggle('hidden', !j.has_battery);
   $('batt_shutdown_mv').disabled = !s.batt_auto_off;
   if (!map) loadMap(s.lat, s.lon);
+  api('/api/ota').then(showOta, () => {});
 }
+
+// ---- firmware updates
+let running = '';
+
+function link(url, text) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.textContent = text;
+  return a;
+}
+
+function showOta(o) {
+  const st = $('ota-state'), btn = $('ota-install');
+  running = o.running;
+  st.textContent = '';
+  btn.classList.add('hidden');
+  $('ota-bar').classList.toggle('hidden', o.state !== 'installing');
+  $('ota-check').disabled = o.state === 'checking' || o.state === 'installing';
+  if (o.state === 'checking') {
+    st.textContent = 'Checking GitHub…';
+  } else if (o.state === 'installing') {
+    st.textContent = 'Downloading and installing ' + o.latest + ': ' + o.progress + '%. Keep the Tab5 powered.';
+    $('ota-fill').style.width = o.progress + '%';
+  } else if (o.state === 'error') {
+    st.textContent = o.detail + '.';
+  } else if (o.state === 'checked') {
+    if (!o.has_image) {
+      st.textContent = 'The latest release, ' + o.latest + ', has no image for this board. ';
+    } else if (o.latest === o.running) {
+      st.textContent = 'Up to date: ' + o.latest + ' is the latest release. ';
+    } else {
+      st.textContent = o.latest + ' was released on ' + o.published + '. ';
+      btn.textContent = 'Install ' + o.latest;
+      btn.classList.remove('hidden');
+    }
+    if (o.notes_url) st.append(link(o.notes_url, 'Release notes'));
+  }
+}
+
+async function pollOta() {
+  let o;
+  try {
+    o = await api('/api/ota');
+  } catch (e) {
+    // It restarts as soon as an install finishes
+    waitForRestart('Overhead is restarting into the new firmware. This page reloads when it is back.', true);
+    return;
+  }
+  showOta(o);
+  if (o.state === 'installing' && o.progress >= 100) {
+    waitForRestart('Installed. Overhead is restarting into the new firmware; this page reloads when it is back.', true);
+    return;
+  }
+  if (o.state === 'checking' || o.state === 'installing') setTimeout(pollOta, 1000);
+}
+
+$('ota-check').onclick = async () => {
+  try { await api('/api/ota/check', {}); } catch (err) { $('ota-state').textContent = err.message; }
+  pollOta();
+};
+
+$('ota-install').onclick = async () => {
+  if (!confirm('Install ' + $('ota-install').textContent.replace('Install ', '') +
+               '? Overhead restarts when it is done. If the new firmware can\'t reach the network, the next restart goes back to ' + running + '.')) return;
+  try { await api('/api/ota/install', {}); } catch (err) { $('ota-state').textContent = err.message; return; }
+  pollOta();
+};
 
 $('batt_auto_off').onchange = e => { $('batt_shutdown_mv').disabled = !e.target.checked; };
 $('lat').onchange = $('lon').onchange = placePin;
@@ -305,10 +391,10 @@ $('clear-key').onclick = () => {
 };
 
 // Poll until it answers again, then show the new settings
-function waitForRestart(text) {
+function waitForRestart(text, poll = !text) {
   if (text) $('restart-text').textContent = text;
   $('restarting').classList.remove('hidden');
-  if (!text) {
+  if (poll) {
     setTimeout(function poll() {
       fetch('/api/state', {cache: 'no-store'}).then(r => r.ok ? location.reload() : setTimeout(poll, 2000),
                                                    () => setTimeout(poll, 2000));

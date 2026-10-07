@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Overhead web flasher</title>
+<meta name="description" content="Install the Overhead ADS-B radar on an M5Stack Tab5 from the browser.">
+<script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
+<style>
+:root{--bg:#030806;--card:#06120d;--line:#1c4535;--text:#cfe9dc;--dim:#7fa996;--accent:#46ffa8;--ink:#02140b;--warn:#ffb020}
+*{box-sizing:border-box}
+body{margin:0 auto;max-width:600px;min-height:100vh;padding:24px 16px 48px;background:radial-gradient(circle at 50% -20%,#0b2419,var(--bg) 70%);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{display:flex;align-items:center;gap:14px;margin-bottom:20px}
+.scope{flex:none;width:52px;height:52px;border-radius:50%;border:2px solid var(--accent);position:relative;overflow:hidden;box-shadow:0 0 18px rgba(70,255,168,.35)}
+.scope::before{content:"";position:absolute;inset:0;background:conic-gradient(from 0deg,rgba(70,255,168,.7),transparent 55%);animation:sweep 3s linear infinite}
+@keyframes sweep{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.scope::before{animation:none}}
+h1{margin:0;font-size:24px;color:var(--accent);letter-spacing:.5px}
+header p{margin:0;color:var(--dim);font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+h2{margin:0 0 10px;font-size:12px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--accent)}
+p{margin:8px 0}
+ol,ul{margin:8px 0;padding-left:20px}
+li{margin:6px 0}
+a{color:var(--accent)}
+code{color:#effff6;background:#081a12;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:14px}
+.dim{color:var(--dim);font-size:14px}
+.board{display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--accent);border-radius:10px;background:#0d2a1d;margin-bottom:14px}
+.board b{color:#effff6}
+esp-web-install-button{--esp-tools-button-color:var(--ink);--esp-tools-button-background-color:var(--accent);--esp-tools-button-text-color:var(--ink)}
+.install{display:inline-block;padding:13px 22px;border:0;border-radius:10px;background:var(--accent);color:var(--ink);font:inherit;font-weight:700;cursor:pointer}
+.notice{border-left:3px solid var(--warn);padding:4px 0 4px 12px;color:var(--text)}
+footer{margin-top:24px;text-align:center;font-size:13px;color:var(--dim)}
+</style>
+</head>
+<body>
+<header>
+  <div class="scope" aria-hidden="true"></div>
+  <div><h1>Overhead</h1><p>Live ADS-B radar &middot; web flasher &middot; __VERSION__</p></div>
+</header>
+
+<section class="card">
+  <h2>Install</h2>
+  <div class="board"><b>M5Stack Tab5</b><span class="dim">ESP32-P4, 720&times;1280</span></div>
+  <esp-web-install-button manifest="manifest-tab5.json">
+    <button slot="activate" class="install">Connect and install</button>
+    <p slot="unsupported" class="notice">This browser can't flash boards. Use Chrome or Edge on a computer: Web Serial isn't in Safari, Firefox or on phones.</p>
+    <p slot="not-allowed" class="notice">Flashing needs the page over HTTPS.</p>
+  </esp-web-install-button>
+  <p class="dim">Choose "Erase device" when it asks: a first install needs the whole flash written.
+    It takes a minute or two.</p>
+</section>
+
+<section class="card">
+  <h2>Before you start</h2>
+  <ol>
+    <li>Connect the Tab5's USB-C port to the computer with a data cable, and switch it on.</li>
+    <li>Press <b>Connect and install</b> and pick the port named <i>USB JTAG/serial debug unit</i>.
+      If none appears, try another cable or port.</li>
+  </ol>
+  <p class="notice">The Tab5's WiFi runs on its ESP32-C6 co-processor, and this firmware expects
+    <b>esp_hosted 2.12</b> on it. With older C6 firmware the radar restarts when WiFi starts;
+    update the C6 first.</p>
+</section>
+
+<section class="card">
+  <h2>After installing</h2>
+  <ol>
+    <li>The radar opens a WiFi network named <code>Overhead-XXXX</code> and shows a QR code that joins it.</li>
+    <li>On your phone, join it. The setup page opens by itself (or browse to <code>192.168.4.1</code>):
+      choose your network and set the radar's centre.</li>
+    <li>Once it's on your network, the settings are at <code>http://overhead.local</code>. Updates install
+      from there too, under <b>Firmware</b>, with no cable.</li>
+  </ol>
+</section>
+
+<footer>
+  <a href="https://github.com/sgmess/overhead">Source</a> &middot;
+  <a href="https://github.com/sgmess/overhead/releases">Releases</a> &middot;
+  flashing by <a href="https://esphome.github.io/esp-web-tools/">ESP Web Tools</a>
+</footer>
+</body>
+</html>

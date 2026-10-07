@@ -1,0 +1,11 @@
+{
+  "name": "Overhead radar for the M5Stack Tab5",
+  "version": "__VERSION__",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-P4",
+      "parts": [{ "path": "overhead-tab5-full.bin", "offset": 0 }]
+    }
+  ]
+}

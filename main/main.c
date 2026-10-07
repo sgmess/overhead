@@ -11,6 +11,7 @@
 #include "feed.h"
 #include "net.h"
 #include "openaip.h"
+#include "ota.h"
 #include "radar_ui.h"
 #include "settings.h"
 
@@ -54,6 +55,8 @@ static void wait_for_network(void)
             setup = now;
         }
     } while (!net_wait_connected(1000));
+    // On the network, so a just-installed update works well enough to keep
+    ota_mark_valid();
 
     char ip[16] = "";
     net_get_ip(ip, sizeof(ip));

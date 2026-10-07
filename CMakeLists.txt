@@ -37,4 +37,6 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 idf_build_set_property(DEPENDENCIES_LOCK "${CMAKE_CURRENT_LIST_DIR}/dependencies.lock.${OVERHEAD_BOARD}")
 
-project(overhead)
+# The board is in the name, so the app image says which board it is for and an
+# over-the-air update for another board is refused (see main/ota.c)
+project(overhead-${OVERHEAD_BOARD})
