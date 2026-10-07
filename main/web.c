@@ -12,6 +12,7 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "net.h"
+#include "openaip.h"
 #include "settings.h"
 
 static const char *TAG = "web";
@@ -223,6 +224,20 @@ static esp_err_t on_state(httpd_req_t *req)
     cJSON_AddBoolToObject(set, "batt_auto_off", s->batt_auto_off);
     cJSON_AddNumberToObject(set, "batt_shutdown_mv", s->batt_shutdown_mv);
     cJSON_AddNumberToObject(set, "rotation", s->rotation);
+    cJSON_AddBoolToObject(set, "has_openaip_key", s->openaip_key[0] != '\0'); // nor this key
+    cJSON_AddStringToObject(set, "openaip_countries", s->openaip_countries);
+    cJSON_AddBoolToObject(set, "show_airspace", s->show_airspace);
+    cJSON_AddBoolToObject(set, "show_airfields", s->show_airfields);
+
+    openaip_status_t oa;
+    openaip_get_status(&oa);
+    cJSON *o = cJSON_AddObjectToObject(json, "openaip");
+    cJSON_AddStringToObject(o, "state", oa.state);
+    cJSON_AddStringToObject(o, "detail", oa.detail);
+    cJSON_AddStringToObject(o, "countries", oa.countries);
+    cJSON_AddNumberToObject(o, "airspaces", oa.airspaces);
+    cJSON_AddNumberToObject(o, "airfields", oa.airfields);
+    cJSON_AddNumberToObject(o, "age_s", oa.age_s);
     return send_json(req, json);
 }
 
@@ -306,9 +321,36 @@ static esp_err_t on_settings(httpd_req_t *req)
     take_bool(json, "batt_auto_off", &s.batt_auto_off);
     take_int(json, "batt_shutdown_mv", &s.batt_shutdown_mv);
     if (CAN_ROTATE) take_int(json, "rotation", &s.rotation);
+    take_bool(json, "show_airspace", &s.show_airspace);
+    take_bool(json, "show_airfields", &s.show_airfields);
+    const cJSON *cc = cJSON_GetObjectItemCaseSensitive(json, "openaip_countries");
+    if (cJSON_IsString(cc)) {
+        // Normalised to "FR,CH": upper case, commas, no spaces
+        char norm[sizeof(s.openaip_countries)] = "";
+        size_t n = 0;
+        for (const char *c = cc->valuestring; *c && n + 1 < sizeof(norm); c++) {
+            if (*c == ' ') continue;
+            norm[n++] = (*c >= 'a' && *c <= 'z') ? *c - 32 : *c;
+        }
+        norm[n] = '\0';
+        strlcpy(s.openaip_countries, norm, sizeof(s.openaip_countries));
+    }
+    // Only sent when typed or cleared, since the page never sees the old one
+    const cJSON *key = cJSON_GetObjectItemCaseSensitive(json, "openaip_key");
+    if (key) {
+        bool ok = cJSON_IsString(key) && strlen(key->valuestring) < sizeof(s.openaip_key);
+        for (const char *c = ok ? key->valuestring : ""; *c; c++) ok = ok && *c > ' ' && *c < 0x7f;
+        if (!ok) {
+            cJSON_Delete(json);
+            return send_result(req, ESP_ERR_INVALID_ARG, "The API key is up to 64 characters, no spaces");
+        }
+        strlcpy(s.openaip_key, key->valuestring, sizeof(s.openaip_key));
+    }
     cJSON_Delete(json);
 
-    if (!settings_valid(&s)) return send_result(req, ESP_ERR_INVALID_ARG, "A value is out of range");
+    if (!settings_valid(&s)) {
+        return send_result(req, ESP_ERR_INVALID_ARG, "A value is out of range (countries are two-letter codes, up to four)");
+    }
     return send_result(req, commit(&s), NULL);
 }
 

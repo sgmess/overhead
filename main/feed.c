@@ -164,16 +164,16 @@ static bool parse_aircraft(const cJSON *j, int64_t now_us, aircraft_t *a)
     return true;
 }
 
+void feed_init(void)
+{
+    // Process-wide: the web server and OpenAIP parse with these too
+    cJSON_Hooks hooks = {.malloc_fn = psram_malloc, .free_fn = free};
+    cJSON_InitHooks(&hooks);
+}
+
 esp_err_t feed_fetch(double lat, double lon, int radius_nm,
                      aircraft_t *out, int max, int *count)
 {
-    static bool hooks_set;
-    if (!hooks_set) {
-        cJSON_Hooks hooks = {.malloc_fn = psram_malloc, .free_fn = free};
-        cJSON_InitHooks(&hooks);
-        hooks_set = true;
-    }
-
     if (s_feed < 0) s_feed = settings()->feed;
     const feed_def_t *f = &FEEDS[s_feed];
     char url[160];

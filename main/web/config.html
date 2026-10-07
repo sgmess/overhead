@@ -42,6 +42,11 @@ dt{color:var(--dim)}dd{margin:0;overflow-wrap:anywhere}
 footer{margin-top:22px;text-align:center;font-size:13px;color:var(--dim)}
 footer button{background:none;border:0;color:var(--dim);text-decoration:underline;padding:4px}
 .leaflet-container{background:#0b1a13}
+.pw{display:flex;gap:8px}
+a{color:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:13px;color:var(--dim)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{display:inline-block;width:18px;height:0;border-top:2px solid}
 </style>
 </head>
 <body>
@@ -78,6 +83,33 @@ footer button{background:none;border:0;color:var(--dim);text-decoration:underlin
     </select>
     <label class="check"><input type="checkbox" id="sweep"> Animated sweep</label>
     <label class="check"><input type="checkbox" id="show_ground"> Show aircraft on the ground</label>
+  </section>
+
+  <section class="card">
+    <h2>Map layers</h2>
+    <p class="hint">Airspace and airfields from <a href="https://www.openaip.net" target="_blank" rel="noopener">OpenAIP</a>,
+      for 107 NM around the centre, refreshed daily. They need a free OpenAIP account and API key,
+      created on openaip.net under your profile's API clients.</p>
+    <label class="check"><input type="checkbox" id="show_airspace"> Airspace</label>
+    <label class="check"><input type="checkbox" id="show_airfields"> Airfields</label>
+    <label for="openaip_key">OpenAIP API key</label>
+    <div class="pw">
+      <input id="openaip_key" type="password" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false">
+      <button type="button" id="clear-key" class="ghost">Remove</button>
+    </div>
+    <p class="hint" id="key-state"></p>
+    <label for="openaip_countries">Countries</label>
+    <input id="openaip_countries" maxlength="20" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <p class="hint">OpenAIP data is fetched a country at a time. Left empty, it's the country of the airfield
+      nearest the centre; near a border, list the neighbours as well, e.g. FR,CH.</p>
+    <p class="hint" id="oaip-state"></p>
+    <div class="legend" aria-label="Airspace colours">
+      <span><i style="border-color:#4d8fe0"></i>CTR, ATZ, MATZ</span>
+      <span><i style="border-color:#3a6db0"></i>TMA, CTA</span>
+      <span><i style="border-color:#d04848"></i>Restricted, prohibited</span>
+      <span><i style="border-color:#c8783c"></i>Danger</span>
+      <span><i style="border-color:#8a72c8"></i>RMZ, TMZ</span>
+    </div>
   </section>
 
   <section class="card">
@@ -140,8 +172,8 @@ footer button{background:none;border:0;color:var(--dim);text-decoration:underlin
 <script>
 const $ = id => document.getElementById(id);
 const FIELDS = ['range_idx', 'max_labels', 'feed', 'fetch_s', 'rotation', 'batt_shutdown_mv'];
-const CHECKS = ['sweep', 'show_ground', 'batt_auto_off'];
-let map, pin;
+const CHECKS = ['sweep', 'show_ground', 'batt_auto_off', 'show_airspace', 'show_airfields'];
+let map, pin, keyCleared = false;
 
 for (let mv = 6100; mv <= 7400; mv += 100) {
   $('batt_shutdown_mv').add(new Option((mv / 1000).toFixed(1) + ' V' + (mv === 6300 ? ' (recommended)' : ''), mv));
@@ -198,6 +230,25 @@ function showStatus(j) {
   $('fw').textContent = 'Firmware ' + j.firmware;
 }
 
+function ago(s) {
+  return s < 90 ? 'just now' : s < 5400 ? Math.round(s / 60) + ' minutes ago' : Math.round(s / 3600) + ' hours ago';
+}
+
+function showOpenaip(j) {
+  const o = j.openaip;
+  $('key-state').textContent = j.settings.has_openaip_key
+    ? 'A key is saved. Type a new one to replace it.' : 'No key saved.';
+  $('openaip_key').placeholder = j.settings.has_openaip_key ? 'Saved' : '';
+  $('openaip_countries').value = j.settings.openaip_countries;
+  $('openaip_countries').placeholder = 'Automatic' + (o.countries ? ' (' + o.countries + ')' : '');
+  $('oaip-state').textContent =
+    o.state === 'ok' ? 'Loaded ' + o.airspaces + ' airspaces and ' + o.airfields + ' airfields (' +
+      o.countries + ') ' + ago(o.age_s) + '.'
+    : o.state === 'loading' ? 'Loading from OpenAIP, which takes a minute or two…'
+    : o.state === 'error' ? 'Last attempt failed: ' + o.detail + '.'
+    : j.settings.has_openaip_key ? o.detail + '.' : '';
+}
+
 function placePin() {
   const lat = parseFloat($('lat').value), lon = parseFloat($('lon').value);
   if (pin && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) pin.setLatLng([lat, lon]);
@@ -233,6 +284,7 @@ async function load() {
   const j = await api('/api/state');
   const s = j.settings;
   showStatus(j);
+  showOpenaip(j);
   $('lat').value = s.lat.toFixed(4);
   $('lon').value = s.lon.toFixed(4);
   for (const f of FIELDS) setSelect($(f), s[f]);
@@ -245,6 +297,12 @@ async function load() {
 
 $('batt_auto_off').onchange = e => { $('batt_shutdown_mv').disabled = !e.target.checked; };
 $('lat').onchange = $('lon').onchange = placePin;
+$('clear-key').onclick = () => {
+  $('openaip_key').value = '';
+  $('openaip_key').placeholder = '';
+  keyCleared = true;
+  $('key-state').textContent = 'The key will be removed when you save.';
+};
 
 // Poll until it answers again, then show the new settings
 function waitForRestart(text) {
@@ -270,6 +328,9 @@ $('form').onsubmit = async e => {
   const body = {lat, lon};
   for (const f of FIELDS) body[f] = +$(f).value;
   for (const c of CHECKS) body[c] = $(c).checked;
+  const key = $('openaip_key').value.trim();
+  if (key || keyCleared) body.openaip_key = key; // otherwise the saved one stays
+  body.openaip_countries = $('openaip_countries').value;
   $('save').disabled = true;
   msg.textContent = '';
   try {

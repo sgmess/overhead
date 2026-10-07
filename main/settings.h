@@ -23,6 +23,10 @@ typedef struct {
     bool batt_auto_off;
     int batt_shutdown_mv;
     int rotation;       // degrees, 0, 90 or 270; only the Tab5 can rotate
+    char openaip_key[65]; // empty: no airspace or airfields
+    char openaip_countries[12]; // ISO codes, "FR,CH"; empty: the nearest airfield's
+    bool show_airspace;
+    bool show_airfields;
 } settings_t;
 
 // Read NVS over the defaults. Call after nvs_flash_init().

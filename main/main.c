@@ -10,6 +10,7 @@
 #include "battery.h"
 #include "feed.h"
 #include "net.h"
+#include "openaip.h"
 #include "radar_ui.h"
 #include "settings.h"
 
@@ -123,7 +124,9 @@ void app_main(void)
     battery_start();
 
     board_wifi_power_on();
+    feed_init();
     net_start();
+    openaip_start();
     // TLS and JSON parsing buffers are in PSRAM; this is just call depth.
     xTaskCreate(fetch_task, "fetch", FETCH_STACK, NULL, 5, &s_fetch_task);
 }

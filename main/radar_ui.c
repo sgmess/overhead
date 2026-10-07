@@ -10,6 +10,7 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "lvgl.h"
+#include "openaip.h"
 #include "settings.h"
 
 // The scope is the top SCR_W x SCR_W square: the whole panel on the round
@@ -160,6 +161,26 @@ static const range_t RANGES[] = {{5, 1}, {10, 2}, {25, 5}, {50, 10}, {100, 25}};
 #define C_EMERG 0xff3b3b
 #define C_SELECT 0xffffff
 #define C_WARN 0xffb020
+#define C_FIELD 0x8fb8e8
+
+// OpenAIP layers, by aero_kind_t: chart blues for controlled airspace, reds
+// for restricted. Thin and translucent so traffic stays on top.
+static const struct {
+    uint32_t color;
+    uint8_t width;
+    lv_opa_t opa;
+} AERO_STYLE[AERO_KIND_COUNT] = {
+    [AERO_ZONE] = {0x4d8fe0, 2, LV_OPA_80},
+    [AERO_AREA] = {0x3a6db0, 1, LV_OPA_70},
+    [AERO_RESTRICTED] = {0xd04848, 2, LV_OPA_80},
+    [AERO_DANGER] = {0xc8783c, 1, LV_OPA_80},
+    [AERO_MANDATORY] = {0x8a72c8, 1, LV_OPA_70},
+};
+#define FIELD_R_MAJOR (R_SCOPE / 50)
+#define FIELD_R_MINOR (R_SCOPE / 75)
+#define RUNWAY_HALF (R_SCOPE / 30)
+#define AERO_DECIMATE_PX 2.0f
+#define AERO_SEGS_PER_PASS 96 // about 17 KB of internal RAM in flight; see render_background()
 
 typedef struct {
     int16_t x, y;
@@ -181,6 +202,23 @@ static char s_sel_hex[8];
 static int64_t s_last_update_us;
 static char s_feed[16];
 static char s_status[64];
+
+// Airspace outlines as screen segments already clipped to the scope, built
+// again only when the range or the data changes
+typedef struct {
+    int16_t x1, y1, x2, y2;
+    uint8_t kind;
+} aero_seg_t;
+static aero_map_t *s_aero;
+static aero_seg_t *s_segs;
+static int s_n_segs, s_cap_segs;
+static int s_segs_range = -1; // range index they were built for; -1: stale
+
+// Everything under the traffic, drawn once per range into a PSRAM image:
+// redrawing airspace outlines every second cost 100-400 ms a frame
+static lv_obj_t *s_bg_canvas;
+static lv_draw_buf_t *s_bg_buf;
+static int s_bg_range = -1; // range index it shows; -1: stale
 static void (*s_on_range_change)(void);
 
 static lv_obj_t *s_scope, *s_clock, *s_range_lbl, *s_status_lbl;
@@ -269,6 +307,66 @@ static int cmp_by_dist(const void *pa, const void *pb)
     return (a > b) - (a < b);
 }
 
+// Clip a-b, relative to the scope centre, to the scope's circle. False when
+// none of it is inside.
+static bool clip_to_scope(float *ax, float *ay, float *bx, float *by)
+{
+    const float r = R_SCOPE;
+    const float dx = *bx - *ax, dy = *by - *ay;
+    const float a = dx * dx + dy * dy;
+    const float b = 2 * (*ax * dx + *ay * dy);
+    const float c = *ax * *ax + *ay * *ay - r * r;
+    if (a < 0.25f) return false;
+    const float disc = b * b - 4 * a * c;
+    if (disc <= 0) return false;
+    const float sq = sqrtf(disc);
+    const float t0 = LV_MAX((-b - sq) / (2 * a), 0.0f), t1 = LV_MIN((-b + sq) / (2 * a), 1.0f);
+    if (t0 >= t1) return false;
+    const float x0 = *ax + dx * t0, y0 = *ay + dy * t0;
+    *bx = *ax + dx * t1;
+    *by = *ay + dy * t1;
+    *ax = x0;
+    *ay = y0;
+    return true;
+}
+
+static void build_aero_segments(void)
+{
+    s_n_segs = 0;
+    s_segs_range = s_range_idx;
+    if (!s_aero || !settings()->show_airspace) return;
+
+    const float ppn = (float)R_SCOPE / RANGES[s_range_idx].nm;
+    for (int i = 0; i < s_aero->n_spaces; i++) {
+        const aero_space_t *sp = &s_aero->spaces[i];
+        const aero_pt_t *p = &s_aero->pts[sp->first];
+        float lx = p[0].x * ppn, ly = -p[0].y * ppn;
+        // Points within a couple of pixels of the last one add nothing at
+        // this range; the ring is always closed back to its first point
+        for (int k = 1; k <= sp->n; k++) {
+            const aero_pt_t *q = &p[k % sp->n];
+            const float x = q->x * ppn, y = -q->y * ppn;
+            if (k < sp->n && fabsf(x - lx) < AERO_DECIMATE_PX && fabsf(y - ly) < AERO_DECIMATE_PX) continue;
+            float ax = lx, ay = ly, bx = x, by = y;
+            lx = x;
+            ly = y;
+            if (!clip_to_scope(&ax, &ay, &bx, &by)) continue;
+            if (s_n_segs == s_cap_segs) {
+                int cap = s_cap_segs ? s_cap_segs * 2 : 1024;
+                aero_seg_t *grown = heap_caps_realloc(s_segs, cap * sizeof(*grown), MALLOC_CAP_SPIRAM);
+                if (!grown) return;
+                s_segs = grown;
+                s_cap_segs = cap;
+            }
+            s_segs[s_n_segs++] = (aero_seg_t){
+                .x1 = (int16_t)lroundf(CX + ax), .y1 = (int16_t)lroundf(CY + ay),
+                .x2 = (int16_t)lroundf(CX + bx), .y2 = (int16_t)lroundf(CY + by),
+                .kind = sp->kind,
+            };
+        }
+    }
+}
+
 // Project every aircraft to screen space, moving it forward along its track
 // since its last position report. Runs once a second, not per frame.
 static void layout(void)
@@ -278,6 +376,7 @@ static void layout(void)
     const int64_t now = esp_timer_get_time();
     s_order_n = 0;
     s_visible = 0;
+    if (s_segs_range != s_range_idx) build_aero_segments();
 
     for (int i = 0; i < s_count; i++) {
         const aircraft_t *a = &s_ac[i];
@@ -530,11 +629,96 @@ static void draw_aircraft(lv_layer_t *layer)
     }
 }
 
+// Under the traffic: airspace outlines, then airfields as a ring crossed by
+// the main runway. Smaller fields and the labels come in at closer ranges.
+static void draw_airspace(lv_layer_t *layer, int from, int to)
+{
+    for (int i = from; i < to; i++) {
+        const aero_seg_t *g = &s_segs[i];
+        draw_line(layer, g->x1, g->y1, g->x2, g->y2, lv_color_hex(AERO_STYLE[g->kind].color),
+                  AERO_STYLE[g->kind].width, AERO_STYLE[g->kind].opa);
+    }
+}
+
+static void draw_airfields(lv_layer_t *layer)
+{
+    if (!s_aero || !settings()->show_airfields) return;
+
+    const int nm = RANGES[s_range_idx].nm;
+    const float ppn = (float)R_SCOPE / nm;
+    const lv_color_t color = lv_color_hex(C_FIELD);
+    const int line_h = lv_font_get_line_height(&F_RING);
+    for (int i = 0; i < s_aero->n_fields; i++) {
+        const aero_field_t *f = &s_aero->fields[i];
+        if (!f->major && nm > 25) continue;
+        const float fx = f->x * ppn, fy = -f->y * ppn;
+        const int r = f->major ? FIELD_R_MAJOR : FIELD_R_MINOR;
+        if (fx * fx + fy * fy > (float)(R_SCOPE - r) * (R_SCOPE - r)) continue;
+        const int x = CX + (int)lroundf(fx), y = CY + (int)lroundf(fy);
+        if (!in_clip(layer, x - 4 * r, y - RUNWAY_HALF, x + 100, y + RUNWAY_HALF)) continue;
+
+        draw_ring(layer, x, y, r, color, f->major ? 2 : 1);
+        if (f->runway_deg >= 0) {
+            const float rs = sinf(f->runway_deg * DEG2RAD) * RUNWAY_HALF;
+            const float rc = cosf(f->runway_deg * DEG2RAD) * RUNWAY_HALF;
+            draw_line(layer, x - (int)rs, y + (int)rc, x + (int)rs, y - (int)rc, color, 2, LV_OPA_COVER);
+        }
+        if (f->ident[0] && nm <= (f->major ? 50 : 10)) {
+            draw_text(layer, x + RUNWAY_HALF + 2, y - line_h / 2, 110, f->ident, &F_RING, color,
+                      LV_TEXT_ALIGN_LEFT);
+        }
+    }
+}
+
 static void on_scope_draw(lv_event_t *e)
 {
     lv_layer_t *layer = lv_event_get_layer(e);
-    draw_scope(layer);
+    if (s_bg_buf && s_bg_range == s_range_idx) {
+        lv_draw_image_dsc_t d;
+        lv_draw_image_dsc_init(&d);
+        d.src = s_bg_buf;
+        lv_area_t a = {0, 0, SCR_W - 1, SCR_W - 1};
+        lv_draw_image(layer, &d, &a);
+    } else {
+        draw_scope(layer);
+        draw_airspace(layer, 0, s_n_segs);
+        draw_airfields(layer);
+    }
     draw_aircraft(layer);
+}
+
+// Not from a draw callback: it renders, and renders don't nest
+static void render_background(void)
+{
+    if (!s_bg_buf) return;
+    if (s_segs_range != s_range_idx) build_aero_segments();
+    lv_canvas_fill_bg(s_bg_canvas, lv_color_hex(C_BG), LV_OPA_COVER);
+
+    // In passes, each finished before the next: LVGL queues every draw
+    // task of a layer before running any, each about 180 bytes of internal
+    // RAM, and 4,000 outline segments at once drained it to ~1 KB
+    lv_layer_t layer;
+    lv_canvas_init_layer(s_bg_canvas, &layer);
+    draw_scope(&layer);
+    lv_canvas_finish_layer(s_bg_canvas, &layer);
+    for (int from = 0; from < s_n_segs; from += AERO_SEGS_PER_PASS) {
+        lv_canvas_init_layer(s_bg_canvas, &layer);
+        draw_airspace(&layer, from, LV_MIN(from + AERO_SEGS_PER_PASS, s_n_segs));
+        lv_canvas_finish_layer(s_bg_canvas, &layer);
+    }
+    lv_canvas_init_layer(s_bg_canvas, &layer);
+    draw_airfields(&layer); // on top of the outlines
+    lv_canvas_finish_layer(s_bg_canvas, &layer);
+    s_bg_range = s_range_idx;
+}
+
+static void create_background(lv_obj_t *scr)
+{
+    s_bg_buf = lv_draw_buf_create(SCR_W, SCR_W, lv_display_get_color_format(NULL), LV_STRIDE_AUTO);
+    if (!s_bg_buf) return; // then the scope draws it all every frame
+    s_bg_canvas = lv_canvas_create(scr);
+    lv_canvas_set_draw_buf(s_bg_canvas, s_bg_buf);
+    lv_obj_set_hidden(s_bg_canvas, true); // only its buffer is used
 }
 
 // ---------------------------------------------------------------- overlay
@@ -688,6 +872,7 @@ static void update_list(void)
 static void refresh(void)
 {
     layout();
+    if (s_bg_range != s_range_idx) render_background();
     update_card();
 #ifdef HAS_LIST
     update_list();
@@ -1005,6 +1190,7 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     lv_obj_set_style_bg_color(scr, lv_color_hex(C_BG), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_set_scrollable(scr, false);
+    create_background(scr);
 
     s_scope = lv_obj_create(scr);
     lv_obj_remove_style_all(s_scope);
@@ -1106,6 +1292,15 @@ void radar_ui_set_battery(const battery_status_t *st)
 #else
     (void)st;
 #endif
+}
+
+void radar_ui_set_aero(aero_map_t *map)
+{
+    aero_map_free(s_aero);
+    s_aero = map;
+    s_segs_range = -1;
+    s_bg_range = -1;
+    refresh();
 }
 
 void radar_ui_show_setup(const char *ssid, const char *url)

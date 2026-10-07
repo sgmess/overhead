@@ -40,6 +40,8 @@ void settings_defaults(settings_t *out)
 #else
     out->batt_shutdown_mv = 6300;
 #endif
+    out->show_airspace = true;
+    out->show_airfields = true;
 #if CONFIG_OVERHEAD_TAB5_LANDSCAPE
     out->rotation = 90;
 #elif CONFIG_OVERHEAD_TAB5_LANDSCAPE_FLIPPED
@@ -47,9 +49,21 @@ void settings_defaults(settings_t *out)
 #endif
 }
 
+// Two-letter codes separated by commas, or nothing
+static bool valid_countries(const char *s)
+{
+    for (int i = 0; s[i]; i++) {
+        bool letter = s[i] >= 'A' && s[i] <= 'Z';
+        if (i % 3 == 2 ? s[i] != ',' : !letter) return false;
+    }
+    size_t n = strlen(s);
+    return n == 0 || n % 3 == 2;
+}
+
 bool settings_valid(const settings_t *s)
 {
-    return strlen(s->password) < sizeof(s->password) &&
+    return strlen(s->password) < sizeof(s->password) && strlen(s->openaip_key) < sizeof(s->openaip_key) &&
+           strlen(s->openaip_countries) < sizeof(s->openaip_countries) && valid_countries(s->openaip_countries) &&
            isfinite(s->lat) && s->lat >= -90 && s->lat <= 90 &&
            isfinite(s->lon) && s->lon >= -180 && s->lon <= 180 &&
            s->range_idx >= 0 && s->range_idx < SETTINGS_RANGE_COUNT &&
@@ -106,6 +120,10 @@ void settings_load(void)
         get_bool(h, "auto_off", &s.batt_auto_off);
         get_int(h, "off_mv", &s.batt_shutdown_mv);
         get_int(h, "rotation", &s.rotation);
+        get_str(h, "oaip_key", s.openaip_key, sizeof(s.openaip_key));
+        get_str(h, "oaip_cc", s.openaip_countries, sizeof(s.openaip_countries));
+        get_bool(h, "airspace", &s.show_airspace);
+        get_bool(h, "airfields", &s.show_airfields);
         nvs_close(h);
     }
 
@@ -146,6 +164,10 @@ esp_err_t settings_save(const settings_t *s)
     if (err == ESP_OK) err = nvs_set_u8(h, "auto_off", s->batt_auto_off);
     if (err == ESP_OK) err = nvs_set_i32(h, "off_mv", s->batt_shutdown_mv);
     if (err == ESP_OK) err = nvs_set_i32(h, "rotation", s->rotation);
+    if (err == ESP_OK) err = nvs_set_str(h, "oaip_key", s->openaip_key);
+    if (err == ESP_OK) err = nvs_set_str(h, "oaip_cc", s->openaip_countries);
+    if (err == ESP_OK) err = nvs_set_u8(h, "airspace", s->show_airspace);
+    if (err == ESP_OK) err = nvs_set_u8(h, "airfields", s->show_airfields);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     if (err == ESP_OK) s_settings = *s;

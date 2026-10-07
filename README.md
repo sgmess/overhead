@@ -74,6 +74,32 @@ cut-off, and changing or forgetting the network. Every save restarts the
 device. The pages are unauthenticated, so anyone on the same network can
 change the settings.
 
+### Airspace and airfields
+
+With an [OpenAIP](https://www.openaip.net) API key entered on the
+configuration page, the scope also shows airspace outlines and airfields
+within 107 NM of the centre, under the traffic. The key is free: create one
+on openaip.net under your profile's API clients. The airspace shown is CTR,
+ATZ and MATZ (blue), TMA and CTA (darker blue), restricted and prohibited
+areas (red), danger areas (orange), and RMZ and TMZ (purple). FIRs, airways
+and sectors are left out. Airports are always shown, labelled at 50 NM and
+below. Small airfields, glider and microlight sites appear at 25 NM and
+below, labelled at 10 NM. Each is drawn as a ring crossed by its main runway.
+Either layer can be turned off.
+
+The data is fetched a country at a time and trimmed to the range, because
+OpenAIP's area queries time out (HTTP 408) unless they fill a whole page.
+Measured 2026-10-07: GB is 800 airspaces and 415 airfields in 6 pages, which
+takes about 75 s with the 10 s gaps its rate limiter needs. It runs in its
+own task, so the traffic keeps updating, and again daily. The country is the
+nearest airfield's unless the page lists some (for a centre near a border,
+say `FR,CH`).
+
+Everything under the traffic (disc, rings, compass rose, airspace and
+airfields) is drawn once per range into a PSRAM image and copied each frame.
+Drawing about 4,000 outline segments every second took a frame from about
+100 ms to 400 ms at 100 NM; with the image, frames are 25–65 ms.
+
 Settings are kept in NVS (namespace `overhead`). Everything under **Overhead
 radar** in menuconfig is only the default, used until something is saved, so
 a build with the WiFi set there still connects without the portal. "Reset all
@@ -150,6 +176,7 @@ nobody has measured, so it reports none.
 | `main/web.c`, `main/web/` | Web server, JSON API, and the setup and configuration pages |
 | `main/feed.c` | HTTPS poll and readsb JSON parsing (buffers in PSRAM) |
 | `main/battery.c` | Battery state, charge estimate, time left, low-voltage power-off |
+| `main/openaip.c` | OpenAIP airspace and airfields: fetch by country, trim to range, project to NM |
 | `main/radar_ui.c` | LVGL scope, aircraft rendering, touch, detail card, Tab5 list; per-board sizes at the top |
 | `boards/<board>/board/` | Per-board bring-up: display start, WiFi power, LVGL lock; the BSP is its dependency |
 | `boards/s3_28c/waveshare__esp32_s3_touch_lcd_28c` | 2.8C BSP, vendored from traffic-display (Apache-2.0) |
