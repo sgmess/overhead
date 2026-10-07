@@ -244,37 +244,21 @@ static esp_err_t on_state(httpd_req_t *req)
     return send_json(req, json);
 }
 
-static int cmp_rssi(const void *a, const void *b)
-{
-    return ((const wifi_ap_record_t *)b)->rssi - ((const wifi_ap_record_t *)a)->rssi;
-}
-
 static esp_err_t on_scan(httpd_req_t *req)
 {
-    // Blocks for a couple of seconds; fails while the station is mid-connect
-    esp_err_t err = esp_wifi_scan_start(NULL, true);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "scan: %s", esp_err_to_name(err));
-        return send_result(req, err, "Scan failed, try again");
-    }
-    uint16_t n = SCAN_MAX;
-    wifi_ap_record_t *aps = calloc(SCAN_MAX, sizeof(*aps));
+    net_ap_t *aps = calloc(SCAN_MAX, sizeof(*aps));
     if (!aps) return httpd_resp_send_500(req);
-    esp_wifi_scan_get_ap_records(&n, aps);
-    qsort(aps, n, sizeof(*aps), cmp_rssi);
-
-    // Strongest first, each name once (mesh and multi-band APs repeat it)
+    const int n = net_scan(aps, SCAN_MAX); // blocks for a couple of seconds
+    if (n < 0) {
+        free(aps);
+        return send_result(req, ESP_FAIL, "Scan failed, try again");
+    }
     cJSON *list = cJSON_CreateArray();
     for (int i = 0; i < n; i++) {
-        const char *ssid = (const char *)aps[i].ssid;
-        if (!ssid[0]) continue;
-        bool seen = false;
-        for (int j = 0; j < i && !seen; j++) seen = strcmp(ssid, (const char *)aps[j].ssid) == 0;
-        if (seen) continue;
         cJSON *ap = cJSON_CreateObject();
-        cJSON_AddStringToObject(ap, "ssid", ssid);
+        cJSON_AddStringToObject(ap, "ssid", aps[i].ssid);
         cJSON_AddNumberToObject(ap, "rssi", aps[i].rssi);
-        cJSON_AddBoolToObject(ap, "open", aps[i].authmode == WIFI_AUTH_OPEN);
+        cJSON_AddBoolToObject(ap, "open", aps[i].open);
         cJSON_AddItemToArray(list, ap);
     }
     free(aps);

@@ -17,6 +17,25 @@ void net_start(void);
 
 bool net_is_connected(void);
 
+// WiFi is up (net_start() has run), so scans and net_try_network() work.
+bool net_started(void);
+
+// Join ssid now, without a restart: true once it has an address. After
+// three failed attempts, or timeout_ms, it goes back to the saved network
+// (or none). The caller stores the new one if it wants to keep it.
+bool net_try_network(const char *ssid, const char *password, int timeout_ms);
+
+typedef struct {
+    char ssid[33];
+    int rssi;
+    bool open;
+} net_ap_t;
+
+// Networks in range, strongest first and each name once (mesh and
+// dual-band access points repeat it). Blocks for a few seconds. The count,
+// or -1 if the radio is busy (mid-connect, say).
+int net_scan(net_ap_t *out, int max);
+
 // Block until an IP address is assigned or timeout_ms passes.
 bool net_wait_connected(int timeout_ms);
 

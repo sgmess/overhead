@@ -37,21 +37,20 @@ Data comes from [adsb.lol](https://adsb.lol), with an automatic switch to
 
 Needs ESP-IDF 5.5. Each board has its own build directory, `sdkconfig.<board>`
 and `dependencies.lock.<board>`, so building one never touches the other.
+There is nothing to configure first: WiFi and every radar setting are set on
+the device (see [Setup and settings](#setup-and-settings)).
 
 ```bash
 . ~/esp/esp-idf/export.sh
 
 # P4 3.4C
-idf.py menuconfig                  # optional: Overhead radar -> defaults
 idf.py build flash monitor
 
 # S3 2.8C
-idf.py -B build_s3 -D OVERHEAD_BOARD=s3_28c menuconfig
-idf.py -B build_s3 build flash monitor
+idf.py -B build_s3 -D OVERHEAD_BOARD=s3_28c build flash monitor
 
 # M5Stack Tab5
-idf.py -B build_tab5 -D OVERHEAD_BOARD=tab5 menuconfig
-idf.py -B build_tab5 build flash monitor
+idf.py -B build_tab5 -D OVERHEAD_BOARD=tab5 build flash monitor
 ```
 
 ## Releases, web flasher and updates
@@ -77,8 +76,8 @@ Release builds start from the `sdkconfig.defaults*` files, never a local
 first boot. Only the Tab5 is built while the other boards are parked.
 
 Updates install over WiFi from the configuration page: *Firmware > Check
-for updates* reads the latest release of `sgmess/overhead` (menuconfig:
-`OVERHEAD_OTA_REPO`) and installs `<project>-ota.bin`. The project name
+for updates* reads the latest release of `sgmess/overhead` (the one option
+left in menuconfig, `OVERHEAD_OTA_REPO`, for forks) and installs `<project>-ota.bin`. The project name
 includes the board (`overhead-tab5`), and an image whose name doesn't match
 the running one is refused before anything is written. Flash has two app
 slots (`partitions.csv`), and rollback is on. A new image is only kept once
@@ -135,11 +134,10 @@ airfields) is drawn once per range into a PSRAM image and copied each frame.
 Drawing about 4,000 outline segments every second took a frame from about
 100 ms to 400 ms at 100 NM; with the image, frames are 25–65 ms.
 
-Settings are kept in NVS (namespace `overhead`). Everything under **Overhead
-radar** in menuconfig is only the default, used until something is saved, so
-a build with the WiFi set there still connects without the portal. "Reset all
-settings to defaults" on the page erases the saved ones. The default centre
-is Heathrow.
+Settings are kept in NVS (namespace `overhead`). Until something is saved
+the firmware's defaults apply (`settings_defaults()` in `main/settings.c`):
+no network, so the setup portal opens, and the centre on Heathrow. "Reset all
+settings to defaults" on the page erases the saved ones, network included.
 
 The web server's task stack is in PSRAM. PSRAM is unreachable while flash is
 written, so a save is written to NVS from the esp_timer task just before the
@@ -159,8 +157,7 @@ non-touch 2.8C aborts at boot because its GT911 never answers.
 Portrait by default, the panel's native orientation: the scope fills the top
 720x720 and the nearest aircraft are listed below it, with the details card
 above the list while something is selected. Landscape (scope left, list right,
-15 rows) is set on the configuration page; menuconfig (Overhead radar: Tab5
-display) only sets the default.
+15 rows) is set on the configuration page.
 In landscape LVGL renders 1280x720 and the P4's PPA rotates each strip into
 the portrait frame buffer, so the CPU never rotates pixels. Measured against
 portrait: about 65 ms more per once-a-second redraw (mostly from the smaller
@@ -205,7 +202,7 @@ nobody has measured, so it reports none.
 | File | Purpose |
 | --- | --- |
 | `main/main.c` | Starts the display, WiFi and the fetch task |
-| `main/settings.c` | Settings in NVS over the menuconfig defaults |
+| `main/settings.c` | Settings in NVS over the firmware defaults |
 | `main/net.c` | WiFi (via the ESP32-C6 on the P4 boards, native on the S3), setup portal, mDNS, SNTP |
 | `main/dns_server.c` | The portal's DNS: every name answers with the device |
 | `main/web.c`, `main/web/` | Web server, JSON API, and the setup and configuration pages |

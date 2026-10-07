@@ -9,6 +9,7 @@
 
 #include "battery.h"
 #include "feed.h"
+#include "improv.h"
 #include "net.h"
 #include "openaip.h"
 #include "ota.h"
@@ -113,6 +114,8 @@ void app_main(void)
     ESP_ERROR_CHECK(err);
 
     settings_load();
+    // Early, so the web flasher finds it within its wait after installing
+    improv_start();
     s_lat = settings()->lat;
     s_lon = settings()->lon;
 

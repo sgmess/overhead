@@ -1,84 +1,13 @@
 menu "Overhead radar"
 
-    comment "Defaults: the setup portal and configuration page override these"
-
-    config OVERHEAD_WIFI_SSID
-        string "WiFi SSID"
-        default ""
-        help
-            Optional. Left empty, the first boot opens the setup portal (an
-            open access point named Overhead-XXXX) to choose a network.
-
-    config OVERHEAD_WIFI_PASSWORD
-        string "WiFi password"
-        default ""
-
-    config OVERHEAD_CENTER_LAT
-        string "Radar centre latitude (decimal degrees)"
-        default "51.4700"
-
-    config OVERHEAD_CENTER_LON
-        string "Radar centre longitude (decimal degrees, west is negative)"
-        default "-0.4543"
-
-    config OVERHEAD_DEFAULT_RANGE_INDEX
-        int "Starting range (0=5, 1=10, 2=25, 3=50, 4=100 NM)"
-        range 0 4
-        default 2
-
-    choice OVERHEAD_FEED
-        prompt "Primary aircraft feed"
-        default OVERHEAD_FEED_ADSB_LOL
-        help
-            The other feed is tried automatically when the primary one fails.
-
-        config OVERHEAD_FEED_ADSB_LOL
-            bool "adsb.lol"
-        config OVERHEAD_FEED_ADSB_FI
-            bool "adsb.fi"
-    endchoice
-
-    config OVERHEAD_FETCH_INTERVAL_SEC
-        int "Seconds between feed requests"
-        range 2 60
-        default 5
-
-    config OVERHEAD_SHOW_GROUND
-        bool "Show aircraft on the ground"
-        default y
-
-    config OVERHEAD_SWEEP
-        bool "Animated radar sweep"
-        default y
-
-    config OVERHEAD_MAX_LABELS
-        int "Label at most this many aircraft (nearest first)"
-        range 0 200
-        default 40
+    comment "Everything else is set on the device's configuration page"
 
     config OVERHEAD_OTA_REPO
         string "GitHub repository for firmware updates (owner/name)"
         default "sgmess/overhead"
         help
             The configuration page checks this repository's latest release
-            for <project>-ota.bin, e.g. overhead-tab5-ota.bin.
-
-    menu "Battery (boards with a battery monitor)"
-
-        config OVERHEAD_BATTERY_AUTO_OFF
-            bool "Power off before the pack runs flat"
-            default y
-            help
-                On the Tab5 the NP-F550 pack latches into protection below
-                6.0 V and must be removed and refitted before it will charge
-                again. Powering off just above that avoids it.
-
-        config OVERHEAD_BATTERY_SHUTDOWN_MV
-            int "Power off below this pack voltage (mV), held for 30 s"
-            depends on OVERHEAD_BATTERY_AUTO_OFF
-            range 6100 7400
-            default 6300
-
-    endmenu
+            for <project>-ota.bin, e.g. overhead-tab5-ota.bin. Change it in
+            a fork that publishes its own releases.
 
 endmenu

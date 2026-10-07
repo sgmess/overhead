@@ -38,6 +38,3 @@ CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 
 # The sweep ticks at 33 ms; refreshing faster than that only queues work
 CONFIG_LV_DEF_REFR_PERIOD=30
-
-# Fewer tags on a smaller scope
-CONFIG_OVERHEAD_MAX_LABELS=25

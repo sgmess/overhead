@@ -38,7 +38,7 @@ jobs:
           - board: tab5
             target: esp32p4
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # tags, for the version git describe stamps into the app
 
@@ -59,7 +59,7 @@ jobs:
           cp "$b/overhead-${{ matrix.board }}.bin" "out/overhead-${{ matrix.board }}-ota.bin"
           ls -l out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: firmware-${{ matrix.board }}
           path: out/
@@ -71,13 +71,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: firmware-*
           merge-multiple: true
           path: out
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: out/*.bin
           generate_release_notes: true
@@ -109,9 +109,9 @@ jobs:
       group: pages
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: firmware-*
           merge-multiple: true
@@ -126,9 +126,9 @@ jobs:
           sed -i "s/__VERSION__/${GITHUB_REF_NAME}/g" site/*.html site/*.json
           ls -l site
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
       - id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

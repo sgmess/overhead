@@ -1,7 +1,6 @@
 #include "settings.h"
 
 #include <math.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "esp_log.h"
@@ -13,40 +12,32 @@ static const char *TAG = "settings";
 
 static settings_t s_settings;
 
+// Before anything is saved: no network (so the setup portal opens) and the
+// radar centred on Heathrow. Everything here can be changed on the
+// configuration page.
 void settings_defaults(settings_t *out)
 {
-    memset(out, 0, sizeof(*out));
-    strlcpy(out->ssid, CONFIG_OVERHEAD_WIFI_SSID, sizeof(out->ssid));
-    strlcpy(out->password, CONFIG_OVERHEAD_WIFI_PASSWORD, sizeof(out->password));
-    out->lat = strtod(CONFIG_OVERHEAD_CENTER_LAT, NULL);
-    out->lon = strtod(CONFIG_OVERHEAD_CENTER_LON, NULL);
-    out->range_idx = CONFIG_OVERHEAD_DEFAULT_RANGE_INDEX;
-#ifdef CONFIG_OVERHEAD_FEED_ADSB_FI
-    out->feed = 1;
-#endif
-    out->fetch_s = CONFIG_OVERHEAD_FETCH_INTERVAL_SEC;
-#ifdef CONFIG_OVERHEAD_SHOW_GROUND
-    out->show_ground = true;
-#endif
-#ifdef CONFIG_OVERHEAD_SWEEP
-    out->sweep = true;
-#endif
-    out->max_labels = CONFIG_OVERHEAD_MAX_LABELS;
-#ifdef CONFIG_OVERHEAD_BATTERY_AUTO_OFF
-    out->batt_auto_off = true;
-#endif
-#ifdef CONFIG_OVERHEAD_BATTERY_SHUTDOWN_MV
-    out->batt_shutdown_mv = CONFIG_OVERHEAD_BATTERY_SHUTDOWN_MV;
+    *out = (settings_t){
+        .lat = 51.4700,
+        .lon = -0.4543,
+        .range_idx = 2, // 25 NM
+        .feed = 0,      // adsb.lol, with adsb.fi as the fallback
+        .fetch_s = 5,
+        .show_ground = true,
+        .sweep = true,
+#if defined(OVERHEAD_BOARD_S3_28C)
+        .max_labels = 25, // a smaller scope
 #else
-    out->batt_shutdown_mv = 6300;
+        .max_labels = 40,
 #endif
-    out->show_airspace = true;
-    out->show_airfields = true;
-#if CONFIG_OVERHEAD_TAB5_LANDSCAPE
-    out->rotation = 90;
-#elif CONFIG_OVERHEAD_TAB5_LANDSCAPE_FLIPPED
-    out->rotation = 270;
-#endif
+        // The Tab5's NP-F550 latches into protection below 6.0 V and has to
+        // be refitted before it charges again
+        .batt_auto_off = true,
+        .batt_shutdown_mv = 6300,
+        .rotation = 0, // the Tab5 in portrait, its panel's native way up
+        .show_airspace = true,
+        .show_airfields = true,
+    };
 }
 
 // Two-letter codes separated by commas, or nothing

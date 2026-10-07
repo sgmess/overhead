@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "dns_server.h"
@@ -26,6 +27,8 @@
 static const char *TAG = "net";
 
 #define BIT_CONNECTED BIT0
+#define BIT_TRY_FAILED BIT1
+#define TRY_ATTEMPTS 3
 
 // While the portal is open each retry of the saved network scans every
 // channel, which takes the access point off its own for a moment; often
@@ -38,14 +41,47 @@ ESP_EVENT_DEFINE_BASE(NET_EVENT);
 enum {
     NET_EV_OPEN_SETUP,
     NET_EV_RETRY,
+    NET_EV_TRY,     // join the network in the event data, a net_creds_t
+    NET_EV_RESTORE, // give up on that and go back to the saved one
 };
+
+typedef struct {
+    char ssid[33];
+    char password[65];
+} net_creds_t;
 
 static EventGroupHandle_t s_events;
 static esp_netif_t *s_sta, *s_ap;
 static bool s_have_network, s_ever_connected;
+static volatile bool s_started;
+static bool s_trying; // net_try_network() in progress
+static int s_try_fails;
 static volatile bool s_setup_open;
 static char s_setup_ssid[24], s_setup_url[32];
 static esp_timer_handle_t s_setup_timer, s_retry_timer;
+
+static void set_station(const char *ssid, const char *password)
+{
+    wifi_config_t sta = {0};
+    strlcpy((char *)sta.sta.ssid, ssid, sizeof(sta.sta.ssid));
+    strlcpy((char *)sta.sta.password, password, sizeof(sta.sta.password));
+    sta.sta.threshold.authmode = password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    sta.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+    esp_wifi_set_config(WIFI_IF_STA, &sta);
+}
+
+// Back to the saved network after a failed net_try_network()
+static void restore_network(void)
+{
+    const settings_t *s = settings();
+    s_trying = false;
+    s_have_network = s->ssid[0] != '\0';
+    if (s_have_network) {
+        ESP_LOGW(TAG, "back to '%s'", s->ssid);
+        set_station(s->ssid, s->password);
+        esp_wifi_connect();
+    }
+}
 
 static void post_from_timer(void *arg)
 {
@@ -119,7 +155,17 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *ev = data;
         xEventGroupClearBits(s_events, BIT_CONNECTED);
-        if (s_setup_open) {
+        if (s_trying) {
+            // ASSOC_LEAVE is net_try_network() leaving the old network
+            if (ev->reason == WIFI_REASON_ASSOC_LEAVE) return;
+            ESP_LOGW(TAG, "new network: attempt %d failed (reason %d)", s_try_fails + 1, ev->reason);
+            if (++s_try_fails < TRY_ATTEMPTS) {
+                esp_wifi_connect();
+            } else {
+                restore_network();
+                xEventGroupSetBits(s_events, BIT_TRY_FAILED);
+            }
+        } else if (s_setup_open) {
             esp_timer_start_once(s_retry_timer, RETRY_DURING_SETUP_MS * 1000LL);
         } else {
             ESP_LOGW(TAG, "disconnected (reason %d), retrying", ev->reason);
@@ -134,6 +180,7 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         ESP_LOGI(TAG, "got IP " IPSTR ", settings at http://" IPSTR " or http://" NET_HOSTNAME ".local",
                  IP2STR(&ev->ip_info.ip), IP2STR(&ev->ip_info.ip));
         s_ever_connected = true;
+        s_trying = false;
         esp_timer_stop(s_setup_timer);
         close_setup();
         xEventGroupSetBits(s_events, BIT_CONNECTED);
@@ -142,7 +189,19 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         // shouldn't put an open access point up
         if (!s_ever_connected) open_setup();
     } else if (base == NET_EVENT && id == NET_EV_RETRY) {
-        if (!net_is_connected()) esp_wifi_connect();
+        if (!net_is_connected() && !s_trying) esp_wifi_connect();
+    } else if (base == NET_EVENT && id == NET_EV_TRY) {
+        const net_creds_t *c = data;
+        ESP_LOGI(TAG, "trying '%s'", c->ssid);
+        s_trying = true;
+        s_try_fails = 0;
+        s_have_network = true;
+        esp_timer_stop(s_retry_timer);
+        esp_wifi_disconnect();
+        set_station(c->ssid, c->password);
+        esp_wifi_connect();
+    } else if (base == NET_EVENT && id == NET_EV_RESTORE) {
+        if (s_trying) restore_network();
     }
 }
 
@@ -198,13 +257,8 @@ void net_start(void)
     s_retry_timer = make_timer("retry", NET_EV_RETRY);
 
     if (s_have_network) {
-        wifi_config_t sta = {0};
-        strlcpy((char *)sta.sta.ssid, cfg->ssid, sizeof(sta.sta.ssid));
-        strlcpy((char *)sta.sta.password, cfg->password, sizeof(sta.sta.password));
-        sta.sta.threshold.authmode = cfg->password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
-        sta.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta));
+        set_station(cfg->ssid, cfg->password);
         ESP_ERROR_CHECK(esp_wifi_start());
         ESP_LOGI(TAG, "connecting to '%s'", cfg->ssid);
         esp_timer_start_once(s_setup_timer, NET_SETUP_AFTER_S * 1000000LL);
@@ -213,6 +267,7 @@ void net_start(void)
         esp_event_post(NET_EVENT, NET_EV_OPEN_SETUP, NULL, 0, portMAX_DELAY);
     }
 
+    s_started = true;
     web_start();
     start_mdns();
 
@@ -223,6 +278,58 @@ void net_start(void)
 bool net_is_connected(void)
 {
     return xEventGroupGetBits(s_events) & BIT_CONNECTED;
+}
+
+bool net_started(void)
+{
+    return s_started;
+}
+
+bool net_try_network(const char *ssid, const char *password, int timeout_ms)
+{
+    if (!s_started) return false;
+    net_creds_t c;
+    strlcpy(c.ssid, ssid, sizeof(c.ssid));
+    strlcpy(c.password, password, sizeof(c.password));
+    xEventGroupClearBits(s_events, BIT_CONNECTED | BIT_TRY_FAILED);
+    esp_event_post(NET_EVENT, NET_EV_TRY, &c, sizeof(c), portMAX_DELAY);
+    EventBits_t bits = xEventGroupWaitBits(s_events, BIT_CONNECTED | BIT_TRY_FAILED, pdFALSE, pdFALSE,
+                                           pdMS_TO_TICKS(timeout_ms));
+    if (bits & BIT_CONNECTED) return true;
+    if (!(bits & BIT_TRY_FAILED)) esp_event_post(NET_EVENT, NET_EV_RESTORE, NULL, 0, portMAX_DELAY);
+    return false;
+}
+
+static int cmp_rssi(const void *a, const void *b)
+{
+    return ((const wifi_ap_record_t *)b)->rssi - ((const wifi_ap_record_t *)a)->rssi;
+}
+
+int net_scan(net_ap_t *out, int max)
+{
+    if (!s_started || esp_wifi_scan_start(NULL, true) != ESP_OK) return -1;
+    uint16_t n = 32;
+    wifi_ap_record_t *aps = calloc(n, sizeof(*aps));
+    if (!aps) {
+        esp_wifi_clear_ap_list();
+        return -1;
+    }
+    esp_wifi_scan_get_ap_records(&n, aps);
+    qsort(aps, n, sizeof(*aps), cmp_rssi);
+    int count = 0;
+    for (int i = 0; i < n && count < max; i++) {
+        const char *ssid = (const char *)aps[i].ssid;
+        if (!ssid[0]) continue;
+        bool seen = false;
+        for (int j = 0; j < count && !seen; j++) seen = strcmp(ssid, out[j].ssid) == 0;
+        if (seen) continue;
+        strlcpy(out[count].ssid, ssid, sizeof(out[count].ssid));
+        out[count].rssi = aps[i].rssi;
+        out[count].open = aps[i].authmode == WIFI_AUTH_OPEN;
+        count++;
+    }
+    free(aps);
+    return count;
 }
 
 bool net_wait_connected(int timeout_ms)
