@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "backlight.h"
 #include "battery.h"
 #include "cJSON.h"
 #include "esp_app_desc.h"
@@ -18,7 +19,7 @@
 
 static const char *TAG = "web";
 
-#define BODY_MAX 1024
+#define BODY_MAX 2048 // the settings form is about 1 KB
 #define SCAN_MAX 24
 #define RESTART_DELAY_MS 1500 // lets the reply reach the browser first
 
@@ -30,12 +31,15 @@ extern const char config_html_end[] asm("_binary_config_html_end");
 #if defined(OVERHEAD_BOARD_TAB5)
 #define BOARD_NAME "M5Stack Tab5"
 #define CAN_ROTATE true
+#define HAS_SPEAKER true
 #elif defined(OVERHEAD_BOARD_P4_34C)
 #define BOARD_NAME "Waveshare ESP32-P4-WIFI6-Touch-LCD-3.4C"
 #define CAN_ROTATE false
+#define HAS_SPEAKER false
 #else
 #define BOARD_NAME "Waveshare ESP32-S3-Touch-LCD-2.8C"
 #define CAN_ROTATE false
+#define HAS_SPEAKER false
 #endif
 
 // Every change ends in a restart, and the flash write happens just before it,
@@ -185,6 +189,8 @@ static esp_err_t on_state(httpd_req_t *req)
     cJSON_AddStringToObject(json, "project", app->project_name);
     cJSON_AddStringToObject(json, "update_repo", CONFIG_OVERHEAD_OTA_REPO);
     cJSON_AddBoolToObject(json, "can_rotate", CAN_ROTATE);
+    cJSON_AddBoolToObject(json, "has_speaker", HAS_SPEAKER);
+    cJSON_AddBoolToObject(json, "dimmed", backlight_night());
     cJSON_AddNumberToObject(json, "uptime_s", (double)(esp_timer_get_time() / 1000000));
     cJSON_AddNumberToObject(json, "heap_internal", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     cJSON_AddNumberToObject(json, "heap_psram", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
@@ -231,6 +237,21 @@ static esp_err_t on_state(httpd_req_t *req)
     cJSON_AddStringToObject(set, "openaip_countries", s->openaip_countries);
     cJSON_AddBoolToObject(set, "show_airspace", s->show_airspace);
     cJSON_AddBoolToObject(set, "show_airfields", s->show_airfields);
+    cJSON_AddNumberToObject(set, "brightness", s->brightness);
+    cJSON_AddNumberToObject(set, "dim_mode", s->dim_mode);
+    cJSON_AddNumberToObject(set, "dim_brightness", s->dim_brightness);
+    cJSON_AddNumberToObject(set, "dim_from", s->dim_from);
+    cJSON_AddNumberToObject(set, "dim_to", s->dim_to);
+    cJSON_AddStringToObject(set, "tz", s->tz);
+    cJSON_AddNumberToObject(set, "clock", s->clock);
+    cJSON_AddNumberToObject(set, "tag_fields", s->tag_fields);
+    cJSON_AddNumberToObject(set, "trail_s", s->trail_s);
+    cJSON_AddBoolToObject(set, "show_military", s->show_military);
+    cJSON_AddBoolToObject(set, "show_route", s->show_route);
+    cJSON_AddBoolToObject(set, "alert", s->alert);
+    cJSON_AddNumberToObject(set, "alert_nm10", s->alert_nm10);
+    cJSON_AddNumberToObject(set, "alert_ft", s->alert_ft);
+    cJSON_AddBoolToObject(set, "alert_sound", s->alert_sound);
 
     openaip_status_t oa;
     openaip_get_status(&oa);
@@ -310,6 +331,28 @@ static esp_err_t on_settings(httpd_req_t *req)
     if (CAN_ROTATE) take_int(json, "rotation", &s.rotation);
     take_bool(json, "show_airspace", &s.show_airspace);
     take_bool(json, "show_airfields", &s.show_airfields);
+    take_int(json, "brightness", &s.brightness);
+    take_int(json, "dim_mode", &s.dim_mode);
+    take_int(json, "dim_brightness", &s.dim_brightness);
+    take_int(json, "dim_from", &s.dim_from);
+    take_int(json, "dim_to", &s.dim_to);
+    take_int(json, "clock", &s.clock);
+    take_int(json, "tag_fields", &s.tag_fields);
+    take_int(json, "trail_s", &s.trail_s);
+    take_bool(json, "show_military", &s.show_military);
+    take_bool(json, "show_route", &s.show_route);
+    take_bool(json, "alert", &s.alert);
+    take_int(json, "alert_nm10", &s.alert_nm10);
+    take_int(json, "alert_ft", &s.alert_ft);
+    take_bool(json, "alert_sound", &s.alert_sound);
+    const cJSON *tz = cJSON_GetObjectItemCaseSensitive(json, "tz");
+    if (cJSON_IsString(tz)) {
+        if (strlen(tz->valuestring) >= sizeof(s.tz)) {
+            cJSON_Delete(json);
+            return send_result(req, ESP_ERR_INVALID_ARG, "The timezone is up to 47 characters");
+        }
+        strlcpy(s.tz, tz->valuestring, sizeof(s.tz));
+    }
     const cJSON *cc = cJSON_GetObjectItemCaseSensitive(json, "openaip_countries");
     if (cJSON_IsString(cc)) {
         // Normalised to "FR,CH": upper case, commas, no spaces
@@ -336,9 +379,23 @@ static esp_err_t on_settings(httpd_req_t *req)
     cJSON_Delete(json);
 
     if (!settings_valid(&s)) {
-        return send_result(req, ESP_ERR_INVALID_ARG, "A value is out of range (countries are two-letter codes, up to four)");
+        return send_result(req, ESP_ERR_INVALID_ARG,
+                           "A value is out of range (countries are two-letter codes, up to four; a timezone is a "
+                           "POSIX TZ string such as GMT0BST,M3.5.0/1,M10.5.0)");
     }
     return send_result(req, commit(&s), NULL);
+}
+
+// The brightness slider, shown for a few seconds without saving
+static esp_err_t on_brightness(httpd_req_t *req)
+{
+    cJSON *json = read_json(req);
+    int percent = -1;
+    take_int(json, "percent", &percent);
+    cJSON_Delete(json);
+    if (percent < 1 || percent > 100) return send_result(req, ESP_ERR_INVALID_ARG, "Percent from 1 to 100");
+    backlight_preview(percent);
+    return send_result(req, ESP_OK, NULL);
 }
 
 static esp_err_t on_ota_status(httpd_req_t *req)
@@ -411,6 +468,7 @@ void web_start(void)
         {.uri = "/api/wifi", .method = HTTP_POST, .handler = on_wifi},
         {.uri = "/api/settings", .method = HTTP_POST, .handler = on_settings},
         {.uri = "/api/forget", .method = HTTP_POST, .handler = on_forget},
+        {.uri = "/api/brightness", .method = HTTP_POST, .handler = on_brightness},
         {.uri = "/api/defaults", .method = HTTP_POST, .handler = on_defaults},
         {.uri = "/api/ota", .method = HTTP_GET, .handler = on_ota_status},
         {.uri = "/api/ota/check", .method = HTTP_POST, .handler = on_ota_check},

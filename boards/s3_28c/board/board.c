@@ -12,6 +12,15 @@ void board_display_start(int rotation_deg)
     bsp_display_backlight_on();
 }
 
+void board_set_brightness(int percent)
+{
+    bsp_display_brightness_set(percent);
+}
+
+void board_chime(void)
+{
+}
+
 void board_wifi_power_on(void)
 {
     // Native WiFi, nothing to power.

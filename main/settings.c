@@ -37,7 +37,38 @@ void settings_defaults(settings_t *out)
         .rotation = 0, // the Tab5 in portrait, its panel's native way up
         .show_airspace = true,
         .show_airfields = true,
+        .brightness = 100,
+        .dim_mode = 1, // sunset to sunrise
+        .dim_brightness = 30,
+        .dim_from = 22 * 60,
+        .dim_to = 7 * 60,
+        .clock = 0, // UTC until a timezone is chosen
+        .tag_fields = TAG_CALLSIGN | TAG_ALT,
+#if defined(OVERHEAD_BOARD_S3_28C)
+        .trail_s = 0, // every line drawn is more PSRAM traffic against the scanout
+#else
+        .trail_s = 120,
+#endif
+        .show_military = true,
+        .show_route = true,
+        .alert = false, // near an airport it would never stop
+        .alert_nm10 = 20,
+        .alert_ft = 5000,
+        .alert_sound = true,
     };
+}
+
+// A POSIX TZ string: names, offsets and rules, nothing that could upset the
+// clock's printf or the page that shows it again
+static bool valid_tz(const char *s)
+{
+    for (; *s; s++) {
+        if (!((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z') || (*s >= '0' && *s <= '9') ||
+              strchr("<>+-,:./", *s))) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Two-letter codes separated by commas, or nothing
@@ -62,7 +93,17 @@ bool settings_valid(const settings_t *s)
            s->fetch_s >= 2 && s->fetch_s <= 60 &&
            s->max_labels >= 0 && s->max_labels <= 200 &&
            s->batt_shutdown_mv >= 6100 && s->batt_shutdown_mv <= 7400 &&
-           (s->rotation == 0 || s->rotation == 90 || s->rotation == 270);
+           (s->rotation == 0 || s->rotation == 90 || s->rotation == 270) &&
+           s->brightness >= 5 && s->brightness <= 100 &&
+           s->dim_mode >= 0 && s->dim_mode <= 2 &&
+           s->dim_brightness >= 1 && s->dim_brightness <= 100 &&
+           s->dim_from >= 0 && s->dim_from < 24 * 60 && s->dim_to >= 0 && s->dim_to < 24 * 60 &&
+           strlen(s->tz) < sizeof(s->tz) && valid_tz(s->tz) &&
+           s->clock >= 0 && s->clock <= 2 &&
+           s->tag_fields >= 1 && s->tag_fields <= TAG_ALL &&
+           s->trail_s >= 0 && s->trail_s <= 600 &&
+           s->alert_nm10 >= 2 && s->alert_nm10 <= 100 &&
+           s->alert_ft >= 500 && s->alert_ft <= 20000;
 }
 
 // Each getter leaves *v alone when the key is missing, so it keeps its default
@@ -115,6 +156,21 @@ void settings_load(void)
         get_str(h, "oaip_cc", s.openaip_countries, sizeof(s.openaip_countries));
         get_bool(h, "airspace", &s.show_airspace);
         get_bool(h, "airfields", &s.show_airfields);
+        get_int(h, "bright", &s.brightness);
+        get_int(h, "dim_mode", &s.dim_mode);
+        get_int(h, "dim_bright", &s.dim_brightness);
+        get_int(h, "dim_from", &s.dim_from);
+        get_int(h, "dim_to", &s.dim_to);
+        get_str(h, "tz", s.tz, sizeof(s.tz));
+        get_int(h, "clock", &s.clock);
+        get_int(h, "tag", &s.tag_fields);
+        get_int(h, "trail", &s.trail_s);
+        get_bool(h, "military", &s.show_military);
+        get_bool(h, "route", &s.show_route);
+        get_bool(h, "alert", &s.alert);
+        get_int(h, "alert_nm10", &s.alert_nm10);
+        get_int(h, "alert_ft", &s.alert_ft);
+        get_bool(h, "alert_snd", &s.alert_sound);
         nvs_close(h);
     }
 
@@ -159,6 +215,21 @@ esp_err_t settings_save(const settings_t *s)
     if (err == ESP_OK) err = nvs_set_str(h, "oaip_cc", s->openaip_countries);
     if (err == ESP_OK) err = nvs_set_u8(h, "airspace", s->show_airspace);
     if (err == ESP_OK) err = nvs_set_u8(h, "airfields", s->show_airfields);
+    if (err == ESP_OK) err = nvs_set_i32(h, "bright", s->brightness);
+    if (err == ESP_OK) err = nvs_set_i32(h, "dim_mode", s->dim_mode);
+    if (err == ESP_OK) err = nvs_set_i32(h, "dim_bright", s->dim_brightness);
+    if (err == ESP_OK) err = nvs_set_i32(h, "dim_from", s->dim_from);
+    if (err == ESP_OK) err = nvs_set_i32(h, "dim_to", s->dim_to);
+    if (err == ESP_OK) err = nvs_set_str(h, "tz", s->tz);
+    if (err == ESP_OK) err = nvs_set_i32(h, "clock", s->clock);
+    if (err == ESP_OK) err = nvs_set_i32(h, "tag", s->tag_fields);
+    if (err == ESP_OK) err = nvs_set_i32(h, "trail", s->trail_s);
+    if (err == ESP_OK) err = nvs_set_u8(h, "military", s->show_military);
+    if (err == ESP_OK) err = nvs_set_u8(h, "route", s->show_route);
+    if (err == ESP_OK) err = nvs_set_u8(h, "alert", s->alert);
+    if (err == ESP_OK) err = nvs_set_i32(h, "alert_nm10", s->alert_nm10);
+    if (err == ESP_OK) err = nvs_set_i32(h, "alert_ft", s->alert_ft);
+    if (err == ESP_OK) err = nvs_set_u8(h, "alert_snd", s->alert_sound);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     if (err == ESP_OK) s_settings = *s;

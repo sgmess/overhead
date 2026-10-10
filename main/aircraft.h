@@ -20,6 +20,8 @@ typedef struct {
     int64_t pos_time_us; // esp_timer time the position was valid
     bool on_ground;
     bool emergency;
+    bool military;       // readsb's dbFlags bit 0, from the feed's aircraft database
+    bool heli;           // emitter category A7, rotorcraft
 } aircraft_t;
 
 // Best display name: callsign, then registration, then ICAO hex.

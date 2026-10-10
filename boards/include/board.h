@@ -13,6 +13,13 @@
 // the round boards ignore it.
 void board_display_start(int rotation_deg);
 
+// Backlight, 0..100 percent. Safe from any task.
+void board_set_brightness(int percent);
+
+// Play a short two-tone chime without blocking, on boards with a speaker
+// (only the Tab5 so far); does nothing on the others.
+void board_chime(void);
+
 // Power the WiFi radio. Call before esp_wifi_init().
 void board_wifi_power_on(void);
 

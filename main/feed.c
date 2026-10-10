@@ -154,6 +154,10 @@ static bool parse_aircraft(const cJSON *j, int64_t now_us, aircraft_t *a)
     a->track_deg = (float)num_or(j, "track", num_or(j, "true_heading", -1));
     a->vs_fpm = (int32_t)num_or(j, "baro_rate", num_or(j, "geom_rate", 0));
 
+    a->military = ((int)num_or(j, "dbFlags", 0) & 1) != 0;
+    const cJSON *cat = cJSON_GetObjectItemCaseSensitive(j, "category");
+    a->heli = cJSON_IsString(cat) && strcmp(cat->valuestring, "A7") == 0;
+
     double seen_pos = num_or(j, "seen_pos", 0);
     a->pos_time_us = now_us - (int64_t)(seen_pos * 1e6);
 

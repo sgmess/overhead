@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 
 #include "board.h"
 #include "esp_heap_caps.h"
@@ -14,6 +16,7 @@
 #include "openaip.h"
 #include "ota.h"
 #include "radar_ui.h"
+#include "route.h"
 #include "settings.h"
 
 static const char *TAG = "overhead";
@@ -114,6 +117,11 @@ void app_main(void)
     ESP_ERROR_CHECK(err);
 
     settings_load();
+    // Local time for the clock and the dimming hours
+    if (settings()->tz[0]) {
+        setenv("TZ", settings()->tz, 1);
+        tzset();
+    }
     // Early, so the web flasher finds it within its wait after installing
     improv_start();
     s_lat = settings()->lat;
@@ -133,6 +141,7 @@ void app_main(void)
     feed_init();
     net_start();
     openaip_start();
+    route_start();
     // TLS and JSON parsing buffers are in PSRAM; this is just call depth.
     xTaskCreate(fetch_task, "fetch", FETCH_STACK, NULL, 5, &s_fetch_task);
 }

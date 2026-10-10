@@ -50,6 +50,11 @@ a{color:var(--accent)}
 .buttons .primary{width:auto;padding:9px 16px}
 .bar{height:8px;border-radius:4px;background:#081a12;border:1px solid var(--line);margin-top:12px;overflow:hidden}
 .bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .4s}
+.slider{display:flex;align-items:center;gap:12px}
+.slider input{flex:1;padding:0;accent-color:var(--accent)}
+.slider output{min-width:3.5em;text-align:right;color:var(--text)}
+.checks{display:flex;flex-wrap:wrap;gap:4px 18px}
+.checks .check{margin-top:8px}
 </style>
 </head>
 <body>
@@ -84,8 +89,48 @@ a{color:var(--accent)}
       <option value="0">None</option><option value="10">10 aircraft</option><option value="20">20 aircraft</option>
       <option value="40">40 aircraft</option><option value="80">80 aircraft</option><option value="200">All aircraft</option>
     </select>
+    <label>Data tags show</label>
+    <div class="checks" id="tag_fields">
+      <label class="check"><input type="checkbox" value="1"> Callsign</label>
+      <label class="check"><input type="checkbox" value="2"> Altitude</label>
+      <label class="check"><input type="checkbox" value="4"> Speed</label>
+      <label class="check"><input type="checkbox" value="8"> Type</label>
+    </div>
+    <p class="hint">Altitude is in hundreds of feet with a climb or descent arrow; speed is ground speed in knots.</p>
+    <label for="trail_s">Trails</label>
+    <select id="trail_s">
+      <option value="0">Off</option><option value="60">1 minute</option><option value="120">2 minutes</option>
+      <option value="300">5 minutes</option><option value="600">10 minutes</option>
+    </select>
+    <p class="hint">Where each of the nearest 50 aircraft has been, fading with age.</p>
     <label class="check"><input type="checkbox" id="sweep"> Animated sweep</label>
     <label class="check"><input type="checkbox" id="show_ground"> Show aircraft on the ground</label>
+    <label class="check"><input type="checkbox" id="show_military"> Highlight military aircraft</label>
+    <label class="check"><input type="checkbox" id="show_route"> Origin and destination in the aircraft card</label>
+    <p class="hint">Military aircraft get a pink diamond. Routes come from <a href="https://adsb.im" target="_blank" rel="noopener">adsb.im</a>,
+      which is sent the callsign of the aircraft you tap; a question mark means the route doesn't fit where it is.
+      Helicopters are always drawn with a rotor.</p>
+  </section>
+
+  <section class="card">
+    <h2>Overhead alert</h2>
+    <label class="check"><input type="checkbox" id="alert"> Alert when an aircraft is close and low</label>
+    <div class="row">
+      <div><label for="alert_nm10">Within</label>
+        <select id="alert_nm10">
+          <option value="5">0.5 NM</option><option value="10">1 NM</option><option value="20">2 NM</option>
+          <option value="30">3 NM</option><option value="50">5 NM</option><option value="100">10 NM</option>
+        </select></div>
+      <div><label for="alert_ft">Below</label>
+        <select id="alert_ft">
+          <option value="1000">1,000 ft</option><option value="2000">2,000 ft</option><option value="3000">3,000 ft</option>
+          <option value="5000">5,000 ft</option><option value="8000">8,000 ft</option><option value="10000">10,000 ft</option>
+          <option value="15000">15,000 ft</option><option value="20000">20,000 ft</option>
+        </select></div>
+    </div>
+    <label class="check hidden" id="alert-sound-row"><input type="checkbox" id="alert_sound"> Chime</label>
+    <p class="hint">The aircraft blinks amber and a banner names it; tap the banner for its card. The screen comes up to
+      full brightness at night while it lasts. Altitude is pressure altitude, so near an airport set the ceiling with that in mind.</p>
   </section>
 
   <section class="card">
@@ -129,14 +174,43 @@ a{color:var(--accent)}
     <p class="hint">Positions are extrapolated between updates. Both feeds are free; please be gentle with them.</p>
   </section>
 
-  <section class="card hidden" id="display-card">
+  <section class="card">
     <h2>Display</h2>
-    <label for="rotation">Orientation</label>
-    <select id="rotation">
-      <option value="0">Portrait: scope on top, list below</option>
-      <option value="90">Landscape: scope left, list right</option>
-      <option value="270">Landscape, the other way up</option>
+    <label for="brightness">Brightness</label>
+    <div class="slider"><input type="range" id="brightness" min="5" max="100" step="5"><output id="brightness-out"></output></div>
+    <label for="dim_mode">Dim at night</label>
+    <select id="dim_mode">
+      <option value="0">Never</option><option value="1">Sunset to sunrise</option><option value="2">Between set times</option>
     </select>
+    <div class="row" id="dim-times">
+      <div><label for="dim_from">From</label><input type="time" id="dim_from"></div>
+      <div><label for="dim_to">Until</label><input type="time" id="dim_to"></div>
+    </div>
+    <div id="dim-level">
+      <label for="dim_brightness">Night brightness</label>
+      <div class="slider"><input type="range" id="dim_brightness" min="1" max="100" step="1"><output id="dim_brightness-out"></output></div>
+    </div>
+    <p class="hint" id="dim-hint">Sunset and sunrise are worked out for the radar centre. Moving a slider shows that level on the
+      screen for a few seconds.</p>
+
+    <label for="clock">Clock</label>
+    <select id="clock">
+      <option value="0">UTC</option><option value="1">Local time</option><option value="2">Local time, with UTC under it</option>
+    </select>
+    <label for="tz-select">Timezone</label>
+    <select id="tz-select"></select>
+    <input id="tz" class="hidden" maxlength="47" autocomplete="off" autocapitalize="none" spellcheck="false"
+           placeholder="POSIX TZ, e.g. GMT0BST,M3.5.0/1,M10.5.0" style="margin-top:8px">
+    <p class="hint" id="tz-hint">For the local clock and the dimming times.</p>
+
+    <div id="rotation-row" class="hidden">
+      <label for="rotation">Orientation</label>
+      <select id="rotation">
+        <option value="0">Portrait: scope on top, list below</option>
+        <option value="90">Landscape: scope left, list right</option>
+        <option value="270">Landscape, the other way up</option>
+      </select>
+    </div>
   </section>
 
   <section class="card hidden" id="battery-card">
@@ -185,9 +259,75 @@ a{color:var(--accent)}
 
 <script>
 const $ = id => document.getElementById(id);
-const FIELDS = ['range_idx', 'max_labels', 'feed', 'fetch_s', 'rotation', 'batt_shutdown_mv'];
-const CHECKS = ['sweep', 'show_ground', 'batt_auto_off', 'show_airspace', 'show_airfields'];
+const FIELDS = ['range_idx', 'max_labels', 'feed', 'fetch_s', 'rotation', 'batt_shutdown_mv', 'dim_mode', 'clock',
+                'trail_s', 'alert_nm10', 'alert_ft'];
+const CHECKS = ['sweep', 'show_ground', 'batt_auto_off', 'show_airspace', 'show_airfields', 'show_military', 'show_route',
+                'alert', 'alert_sound'];
+const SLIDERS = ['brightness', 'dim_brightness'];
 let map, pin, keyCleared = false;
+
+// IANA zone, label, POSIX rule (newlib only understands the POSIX form)
+const ZONES = [
+  ['UTC', 'UTC', 'UTC0'],
+  ['Europe/London', 'London, Edinburgh (GMT/BST)', 'GMT0BST,M3.5.0/1,M10.5.0'],
+  ['Europe/Dublin', 'Dublin (GMT/IST)', 'IST-1GMT0,M10.5.0,M3.5.0/1'],
+  ['Europe/Lisbon', 'Lisbon, Canaries (WET/WEST)', 'WET0WEST,M3.5.0/1,M10.5.0'],
+  ['Europe/Paris', 'Paris, Berlin, Madrid, Rome, Amsterdam (CET/CEST)', 'CET-1CEST,M3.5.0,M10.5.0/3'],
+  ['Europe/Athens', 'Athens, Helsinki, Kyiv, Bucharest (EET/EEST)', 'EET-2EEST,M3.5.0/3,M10.5.0/4'],
+  ['Europe/Istanbul', 'Istanbul (+03)', '<+03>-3'],
+  ['Europe/Moscow', 'Moscow (MSK)', 'MSK-3'],
+  ['Asia/Jerusalem', 'Jerusalem (IST/IDT)', 'IST-2IDT,M3.4.4/26,M10.5.0'],
+  ['Asia/Dubai', 'Dubai (+04)', '<+04>-4'],
+  ['Asia/Karachi', 'Karachi (PKT)', 'PKT-5'],
+  ['Asia/Kolkata', 'India (IST)', 'IST-5:30'],
+  ['Asia/Bangkok', 'Bangkok, Jakarta (+07)', '<+07>-7'],
+  ['Asia/Singapore', 'Singapore, Kuala Lumpur (+08)', '<+08>-8'],
+  ['Asia/Hong_Kong', 'Hong Kong (HKT)', 'HKT-8'],
+  ['Asia/Shanghai', 'China (CST)', 'CST-8'],
+  ['Asia/Tokyo', 'Tokyo (JST)', 'JST-9'],
+  ['Asia/Seoul', 'Seoul (KST)', 'KST-9'],
+  ['Australia/Perth', 'Perth (AWST)', 'AWST-8'],
+  ['Australia/Darwin', 'Darwin (ACST)', 'ACST-9:30'],
+  ['Australia/Adelaide', 'Adelaide (ACST/ACDT)', 'ACST-9:30ACDT,M10.1.0,M4.1.0/3'],
+  ['Australia/Brisbane', 'Brisbane (AEST)', 'AEST-10'],
+  ['Australia/Sydney', 'Sydney, Melbourne, Canberra (AEST/AEDT)', 'AEST-10AEDT,M10.1.0,M4.1.0/3'],
+  ['Pacific/Auckland', 'Auckland (NZST/NZDT)', 'NZST-12NZDT,M9.5.0,M4.1.0/3'],
+  ['Pacific/Honolulu', 'Hawaii (HST)', 'HST10'],
+  ['America/Anchorage', 'Alaska (AKST/AKDT)', 'AKST9AKDT,M3.2.0,M11.1.0'],
+  ['America/Los_Angeles', 'Pacific time (PST/PDT)', 'PST8PDT,M3.2.0,M11.1.0'],
+  ['America/Phoenix', 'Arizona (MST)', 'MST7'],
+  ['America/Denver', 'Mountain time (MST/MDT)', 'MST7MDT,M3.2.0,M11.1.0'],
+  ['America/Chicago', 'Central time (CST/CDT)', 'CST6CDT,M3.2.0,M11.1.0'],
+  ['America/Mexico_City', 'Mexico City (CST)', 'CST6'],
+  ['America/New_York', 'Eastern time (EST/EDT)', 'EST5EDT,M3.2.0,M11.1.0'],
+  ['America/Halifax', 'Atlantic time (AST/ADT)', 'AST4ADT,M3.2.0,M11.1.0'],
+  ['America/St_Johns', 'Newfoundland (NST/NDT)', 'NST3:30NDT,M3.2.0,M11.1.0'],
+  ['America/Sao_Paulo', 'São Paulo, Buenos Aires (-03)', '<-03>3'],
+  ['Africa/Lagos', 'Lagos (WAT)', 'WAT-1'],
+  ['Africa/Johannesburg', 'Johannesburg (SAST)', 'SAST-2'],
+  ['Africa/Nairobi', 'Nairobi (EAT)', 'EAT-3'],
+];
+// Browser zones that share a rule with one listed
+const ALIASES = {
+  'Europe/Berlin': 'Europe/Paris', 'Europe/Madrid': 'Europe/Paris', 'Europe/Rome': 'Europe/Paris',
+  'Europe/Amsterdam': 'Europe/Paris', 'Europe/Brussels': 'Europe/Paris', 'Europe/Zurich': 'Europe/Paris',
+  'Europe/Vienna': 'Europe/Paris', 'Europe/Stockholm': 'Europe/Paris', 'Europe/Oslo': 'Europe/Paris',
+  'Europe/Copenhagen': 'Europe/Paris', 'Europe/Warsaw': 'Europe/Paris', 'Europe/Prague': 'Europe/Paris',
+  'Europe/Budapest': 'Europe/Paris', 'Europe/Luxembourg': 'Europe/Paris', 'Europe/Belgrade': 'Europe/Paris',
+  'Europe/Helsinki': 'Europe/Athens', 'Europe/Kyiv': 'Europe/Athens', 'Europe/Kiev': 'Europe/Athens',
+  'Europe/Bucharest': 'Europe/Athens', 'Europe/Sofia': 'Europe/Athens', 'Europe/Riga': 'Europe/Athens',
+  'Europe/Vilnius': 'Europe/Athens', 'Europe/Tallinn': 'Europe/Athens', 'Atlantic/Canary': 'Europe/Lisbon',
+  'Europe/Jersey': 'Europe/London', 'Europe/Guernsey': 'Europe/London', 'Europe/Isle_of_Man': 'Europe/London',
+  'Asia/Calcutta': 'Asia/Kolkata', 'Asia/Jakarta': 'Asia/Bangkok', 'Asia/Ho_Chi_Minh': 'Asia/Bangkok',
+  'Asia/Kuala_Lumpur': 'Asia/Singapore', 'Asia/Manila': 'Asia/Singapore', 'Asia/Taipei': 'Asia/Singapore',
+  'Australia/Melbourne': 'Australia/Sydney', 'Australia/Canberra': 'Australia/Sydney', 'Australia/Hobart': 'Australia/Sydney',
+  'America/Toronto': 'America/New_York', 'America/Detroit': 'America/New_York', 'America/Winnipeg': 'America/Chicago',
+  'America/Edmonton': 'America/Denver', 'America/Vancouver': 'America/Los_Angeles',
+  'America/Argentina/Buenos_Aires': 'America/Sao_Paulo', 'Asia/Riyadh': 'Europe/Istanbul', 'Asia/Qatar': 'Europe/Istanbul',
+};
+
+for (const [, label, posix] of ZONES) $('tz-select').add(new Option(label, posix));
+$('tz-select').add(new Option('Other: type a POSIX TZ string', 'custom'));
 
 for (let mv = 6100; mv <= 7400; mv += 100) {
   $('batt_shutdown_mv').add(new Option((mv / 1000).toFixed(1) + ' V' + (mv === 6300 ? ' (recommended)' : ''), mv));
@@ -296,6 +436,51 @@ function loadMap(lat, lon) {
   document.head.append(js);
 }
 
+const hhmm = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+const minutes = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+
+function showDim() {
+  const mode = +$('dim_mode').value;
+  $('dim-times').classList.toggle('hidden', mode !== 2);
+  $('dim-level').classList.toggle('hidden', mode === 0);
+}
+
+function showTz() {
+  $('tz').classList.toggle('hidden', $('tz-select').value !== 'custom');
+}
+
+// The saved rule, or with none saved yet the browser's own zone, offered
+// rather than applied: nothing changes until Save
+function loadTz(tz) {
+  let hint = 'For the local clock and the dimming times.';
+  if (!tz) {
+    const iana = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    const z = ZONES.find(z => z[0] === (ALIASES[iana] || iana));
+    if (z) {
+      tz = z[2];
+      hint = 'Not saved yet: suggested from this browser (' + iana + ').';
+    } else {
+      tz = 'UTC0';
+    }
+  }
+  const known = ZONES.some(z => z[2] === tz);
+  $('tz-select').value = known ? tz : 'custom';
+  $('tz').value = known ? '' : tz;
+  $('tz-hint').textContent = hint;
+  showTz();
+}
+
+function showSlider(id) {
+  $(id + '-out').textContent = $(id).value + '%';
+}
+
+let previewTimer;
+function preview(id) {
+  showSlider(id);
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => api('/api/brightness', {percent: +$(id).value}).catch(() => {}), 150);
+}
+
 async function load() {
   const j = await api('/api/state');
   const s = j.settings;
@@ -305,7 +490,14 @@ async function load() {
   $('lon').value = s.lon.toFixed(4);
   for (const f of FIELDS) setSelect($(f), s[f]);
   for (const c of CHECKS) $(c).checked = s[c];
-  $('display-card').classList.toggle('hidden', !j.can_rotate);
+  for (const id of SLIDERS) { $(id).value = s[id]; showSlider(id); }
+  for (const box of $('tag_fields').querySelectorAll('input')) box.checked = (s.tag_fields & +box.value) !== 0;
+  $('dim_from').value = hhmm(s.dim_from);
+  $('dim_to').value = hhmm(s.dim_to);
+  showDim();
+  loadTz(s.tz);
+  $('rotation-row').classList.toggle('hidden', !j.can_rotate);
+  $('alert-sound-row').classList.toggle('hidden', !j.has_speaker);
   $('battery-card').classList.toggle('hidden', !j.has_battery);
   $('batt_shutdown_mv').disabled = !s.batt_auto_off;
   if (!map) loadMap(s.lat, s.lon);
@@ -382,6 +574,9 @@ $('ota-install').onclick = async () => {
 };
 
 $('batt_auto_off').onchange = e => { $('batt_shutdown_mv').disabled = !e.target.checked; };
+$('dim_mode').onchange = showDim;
+$('tz-select').onchange = showTz;
+for (const id of SLIDERS) $(id).oninput = () => preview(id);
 $('lat').onchange = $('lon').onchange = placePin;
 $('clear-key').onclick = () => {
   $('openaip_key').value = '';
@@ -411,9 +606,27 @@ $('form').onsubmit = async e => {
     msg.textContent = 'Latitude -90 to 90 and longitude -180 to 180, please.';
     return;
   }
-  const body = {lat, lon};
+  let tags = 0;
+  for (const box of $('tag_fields').querySelectorAll('input')) if (box.checked) tags |= +box.value;
+  if (!tags) {
+    msg.textContent = 'Pick at least one thing for the data tags to show.';
+    return;
+  }
+  const tz = $('tz-select').value === 'custom' ? $('tz').value.trim() : $('tz-select').value;
+  if (!/^[A-Za-z0-9<>+\-,:./]*$/.test(tz) || tz.length > 47) {
+    msg.textContent = 'The timezone is a POSIX TZ string, e.g. GMT0BST,M3.5.0/1,M10.5.0.';
+    return;
+  }
+  if (!$('dim_from').value || !$('dim_to').value) {
+    msg.textContent = 'Set both dimming times, please.';
+    return;
+  }
+  const body = {lat, lon, tag_fields: tags, tz};
   for (const f of FIELDS) body[f] = +$(f).value;
   for (const c of CHECKS) body[c] = $(c).checked;
+  for (const id of SLIDERS) body[id] = +$(id).value;
+  body.dim_from = minutes($('dim_from').value);
+  body.dim_to = minutes($('dim_to').value);
   const key = $('openaip_key').value.trim();
   if (key || keyCleared) body.openaip_key = key; // otherwise the saved one stays
   body.openaip_countries = $('openaip_countries').value;

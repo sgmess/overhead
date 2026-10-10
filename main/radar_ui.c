@@ -6,12 +6,16 @@
 #include <string.h>
 #include <time.h>
 
+#include "backlight.h"
+#include "board.h"
 #include "bsp/display.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "lvgl.h"
 #include "openaip.h"
+#include "route.h"
 #include "settings.h"
+#include "trails.h"
 
 // The scope is the top SCR_W x SCR_W square: the whole panel on the round
 // boards, the upper part of the Tab5's portrait 720x1280 with the traffic
@@ -63,6 +67,8 @@
 #define ROW_H 44
 #define BATT_W 46 // battery outline, about 4 x 2 mm on the Tab5
 #define BATT_H 22
+#define CORNER_X 18 // clock, range, count and battery in the scope square's corners
+#define CORNER_Y 14
 #define QR_SIZE 240
 #elif defined(OVERHEAD_BOARD_P4_34C) // 800x800 round
 #define R_SCOPE 350
@@ -139,6 +145,10 @@
 #define SWEEP_TICK_MS 33
 #define MAX_EXTRAPOLATE_S 60
 #define DROP_STALE_S 90
+#define TRAIL_MAX_AC 50  // the nearest; each trail is up to TRAIL_PTS lines a frame
+#define TRAIL_MIN_PX 4   // closer points add nothing but draw time
+#define ALERT_REARM_S 120 // an aircraft gone this long chimes again when it returns
+#define ALERT_MEMORY 16
 
 typedef struct {
     int nm;
@@ -162,6 +172,8 @@ static const range_t RANGES[] = {{5, 1}, {10, 2}, {25, 5}, {50, 10}, {100, 25}};
 #define C_SELECT 0xffffff
 #define C_WARN 0xffb020
 #define C_FIELD 0x8fb8e8
+#define C_MIL 0xff6ad5
+#define C_ALERT_INK 0x1a1000
 
 // OpenAIP layers, by aero_kind_t: chart blues for controlled airspace, reds
 // for restricted. Thin and translucent so traffic stays on top.
@@ -188,10 +200,15 @@ typedef struct {
     float brg_deg;
     bool visible;
     bool labelled;
+    bool alert;         // within the overhead alert's radius and ceiling
+    uint8_t trail_n;    // points in s_trail_xy, oldest first
+    lv_area_t trail_box; // around the trail, for skipping it outside the clip
 } ac_screen_t;
 
 static aircraft_t *s_ac;
 static ac_screen_t *s_scr;
+static int16_t *s_trail_slot;               // per aircraft, from trails_update()
+static int16_t (*s_trail_xy)[TRAIL_PTS][2]; // per aircraft, screen points
 static int s_count;
 static int s_visible;
 static int s_order[AC_MAX]; // visible, taggable aircraft, nearest first
@@ -202,6 +219,12 @@ static char s_sel_hex[8];
 static int64_t s_last_update_us;
 static char s_feed[16];
 static char s_status[64];
+static int s_alert_n, s_alert_best; // aircraft alerting, and the nearest
+static bool s_blink;                // flips every second, for the alert ring
+static struct {
+    char hex[8];
+    int64_t seen_us;
+} s_alerted[ALERT_MEMORY]; // recently alerting, so each chimes once
 
 // Airspace outlines as screen segments already clipped to the scope, built
 // again only when the range or the data changes
@@ -221,8 +244,8 @@ static lv_draw_buf_t *s_bg_buf;
 static int s_bg_range = -1; // range index it shows; -1: stale
 static void (*s_on_range_change)(void);
 
-static lv_obj_t *s_scope, *s_clock, *s_range_lbl, *s_status_lbl;
-static lv_obj_t *s_card, *s_card_title, *s_card_sub, *s_card_k1, *s_card_v1, *s_card_k2, *s_card_v2;
+static lv_obj_t *s_scope, *s_clock, *s_clock2, *s_range_lbl, *s_status_lbl, *s_alert_lbl;
+static lv_obj_t *s_card, *s_card_title, *s_card_route, *s_card_sub, *s_card_k1, *s_card_v1, *s_card_k2, *s_card_v2;
 static lv_obj_t *s_sweep[SWEEP_SEGS];
 static lv_point_precise_t s_sweep_pts[SWEEP_SEGS][2];
 static float s_sweep_deg;
@@ -250,6 +273,7 @@ static lv_obj_t *s_rows[LIST_ROWS_MAX];
 static lv_obj_t *s_cells[LIST_ROWS_MAX][6];
 static char s_row_hex[LIST_ROWS_MAX][8];
 static lv_obj_t *s_batt_row, *s_batt_level, *s_batt_body, *s_batt_fill, *s_batt_nub, *s_batt_detail;
+static lv_obj_t *s_count_lbl, *s_feed_lbl; // bottom-right corner
 #endif
 
 // ---------------------------------------------------------------- helpers
@@ -296,6 +320,33 @@ static int find_aircraft(const char *hex)
 static bool is_selected(const aircraft_t *a)
 {
     return s_sel_hex[0] && strcmp(a->hex, s_sel_hex) == 0;
+}
+
+static bool is_military(const aircraft_t *a)
+{
+    return a->military && settings()->show_military;
+}
+
+// Chime for an aircraft that has just started alerting, unless it was
+// alerting a moment ago (wandering in and out at the edge, say)
+static void note_alert(const aircraft_t *a, int64_t now)
+{
+    int slot = -1, oldest = 0;
+    for (int k = 0; k < ALERT_MEMORY; k++) {
+        if (strcmp(s_alerted[k].hex, a->hex) == 0) {
+            slot = k;
+            break;
+        }
+        if (s_alerted[k].seen_us < s_alerted[oldest].seen_us) oldest = k;
+    }
+    if (slot < 0 || now - s_alerted[slot].seen_us > ALERT_REARM_S * 1000000LL) {
+        if (settings()->alert_sound) board_chime();
+        if (slot < 0) {
+            slot = oldest;
+            strlcpy(s_alerted[slot].hex, a->hex, sizeof(s_alerted[slot].hex));
+        }
+    }
+    s_alerted[slot].seen_us = now;
 }
 
 // ---------------------------------------------------------------- layout
@@ -367,6 +418,37 @@ static void build_aero_segments(void)
     }
 }
 
+// A trail's points on screen, dropping those too close together or outside
+// the scope; the newest end joins the aircraft's symbol when drawn.
+static void layout_trail(int i, float ppn)
+{
+    ac_screen_t *s = &s_scr[i];
+    trail_pt_t pts[TRAIL_PTS];
+    const int n = trails_get(s_trail_slot[i], pts);
+    int16_t(*xy)[2] = s_trail_xy[i];
+    int m = 0;
+    for (int j = 0; j < n; j++) {
+        const float dx = (pts[j].lon - s_lon0) * 60.0f * s_coslat0 * ppn;
+        const float dy = (pts[j].lat - s_lat0) * 60.0f * ppn;
+        if (dx * dx + dy * dy > (float)R_SCOPE * R_SCOPE) continue;
+        const int x = CX + (int)lroundf(dx), y = CY - (int)lroundf(dy);
+        if (m && abs(x - xy[m - 1][0]) < TRAIL_MIN_PX && abs(y - xy[m - 1][1]) < TRAIL_MIN_PX) continue;
+        xy[m][0] = x;
+        xy[m][1] = y;
+        m++;
+    }
+    // The last report is often within a few pixels of the symbol
+    if (m && abs(s->x - xy[m - 1][0]) < TRAIL_MIN_PX && abs(s->y - xy[m - 1][1]) < TRAIL_MIN_PX) m--;
+    s->trail_n = m;
+    s->trail_box = (lv_area_t){s->x, s->y, s->x, s->y};
+    for (int j = 0; j < m; j++) {
+        s->trail_box.x1 = LV_MIN(s->trail_box.x1, xy[j][0]);
+        s->trail_box.y1 = LV_MIN(s->trail_box.y1, xy[j][1]);
+        s->trail_box.x2 = LV_MAX(s->trail_box.x2, xy[j][0]);
+        s->trail_box.y2 = LV_MAX(s->trail_box.y2, xy[j][1]);
+    }
+}
+
 // Project every aircraft to screen space, moving it forward along its track
 // since its last position report. Runs once a second, not per frame.
 static void layout(void)
@@ -374,15 +456,19 @@ static void layout(void)
     const range_t *r = &RANGES[s_range_idx];
     const float ppn = (float)R_SCOPE / r->nm;
     const int64_t now = esp_timer_get_time();
+    const settings_t *set = settings();
     s_order_n = 0;
     s_visible = 0;
+    s_alert_n = 0;
+    s_alert_best = -1;
     if (s_segs_range != s_range_idx) build_aero_segments();
 
     for (int i = 0; i < s_count; i++) {
         const aircraft_t *a = &s_ac[i];
         ac_screen_t *s = &s_scr[i];
-        s->visible = s->labelled = false;
-        if (a->on_ground && !settings()->show_ground) continue;
+        s->visible = s->labelled = s->alert = false;
+        s->trail_n = 0;
+        if (a->on_ground && !set->show_ground) continue;
 
         double lat = a->lat, lon = a->lon;
         if (!a->on_ground && a->gs_kt > 0 && a->track_deg >= 0) {
@@ -408,7 +494,15 @@ static void layout(void)
         s->visible = true;
         s_visible++;
 
-        bool flagged = is_selected(a) || a->emergency;
+        if (set->alert && !a->on_ground && a->alt_ft != AC_ALT_UNKNOWN && a->alt_ft <= set->alert_ft &&
+            s->dist_nm * 10 <= set->alert_nm10) {
+            s->alert = true;
+            if (s_alert_best < 0 || s->dist_nm < s_scr[s_alert_best].dist_nm) s_alert_best = i;
+            s_alert_n++;
+            note_alert(a, now);
+        }
+
+        bool flagged = is_selected(a) || a->emergency || s->alert;
         s->labelled = flagged;
         // Ground traffic would swamp an airport-centred view, so it only
         // gets a tag or a list row at the closest range
@@ -419,8 +513,21 @@ static void layout(void)
 
     // Label the nearest aircraft first so busy airspace stays readable
     qsort(s_order, s_order_n, sizeof(s_order[0]), cmp_by_dist);
-    for (int k = 0; k < s_order_n && k < settings()->max_labels; k++) {
+    for (int k = 0; k < s_order_n && k < set->max_labels; k++) {
         s_scr[s_order[k]].labelled = true;
+    }
+
+    // Trails for the nearest airborne aircraft, and any flagged further out
+    if (s_trail_xy && set->trail_s > 0) {
+        for (int k = 0, drawn = 0; k < s_order_n; k++) {
+            const int i = s_order[k];
+            const aircraft_t *a = &s_ac[i];
+            if (a->on_ground) continue;
+            const bool flagged = is_selected(a) || a->emergency || s_scr[i].alert;
+            if (drawn >= TRAIL_MAX_AC && !flagged) continue;
+            layout_trail(i, ppn);
+            drawn++;
+        }
     }
 }
 
@@ -517,6 +624,83 @@ static void draw_arrow(lv_layer_t *layer, int x, int y, float track_rad, lv_colo
     lv_draw_triangle(layer, &d);
 }
 
+// Rotorcraft: a body, a rotor crossed at 45 degrees to the track and a tail
+// boom behind, so it reads differently from the fixed-wing arrowhead.
+static void draw_heli(lv_layer_t *layer, int x, int y, float track_rad, lv_color_t color)
+{
+    const float rotor = 9.0f * ARROW_SCALE, tail = 11.0f * ARROW_SCALE;
+    for (int k = 0; k < 2; k++) {
+        const float a = track_rad + (k ? -1.0f : 1.0f) * (float)M_PI / 4;
+        const int dx = (int)lroundf(rotor * sinf(a)), dy = (int)lroundf(rotor * cosf(a));
+        draw_line(layer, x - dx, y + dy, x + dx, y - dy, color, 2, LV_OPA_COVER);
+    }
+    draw_line(layer, x, y, x - (int)lroundf(tail * sinf(track_rad)), y + (int)lroundf(tail * cosf(track_rad)),
+              color, 2, LV_OPA_COVER);
+    draw_dot(layer, x, y, (int)lroundf(4.0f * ARROW_SCALE), color);
+}
+
+// Military: a diamond around the symbol, apart from the emergency and
+// selection rings
+static void draw_diamond(lv_layer_t *layer, int x, int y, int r, lv_color_t color)
+{
+    draw_line(layer, x, y - r, x + r, y, color, 2, LV_OPA_COVER);
+    draw_line(layer, x + r, y, x, y + r, color, 2, LV_OPA_COVER);
+    draw_line(layer, x, y + r, x - r, y, color, 2, LV_OPA_COVER);
+    draw_line(layer, x - r, y, x, y - r, color, 2, LV_OPA_COVER);
+}
+
+// The tag's two lines, each from the fields chosen on the configuration page:
+// callsign and type, then altitude in hundreds of feet (as a controller's
+// radar reads) with a climb or descent arrow, and ground speed.
+static void format_tag(const aircraft_t *a, char *buf, size_t n)
+{
+    const int f = settings()->tag_fields;
+    char l1[24] = "", l2[24] = "";
+    if (f & TAG_CALLSIGN) strlcpy(l1, ac_name(a), sizeof(l1));
+    if ((f & TAG_TYPE) && a->type[0]) {
+        if (l1[0]) strlcat(l1, " ", sizeof(l1));
+        strlcat(l1, a->type, sizeof(l1));
+    }
+    if (f & TAG_ALT) {
+        if (a->on_ground) {
+            strlcpy(l2, "GND", sizeof(l2));
+        } else if (a->alt_ft == AC_ALT_UNKNOWN) {
+            strlcpy(l2, "---", sizeof(l2));
+        } else {
+            const char *trend = a->vs_fpm > 300 ? " " LV_SYMBOL_UP : a->vs_fpm < -300 ? " " LV_SYMBOL_DOWN : "";
+            snprintf(l2, sizeof(l2), "%03d%s", (int)(a->alt_ft + 50) / 100, trend);
+        }
+    }
+    if ((f & TAG_SPEED) && a->gs_kt >= 0 && !a->on_ground) {
+        char gs[12];
+        snprintf(gs, sizeof(gs), "%s%.0fkt", l2[0] ? "  " : "", a->gs_kt);
+        strlcat(l2, gs, sizeof(l2));
+    }
+    // Nothing chosen for the first line (only speed, say): the name, so
+    // the tag still says whose it is
+    if (!l1[0] && !l2[0]) strlcpy(l1, ac_name(a), sizeof(l1));
+    snprintf(buf, n, "%s%s%s", l1, l1[0] && l2[0] ? "\n" : "", l2);
+}
+
+static void draw_trails(lv_layer_t *layer)
+{
+    for (int i = 0; i < s_count; i++) {
+        const ac_screen_t *s = &s_scr[i];
+        if (!s->visible || !s->trail_n) continue;
+        const lv_area_t *b = &s->trail_box;
+        if (!in_clip(layer, b->x1 - 2, b->y1 - 2, b->x2 + 2, b->y2 + 2)) continue;
+        const lv_color_t c = alt_color(&s_ac[i]);
+        const int16_t(*xy)[2] = s_trail_xy[i];
+        // Fading out with age
+        for (int j = 0; j < s->trail_n; j++) {
+            const int x2 = j + 1 < s->trail_n ? xy[j + 1][0] : s->x;
+            const int y2 = j + 1 < s->trail_n ? xy[j + 1][1] : s->y;
+            const lv_opa_t opa = LV_OPA_10 + (LV_OPA_60 - LV_OPA_10) * (j + 1) / s->trail_n;
+            draw_line(layer, xy[j][0], xy[j][1], x2, y2, c, 2, opa);
+        }
+    }
+}
+
 static void draw_scope(lv_layer_t *layer)
 {
     const range_t *r = &RANGES[s_range_idx];
@@ -591,38 +775,37 @@ static void draw_aircraft(lv_layer_t *layer)
 
     for (int i = 0; i < s_count; i++) {
         const ac_screen_t *s = &s_scr[i];
-        if (!s->visible || !in_clip(layer, s->x - 80, s->y - 80, s->x + 140, s->y + 80)) continue;
+        if (!s->visible || !in_clip(layer, s->x - 80, s->y - 80, s->x + LV_MAX(80, TAG_DX + TAG_W), s->y + 80)) continue;
         const aircraft_t *a = &s_ac[i];
         const lv_color_t c = alt_color(a);
         const bool sel = is_selected(a);
 
-        if (a->on_ground) {
-            draw_dot(layer, s->x, s->y, 3, c);
-        } else if (a->gs_kt > 0 && a->track_deg >= 0) {
+        const bool moving = a->gs_kt > 0 && a->track_deg >= 0;
+        const float t = moving ? a->track_deg * DEG2RAD : 0;
+        if (moving && !a->on_ground) {
             // One-minute velocity vector, clamped so jets don't streak across the 5 NM view
-            float t = a->track_deg * DEG2RAD;
             float len = fminf(a->gs_kt / 60.0f * ppn, (float)VECTOR_MAX);
             draw_line(layer, s->x, s->y, s->x + (int)(len * sinf(t)), s->y - (int)(len * cosf(t)), c, 2,
                       LV_OPA_50);
+        }
+        if (a->heli) {
+            draw_heli(layer, s->x, s->y, t, c);
+        } else if (a->on_ground) {
+            draw_dot(layer, s->x, s->y, 3, c);
+        } else if (moving) {
             draw_arrow(layer, s->x, s->y, t, c);
         } else {
             draw_dot(layer, s->x, s->y, 5, c);
         }
 
+        if (is_military(a)) draw_diamond(layer, s->x, s->y, SEL_RING - 2, lv_color_hex(C_MIL));
         if (sel || a->emergency) {
             draw_ring(layer, s->x, s->y, SEL_RING, lv_color_hex(sel ? C_SELECT : C_EMERG), 2);
         }
+        if (s->alert && s_blink) draw_ring(layer, s->x, s->y, SEL_RING + 6, lv_color_hex(C_WARN), 3);
 
         if (s->labelled) {
-            const char *trend = a->vs_fpm > 300 ? " " LV_SYMBOL_UP : a->vs_fpm < -300 ? " " LV_SYMBOL_DOWN : "";
-            if (a->on_ground) {
-                snprintf(buf, sizeof(buf), "%s\nGND", ac_name(a));
-            } else if (a->alt_ft == AC_ALT_UNKNOWN) {
-                snprintf(buf, sizeof(buf), "%s\n---", ac_name(a));
-            } else {
-                // Hundreds of feet, the way a controller's radar tags read
-                snprintf(buf, sizeof(buf), "%s\n%03d%s", ac_name(a), (int)(a->alt_ft + 50) / 100, trend);
-            }
+            format_tag(a, buf, sizeof(buf));
             draw_text(layer, s->x + TAG_DX, s->y - TAG_DY, TAG_W, buf, &F_TAG,
                       sel ? lv_color_hex(C_SELECT) : c, LV_TEXT_ALIGN_LEFT);
         }
@@ -684,6 +867,7 @@ static void on_scope_draw(lv_event_t *e)
         draw_airspace(layer, 0, s_n_segs);
         draw_airfields(layer);
     }
+    draw_trails(layer);
     draw_aircraft(layer);
 }
 
@@ -728,35 +912,96 @@ static void update_range_label(void)
     lv_label_set_text_fmt(s_range_lbl, "%d NM", RANGES[s_range_idx].nm);
 }
 
+// Setting a label's text redraws it even when nothing changed, so only touch
+// what changed.
+static void set_text_if_changed(lv_obj_t *label, const char *text)
+{
+    if (strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
+}
+
 static void update_status_label(void)
 {
+    char text[96];
+    int age = s_last_update_us ? (int)((esp_timer_get_time() - s_last_update_us) / 1000000) : 0;
+    char stale[24] = "";
+    if (age > 3 * settings()->fetch_s + 10) snprintf(stale, sizeof(stale), "%ds old", age);
+#ifdef HAS_LIST
+    // Count and feed in the bottom-right corner; under the scope only what
+    // is going on (connecting, errors), and nothing once traffic flows
+    if (s_last_update_us) {
+        snprintf(text, sizeof(text), "%d aircraft", s_visible);
+        set_text_if_changed(s_count_lbl, text);
+        snprintf(text, sizeof(text), "%s%s%s", s_feed, stale[0] ? "  " LV_SYMBOL_BULLET "  " : "", stale);
+        set_text_if_changed(s_feed_lbl, text);
+    }
+    lv_obj_set_hidden(s_count_lbl, !s_last_update_us);
+    lv_obj_set_hidden(s_feed_lbl, !s_last_update_us);
+    set_text_if_changed(s_status_lbl, s_status[0] ? s_status : s_last_update_us ? "" : "Waiting for data");
+#else
     if (s_status[0]) {
-        lv_label_set_text(s_status_lbl, s_status);
-        return;
-    }
-    if (!s_last_update_us) {
-        lv_label_set_text(s_status_lbl, "Waiting for data");
-        return;
-    }
-    int age = (int)((esp_timer_get_time() - s_last_update_us) / 1000000);
-    if (age > 3 * settings()->fetch_s + 10) {
-        lv_label_set_text_fmt(s_status_lbl, "%d aircraft  " LV_SYMBOL_BULLET "  %s  " LV_SYMBOL_BULLET "  %ds old",
-                              s_visible, s_feed, age);
+        strlcpy(text, s_status, sizeof(text));
+    } else if (!s_last_update_us) {
+        strlcpy(text, "Waiting for data", sizeof(text));
     } else {
-        lv_label_set_text_fmt(s_status_lbl, "%d aircraft  " LV_SYMBOL_BULLET "  %s", s_visible, s_feed);
+        snprintf(text, sizeof(text), "%d aircraft  " LV_SYMBOL_BULLET "  %s%s%s", s_visible, s_feed,
+                 stale[0] ? "  " LV_SYMBOL_BULLET "  " : "", stale);
+    }
+    set_text_if_changed(s_status_lbl, text);
+#endif
+}
+
+// "13:04:52 BST", or with no timezone set "12:04:52Z"
+static void format_time(char *buf, size_t n, time_t now, bool local, bool seconds)
+{
+    struct tm tm;
+    if (local && settings()->tz[0]) {
+        localtime_r(&now, &tm);
+        strftime(buf, n, seconds ? "%H:%M:%S %Z" : "%H:%M %Z", &tm);
+    } else {
+        gmtime_r(&now, &tm);
+        strftime(buf, n, seconds ? "%H:%M:%SZ" : "%H:%MZ", &tm);
     }
 }
 
+// UTC, local, or both: local large with UTC small underneath
 static void update_clock(void)
 {
+    const int mode = settings()->clock;
     time_t now = time(NULL);
     struct tm tm;
     gmtime_r(&now, &tm);
+    char buf[32];
     if (tm.tm_year < 120) { // not synced yet
-        lv_label_set_text(s_clock, "--:--:--Z");
-    } else {
-        lv_label_set_text_fmt(s_clock, "%02d:%02d:%02dZ", tm.tm_hour, tm.tm_min, tm.tm_sec);
+        set_text_if_changed(s_clock, "--:--:--");
+        lv_obj_set_hidden(s_clock2, true);
+        return;
     }
+    format_time(buf, sizeof(buf), now, mode != 0, true);
+    set_text_if_changed(s_clock, buf);
+    if (mode == 2 && settings()->tz[0]) {
+        format_time(buf, sizeof(buf), now, false, false);
+        set_text_if_changed(s_clock2, buf);
+        lv_obj_set_hidden(s_clock2, false);
+    } else {
+        lv_obj_set_hidden(s_clock2, true);
+    }
+}
+
+// The banner over the top of the scope while something is overhead
+static void update_alert(void)
+{
+    if (s_alert_best < 0) {
+        lv_obj_set_hidden(s_alert_lbl, true);
+        return;
+    }
+    const aircraft_t *a = &s_ac[s_alert_best];
+    char alt[16], more[16] = "", text[80];
+    fmt_thousands(alt, sizeof(alt), a->alt_ft);
+    if (s_alert_n > 1) snprintf(more, sizeof(more), "  +%d", s_alert_n - 1);
+    snprintf(text, sizeof(text), LV_SYMBOL_BELL "  %s  %s ft  %.1f NM%s", ac_name(a), alt,
+             s_scr[s_alert_best].dist_nm, more);
+    set_text_if_changed(s_alert_lbl, text);
+    lv_obj_set_hidden(s_alert_lbl, false);
 }
 
 static void update_card(void)
@@ -773,7 +1018,25 @@ static void update_card(void)
 
     lv_label_set_text(s_card_title, ac_name(a));
 
-    char sub[48] = "";
+    char route[48] = "";
+    if (settings()->show_route) {
+        char raw[40];
+        route_get(a->callsign, a->lat, a->lon, raw, sizeof(raw));
+        // "LHR-JFK" as "LHR > JFK"
+        size_t n = 0;
+        for (const char *c = raw; *c && n + 6 < sizeof(route); c++) {
+            if (*c == '-') {
+                n += snprintf(route + n, sizeof(route) - n, " " LV_SYMBOL_RIGHT " ");
+            } else {
+                route[n++] = *c;
+                route[n] = '\0';
+            }
+        }
+    }
+    set_text_if_changed(s_card_route, route);
+    lv_obj_set_hidden(s_card_route, !route[0]);
+
+    char sub[64] = "";
     if (a->reg[0] && strcmp(a->reg, ac_name(a)) != 0) strlcat(sub, a->reg, sizeof(sub));
     if (a->type[0]) {
         if (sub[0]) strlcat(sub, "  " LV_SYMBOL_BULLET "  ", sizeof(sub));
@@ -781,6 +1044,7 @@ static void update_card(void)
     }
     if (sub[0]) strlcat(sub, "  " LV_SYMBOL_BULLET "  ", sizeof(sub));
     strlcat(sub, a->hex, sizeof(sub));
+    if (is_military(a)) strlcat(sub, "  " LV_SYMBOL_BULLET "  Military", sizeof(sub));
     lv_label_set_text(s_card_sub, sub);
 
     if (a->on_ground) {
@@ -809,13 +1073,8 @@ static void update_card(void)
 }
 
 #ifdef HAS_LIST
-// Setting a label's text redraws it even when nothing changed; at 1 Hz across
-// a whole table that is most of the panel, so only touch what changed.
-static void set_text_if_changed(lv_obj_t *label, const char *text)
-{
-    if (strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
-}
-
+// At 1 Hz across a whole table, redrawing every label would be most of the
+// panel, so it only sets what changed.
 static void update_list(void)
 {
     static bool row_sel[LIST_ROWS_MAX];
@@ -831,7 +1090,7 @@ static void update_list(void)
         const aircraft_t *a = &s_ac[s_order[r]];
         const ac_screen_t *s = &s_scr[s_order[r]];
         const bool sel = is_selected(a);
-        const lv_color_t color = sel ? lv_color_hex(C_SELECT) : alt_color(a);
+        const lv_color_t color = sel ? lv_color_hex(C_SELECT) : is_military(a) ? lv_color_hex(C_MIL) : alt_color(a);
         strlcpy(s_row_hex[r], a->hex, sizeof(s_row_hex[r]));
         lv_obj_set_hidden(s_rows[r], false);
 
@@ -878,6 +1137,7 @@ static void refresh(void)
     update_list();
 #endif
     update_status_label();
+    update_alert();
     lv_obj_invalidate(s_scope);
 }
 
@@ -925,6 +1185,11 @@ static void on_card_click(lv_event_t *e)
     select_aircraft(NULL);
 }
 
+static void on_alert_click(lv_event_t *e)
+{
+    if (s_alert_best >= 0) select_aircraft(s_ac[s_alert_best].hex);
+}
+
 #ifdef HAS_LIST
 // Tapping a row selects that aircraft; tapping the selected row clears it.
 static void on_row_click(lv_event_t *e)
@@ -941,7 +1206,9 @@ static void on_tick(lv_timer_t *t)
     if (s_count && esp_timer_get_time() - s_last_update_us > DROP_STALE_S * 1000000LL) {
         s_count = 0; // don't keep extrapolating ghosts forever
     }
+    s_blink = !s_blink;
     refresh();
+    backlight_update(s_alert_n > 0);
 }
 
 // Each segment is its own small line object so a frame only redraws the
@@ -990,6 +1257,11 @@ static void create_card(lv_obj_t *parent)
     lv_obj_add_event_cb(s_card, on_card_click, LV_EVENT_CLICKED, NULL);
 
     s_card_title = make_label(s_card, &F_TITLE, C_SELECT);
+    // Origin and destination, level with the callsign at the far side
+    s_card_route = make_label(s_card, &F_CARD, C_TEXT);
+    lv_obj_align(s_card_route, LV_ALIGN_TOP_RIGHT, 0,
+                 (lv_font_get_line_height(&F_TITLE) - lv_font_get_line_height(&F_CARD)) / 2);
+    lv_obj_set_hidden(s_card_route, true);
     s_card_sub = make_label(s_card, &F_CARD, C_TEXT);
     lv_obj_set_pos(s_card_sub, 0, CARD_SUB_Y);
 
@@ -1082,7 +1354,7 @@ static void create_battery(lv_obj_t *parent)
     lv_obj_set_flex_flow(s_batt_row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(s_batt_row, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(s_batt_row, 10, 0);
-    lv_obj_align(s_batt_row, LV_ALIGN_TOP_RIGHT, -18, 14);
+    lv_obj_align(s_batt_row, LV_ALIGN_TOP_RIGHT, -CORNER_X, CORNER_Y);
 
     s_batt_level = make_label(s_batt_row, &F_CLOCK, C_TEXT);
 
@@ -1111,7 +1383,7 @@ static void create_battery(lv_obj_t *parent)
     lv_obj_set_style_bg_opa(s_batt_nub, LV_OPA_COVER, 0);
 
     s_batt_detail = make_label(parent, &F_STATUS, C_DIM);
-    lv_obj_align(s_batt_detail, LV_ALIGN_TOP_RIGHT, -18, 14 + lv_font_get_line_height(&F_CLOCK) + 2);
+    lv_obj_align(s_batt_detail, LV_ALIGN_TOP_RIGHT, -CORNER_X, CORNER_Y + lv_font_get_line_height(&F_CLOCK) + 2);
 
     lv_obj_set_hidden(s_batt_row, true);
     lv_obj_set_hidden(s_batt_detail, true);
@@ -1174,6 +1446,11 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
 {
     s_ac = heap_caps_calloc(AC_MAX, sizeof(aircraft_t), MALLOC_CAP_SPIRAM);
     s_scr = heap_caps_calloc(AC_MAX, sizeof(ac_screen_t), MALLOC_CAP_SPIRAM);
+    s_trail_slot = heap_caps_calloc(AC_MAX, sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    trails_init();
+    if (settings()->trail_s > 0) {
+        s_trail_xy = heap_caps_calloc(AC_MAX, sizeof(*s_trail_xy), MALLOC_CAP_SPIRAM);
+    }
     s_lat0 = center_lat;
     s_lon0 = center_lon;
     s_coslat0 = cos(center_lat * M_PI / 180.0);
@@ -1215,11 +1492,43 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     // Children of the scope, so they sit against its edges on every board.
     // Labels aren't clickable, so taps still reach the scope.
     s_clock = make_label(s_scope, &F_CLOCK, C_TEXT);
-    lv_obj_align(s_clock, LV_ALIGN_TOP_MID, 0, CY - R_SCOPE + CLOCK_Y);
+    s_clock2 = make_label(s_scope, &F_STATUS, C_DIM);
     s_range_lbl = make_label(s_scope, &F_RANGE, C_TEXT);
-    lv_obj_align(s_range_lbl, LV_ALIGN_BOTTOM_MID, 0, -(CY - R_SCOPE + RANGE_Y));
     s_status_lbl = make_label(s_scope, &F_STATUS, C_DIM);
     lv_obj_align(s_status_lbl, LV_ALIGN_BOTTOM_MID, 0, -(CY - R_SCOPE + STATUS_Y));
+    const int clock_h = lv_font_get_line_height(&F_CLOCK);
+#ifdef HAS_LIST
+    // The square around the scope has room in its corners: clock top left,
+    // battery top right, range bottom left, traffic count bottom right
+    lv_obj_align(s_clock, LV_ALIGN_TOP_LEFT, CORNER_X, CORNER_Y);
+    lv_obj_align(s_clock2, LV_ALIGN_TOP_LEFT, CORNER_X, CORNER_Y + clock_h + 2);
+    lv_obj_align(s_range_lbl, LV_ALIGN_BOTTOM_LEFT, CORNER_X, -CORNER_Y);
+    s_feed_lbl = make_label(s_scope, &F_STATUS, C_DIM);
+    lv_obj_align(s_feed_lbl, LV_ALIGN_BOTTOM_RIGHT, -CORNER_X, -CORNER_Y);
+    s_count_lbl = make_label(s_scope, &F_CLOCK, C_TEXT);
+    lv_obj_align(s_count_lbl, LV_ALIGN_BOTTOM_RIGHT, -CORNER_X,
+                 -(CORNER_Y + lv_font_get_line_height(&F_STATUS) + 2));
+    const int alert_y = CY - R_SCOPE + RANGE_Y; // low enough that the circle is wide
+#else
+    // A round panel has no corners: along the top and bottom of the scope
+    lv_obj_align(s_clock, LV_ALIGN_TOP_MID, 0, CY - R_SCOPE + CLOCK_Y);
+    lv_obj_align(s_clock2, LV_ALIGN_TOP_MID, 0, CY - R_SCOPE + CLOCK_Y + clock_h);
+    lv_obj_align(s_range_lbl, LV_ALIGN_BOTTOM_MID, 0, -(CY - R_SCOPE + RANGE_Y));
+    const int alert_y = CY - R_SCOPE + CLOCK_Y + clock_h + lv_font_get_line_height(&F_STATUS) + 4;
+#endif
+    lv_obj_set_hidden(s_clock2, true);
+
+    // Tapping it opens the nearest alerting aircraft's card
+    s_alert_lbl = make_label(s_scope, &F_STATUS, C_ALERT_INK);
+    lv_obj_align(s_alert_lbl, LV_ALIGN_TOP_MID, 0, alert_y);
+    lv_obj_set_style_bg_color(s_alert_lbl, lv_color_hex(C_WARN), 0);
+    lv_obj_set_style_bg_opa(s_alert_lbl, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_alert_lbl, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_pad_hor(s_alert_lbl, CARD_PAD, 0);
+    lv_obj_set_style_pad_ver(s_alert_lbl, CARD_PAD / 3, 0);
+    lv_obj_set_clickable(s_alert_lbl, true);
+    lv_obj_add_event_cb(s_alert_lbl, on_alert_click, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_hidden(s_alert_lbl, true);
 
 #ifdef HAS_LIST
     create_panel(scr);
@@ -1235,6 +1544,7 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     update_clock();
     update_range_label();
     refresh();
+    backlight_update(false);
     lv_timer_create(on_tick, 1000, NULL);
 }
 
@@ -1242,6 +1552,7 @@ void radar_ui_set_aircraft(const aircraft_t *list, int count, const char *feed)
 {
     if (count > AC_MAX) count = AC_MAX;
     memcpy(s_ac, list, count * sizeof(aircraft_t));
+    if (s_trail_slot) trails_update(s_ac, count, s_trail_slot);
     s_count = count;
     s_last_update_us = esp_timer_get_time();
     strlcpy(s_feed, feed, sizeof(s_feed));

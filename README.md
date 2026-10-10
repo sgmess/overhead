@@ -13,11 +13,24 @@ point on a radar scope.
 - Aircraft drawn as arrowheads along their track with a one-minute velocity
   vector, coloured by altitude (amber low, lime, cyan, blue, violet high).
 - Radar-style data tags: callsign, altitude in hundreds of feet, and a climb or
-  descent arrow. The nearest aircraft get labelled first.
+  descent arrow, with type and ground speed as options. The nearest aircraft
+  get labelled first.
+- Trails behind the nearest 50 aircraft, fading with age (1 to 10 minutes).
+- Helicopters drawn with a rotor and tail boom; military aircraft (the feed's
+  `dbFlags`) in a pink diamond.
+- Origin and destination in the aircraft card, from
+  [adsb.im](https://adsb.im)'s route database (the one tar1090 uses).
+- An overhead alert: an aircraft within a set distance and below a set
+  altitude blinks amber, a banner names it, and the Tab5 chimes.
+- Brightness, with dimming from sunset to sunrise at the radar centre or
+  between set times.
 - Positions are moved forward between polls using ground speed and track, so
   traffic moves smoothly instead of jumping every few seconds.
 - Emergency squawks (7500/7600/7700) are drawn red and circled.
-- UTC clock, rotating sweep, compass rose, range rings.
+- UTC or local clock (or both), rotating sweep, compass rose, range rings.
+  On the Tab5 the clock, range, traffic count and battery sit in the corners
+  around the scope; the round panels have no corners, so they keep them along
+  the top and bottom of the scope.
 - Battery level, charging state and time left on the Tab5, with charging
   enabled and a clean power-off before the pack runs flat.
 
@@ -28,7 +41,8 @@ Data comes from [adsb.lol](https://adsb.lol), with an automatic switch to
 
 | Tap | Does |
 | --- | --- |
-| An aircraft | Opens its card: registration, type, altitude, V/S, speed, track, squawk, range and bearing |
+| An aircraft | Opens its card: registration, type, route, altitude, V/S, speed, track, squawk, range and bearing |
+| The alert banner | Opens the card of the nearest aircraft that set it off |
 | Empty scope, card open | Closes the card |
 | Empty scope | Next range: 5, 10, 25, 50, 100 NM |
 | A list row (Tab5) | Selects that aircraft; tap it again to clear |
@@ -102,9 +116,11 @@ restarts the device onto that network. If a saved network hasn't connected
 
 Once connected, the configuration page is at `http://overhead.local` (mDNS),
 or at the address shown on the radar until the first traffic arrives. It
-covers the centre (with a map), starting range, labels, sweep, ground
-traffic, primary feed, poll interval, the Tab5's orientation and battery
-cut-off, and changing or forgetting the network. Every save restarts the
+covers the centre (with a map), starting range, labels and what the data tags
+show, trails, sweep, ground traffic, military highlighting, routes, the
+overhead alert, brightness and night dimming, the clock and timezone, primary
+feed, poll interval, the Tab5's orientation and battery cut-off, and changing
+or forgetting the network. Every save restarts the
 device. The pages are unauthenticated, so anyone on the same network can
 change the settings.
 
@@ -133,6 +149,23 @@ Everything under the traffic (disc, rings, compass rose, airspace and
 airfields) is drawn once per range into a PSRAM image and copied each frame.
 Drawing about 4,000 outline segments every second took a frame from about
 100 ms to 400 ms at 100 NM; with the image, frames are 25–65 ms.
+
+### Clock, dimming and alerts
+
+The timezone is a POSIX TZ string, because that is what newlib understands.
+The page lists common zones, suggests the browser's own when none is saved,
+and takes any other rule typed in (`GMT0BST,M3.5.0/1,M10.5.0`). Night
+dimming either follows the sun's elevation at the radar centre (below
+-0.833°, which is sunset and sunrise with refraction) or local clock times.
+Moving a brightness slider on the page shows that level for 8 seconds without
+saving. While an overhead alert is active the screen comes back to full
+brightness. Each aircraft chimes once and again only after it has been out of
+the alert for two minutes. The chime is the Tab5's ES8388 and speaker, opened
+for each chime so the amplifier is off between them.
+
+Routes are looked up only for the aircraft whose card is open, one request
+per callsign per session, and sent with its position so adsb.im can say
+whether the route fits (a "?" after it when not).
 
 Settings are kept in NVS (namespace `overhead`). Until something is saved
 the firmware's defaults apply (`settings_defaults()` in `main/settings.c`):
@@ -208,6 +241,9 @@ nobody has measured, so it reports none.
 | `main/web.c`, `main/web/` | Web server, JSON API, and the setup and configuration pages |
 | `main/feed.c` | HTTPS poll and readsb JSON parsing (buffers in PSRAM) |
 | `main/battery.c` | Battery state, charge estimate, time left, low-voltage power-off |
+| `main/backlight.c` | Brightness, night dimming by sun elevation or clock, the page's preview |
+| `main/trails.c` | Position history per aircraft for the trails |
+| `main/route.c` | Origin and destination by callsign from adsb.im, cached |
 | `main/ota.c` | Updates from GitHub releases, image check, rollback confirmation |
 | `web/flash/`, `.github/workflows/` | Web flasher page and the build, release and Pages workflow |
 | `main/openaip.c` | OpenAIP airspace and airfields: fetch by country, trim to range, project to NM |
