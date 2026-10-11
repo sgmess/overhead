@@ -117,6 +117,12 @@ static void fetch_task(void *arg)
 
 void app_main(void)
 {
+    // The headroom left after esp_hosted's start-up allocations; see
+    // radar_ui_create() for why it matters
+    ESP_LOGI(TAG, "internal RAM at start: %u free, largest %u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());

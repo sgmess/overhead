@@ -49,7 +49,25 @@ jobs:
           target: ${{ matrix.target }}
           command: >-
             idf.py -B build_${{ matrix.board }} -D OVERHEAD_BOARD=${{ matrix.board }} build &&
-            idf.py -B build_${{ matrix.board }} merge-bin -o overhead-${{ matrix.board }}-full.bin
+            idf.py -B build_${{ matrix.board }} merge-bin -o overhead-${{ matrix.board }}-full.bin &&
+            python -m esp_idf_size --format json build_${{ matrix.board }}/overhead-${{ matrix.board }}.map > size.json
+
+      # On the Tab5, esp_hosted's start-up allocations take most of the
+      # internal RAM that static data leaves, before the scheduler starts.
+      # v0.1.1 (122,222 bytes of static D/IRAM) booted; v0.2.0 and v0.2.1
+      # (132,090) asserted creating the timer task, in a boot loop. Anything
+      # past this budget needs testing on a Tab5 before it is released: move
+      # big buffers to PSRAM rather than raise it.
+      - name: Check static internal RAM
+        if: matrix.board == 'tab5'
+        run: |
+          used=$(python3 -c "import json; print(json.load(open('size.json'))['used_diram'])")
+          budget=123000
+          echo "static D/IRAM: $used bytes (budget $budget)"
+          if [ "$used" -gt "$budget" ]; then
+            echo "::error::Static internal RAM is $used bytes, over the Tab5's $budget-byte budget; it may not boot"
+            exit 1
+          fi
 
       - name: Collect images
         run: |

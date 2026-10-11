@@ -5,9 +5,11 @@
 #if CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG || CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_app_desc.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -179,7 +181,9 @@ static void on_device_info(void)
 // One result per network, then an empty one to end the list
 static void on_scan(void)
 {
-    static net_ap_t aps[SCAN_MAX];
+    // In PSRAM, not static: see radar_ui_create() on internal RAM
+    net_ap_t *aps = heap_caps_calloc(SCAN_MAX, sizeof(*aps), MALLOC_CAP_SPIRAM);
+    if (!aps) return;
     wait_for_wifi();
     int n = net_scan(aps, SCAN_MAX);
     char rssi[8];
@@ -192,6 +196,7 @@ static void on_scan(void)
         result_add(&r, aps[i].open ? "NO" : "YES"); // "needs a password"
         send(TYPE_RPC_RESULT, r.data, r.len);
     }
+    free(aps);
     result_init(&r, RPC_SCAN);
     send(TYPE_RPC_RESULT, r.data, r.len);
 }

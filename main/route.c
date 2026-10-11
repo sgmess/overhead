@@ -29,7 +29,9 @@ typedef struct {
     uint32_t used;         // for evicting the least recently used
 } entry_t;
 
-static entry_t s_cache[CACHE_N];
+// In PSRAM, like the response: static internal RAM is what esp_hosted's
+// start-up allocations need before the scheduler runs
+static entry_t *s_cache;
 static uint32_t s_clock;
 static SemaphoreHandle_t s_lock;
 static TaskHandle_t s_task;
@@ -95,18 +97,21 @@ static void format_route(const cJSON *item, char *out, size_t n)
 
 static bool lookup(const char *callsign, double lat, double lon, char *route, size_t n)
 {
-    static resp_t resp; // one task, so one buffer
+    static resp_t *resp_buf; // one task, so one buffer
+    if (!resp_buf) resp_buf = heap_caps_calloc(1, sizeof(*resp_buf), MALLOC_CAP_SPIRAM);
+    if (!resp_buf) return false;
+    resp_t *r = resp_buf;
     char body[128];
     snprintf(body, sizeof(body), "{\"planes\":[{\"callsign\":\"%s\",\"lat\":%.4f,\"lng\":%.4f}]}", callsign, lat,
              lon);
 
-    resp.len = 0;
-    resp.overflow = false;
+    r->len = 0;
+    r->overflow = false;
     esp_http_client_config_t cfg = {
         .url = API,
         .method = HTTP_METHOD_POST,
         .event_handler = on_http_event,
-        .user_data = &resp,
+        .user_data = r,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = 10000,
         .user_agent = "overhead-radar/1.0 (ESP32-P4)",
@@ -118,12 +123,12 @@ static bool lookup(const char *callsign, double lat, double lon, char *route, si
     esp_err_t err = esp_http_client_perform(c);
     int status = esp_http_client_get_status_code(c);
     esp_http_client_cleanup(c);
-    if (err != ESP_OK || status != 200 || resp.overflow) {
+    if (err != ESP_OK || status != 200 || r->overflow) {
         ESP_LOGW(TAG, "%s: %s, HTTP %d", callsign, esp_err_to_name(err), status);
         return false;
     }
 
-    cJSON *root = cJSON_ParseWithLength(resp.data, resp.len);
+    cJSON *root = cJSON_ParseWithLength(r->data, r->len);
     const cJSON *first = cJSON_IsArray(root) ? cJSON_GetArrayItem(root, 0) : NULL;
     bool ok = cJSON_IsObject(first);
     if (ok) format_route(first, route, n);
@@ -165,6 +170,8 @@ static void route_task(void *arg)
 
 void route_start(void)
 {
+    s_cache = heap_caps_calloc(CACHE_N, sizeof(entry_t), MALLOC_CAP_SPIRAM);
+    if (!s_cache) return;
     s_lock = xSemaphoreCreateMutex();
     // TLS and the request are on the heap; this is call depth, as for OpenAIP
     if (xTaskCreateWithCaps(route_task, "route", 8192, NULL, 3, &s_task, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) !=

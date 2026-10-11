@@ -211,7 +211,7 @@ static int16_t *s_trail_slot;               // per aircraft, from trails_update(
 static int16_t (*s_trail_xy)[TRAIL_PTS][2]; // per aircraft, screen points
 static int s_count;
 static int s_visible;
-static int s_order[AC_MAX]; // visible, taggable aircraft, nearest first
+static int *s_order; // AC_MAX of them: visible, taggable aircraft, nearest first
 static int s_order_n;
 static double s_lat0, s_lon0, s_coslat0;
 static volatile int s_range_idx;
@@ -512,7 +512,7 @@ static void layout(void)
     }
 
     // Label the nearest aircraft first so busy airspace stays readable
-    qsort(s_order, s_order_n, sizeof(s_order[0]), cmp_by_dist);
+    qsort(s_order, s_order_n, sizeof(*s_order), cmp_by_dist);
     for (int k = 0; k < s_order_n && k < set->max_labels; k++) {
         s_scr[s_order[k]].labelled = true;
     }
@@ -1444,7 +1444,12 @@ static void create_setup(lv_obj_t *parent)
 
 void radar_ui_create(double center_lat, double center_lon, void (*on_range_change)(void))
 {
+    // All in PSRAM. Static internal RAM is short on the Tab5: esp_hosted takes
+    // most of what is left before the scheduler starts, and v0.2.0, 10 KB of
+    // statics heavier than v0.1.1, failed to boot for want of the timer task's
+    // 2 KB stack.
     s_ac = heap_caps_calloc(AC_MAX, sizeof(aircraft_t), MALLOC_CAP_SPIRAM);
+    s_order = heap_caps_calloc(AC_MAX, sizeof(int), MALLOC_CAP_SPIRAM);
     s_scr = heap_caps_calloc(AC_MAX, sizeof(ac_screen_t), MALLOC_CAP_SPIRAM);
     s_trail_slot = heap_caps_calloc(AC_MAX, sizeof(int16_t), MALLOC_CAP_SPIRAM);
     trails_init();

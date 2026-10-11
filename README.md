@@ -203,6 +203,17 @@ first, because without it detection failed on a revision-3 (ST7121) unit. The
 Tab5's P4 is a rev v1.x chip, so its build uses the pre-v3 settings. The
 ESP32-C6's power is switched through an I/O expander before WiFi starts.
 
+**Internal RAM at boot.** esp_hosted sets up its SDIO buffers in a
+constructor, before the scheduler starts, and takes most of the internal RAM
+that static data leaves. v0.2.0 carried 10 KB more static data than v0.1.1
+and boot-looped: the timer task's 2 KB stack no longer fitted. Big buffers
+therefore live in PSRAM, and the workflow fails a Tab5 build whose static
+D/IRAM passes 123,000 bytes (122,410 at v0.2.2).
+
+Updates over WiFi write each 4 KB chunk to flash from an internal buffer.
+From PSRAM, IDF copies it 32 bytes at a time with the caches paused for each,
+which starved the C6's link until the download died (v0.1.1's updater).
+
 **C6 firmware.** The host's esp_hosted major version must match the one on
 the C6; the boot log prints the C6's (`net: co-processor esp_hosted
 firmware ...`). This Tab5's C6 runs 2.12.6, so its build uses esp_hosted 2.12
