@@ -31,8 +31,26 @@ CONFIG_ESP32P4_TAB5_C6_BOARD=y
 CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
 CONFIG_ESP_HOSTED_SDIO_4_BIT_BUS=y
 CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_STREAMING_MODE=y
-CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=20
-CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=20
+# esp_hosted 2.x starts itself from a constructor, before the main task,
+# while only about 150 KB of internal RAM is in the heap (the 256 KB region at
+# 0x4FF40000 joins later). The default 20-deep queues took 125 KB of it:
+# v0.2.0, with 10 KB more static data than v0.1.1, then had no room for the
+# timer task's stack and boot-looped. 12 deep, as on the 3.4C and in
+# traffic-display on this Tab5, takes 99 KB (measured there, 7 October 2026).
+CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=12
+CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=12
+# Not ESP_HOSTED_MEMPOOL_PREFER_SPIRAM: with the transport buffers in PSRAM
+# the first small transmit after joining failed ("sdio_write_task: Failed to
+# send data: 258", ESP_ERR_INVALID_ARG), then "Unrecoverable host sdio state"
+# and a restart, every boot (11 October 2026). Its 64-byte alignment is short
+# of the 128-byte cache line DMA from PSRAM needs. traffic-display runs it,
+# but mostly receives.
+# Code and rodata run from PSRAM, so IDF keeps the cache on through flash
+# writes and erases (SPI_FLASH_CACHE_NO_DISABLE). Without it both cores lose
+# PSRAM, frame buffer included, for every write, and the panel flashed through
+# an update and at every settings save. About 10 KB more static internal RAM
+# and 2 MB of PSRAM.
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 
 # Landscape: esp_lvgl_port rotates each LVGL strip with the P4's PPA rather
 # than the CPU. Only used when the orientation option is a landscape one.

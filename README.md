@@ -205,15 +205,26 @@ Tab5's P4 is a rev v1.x chip, so its build uses the pre-v3 settings. The
 ESP32-C6's power is switched through an I/O expander before WiFi starts.
 
 **Internal RAM at boot.** esp_hosted sets up its SDIO buffers in a
-constructor, before the scheduler starts, and takes most of the internal RAM
-that static data leaves. v0.2.0 carried 10 KB more static data than v0.1.1
-and boot-looped: the timer task's 2 KB stack no longer fitted. Big buffers
-therefore live in PSRAM, and the workflow fails a Tab5 build whose static
-D/IRAM passes 123,000 bytes (122,410 at v0.2.2).
+constructor, before the scheduler starts, while only about 150 KB of internal
+RAM is in the heap. Its default 20-deep queues took 125 KB of that. v0.2.0
+carried 10 KB more static data than v0.1.1 and boot-looped: the timer task's
+2 KB stack no longer fitted. The queues are now 12 deep, as on the 3.4C and
+in traffic-display on this Tab5, which takes about 99 KB. Big buffers live in
+PSRAM, and the workflow fails a Tab5 build whose static D/IRAM passes
+140,000 bytes (132,880 at v0.2.4; 302 KB of internal RAM free at `app_main`).
+esp_hosted's buffers can't go to PSRAM (`ESP_HOSTED_MEMPOOL_PREFER_SPIRAM`):
+the first small transmit after joining failed every boot and restarted it.
+
+**Code runs from PSRAM** (`SPIRAM_XIP_FROM_PSRAM`), as traffic-display found
+it must on the P4. Otherwise IDF disables the cache for every flash write and
+erase, both cores lose PSRAM and the frame buffer with it, and the panel
+flashed through an update and at every settings save. It costs about 10 KB
+of static internal RAM.
 
 Updates over WiFi write each 4 KB chunk to flash from an internal buffer.
 From PSRAM, IDF copies it 32 bytes at a time with the caches paused for each,
-which starved the C6's link until the download died (v0.1.1's updater).
+which starved the C6's link until the download died (v0.1.1's updater). A
+2 MB update now takes about 12 s.
 
 **C6 firmware.** The host's esp_hosted major version must match the one on
 the C6; the boot log prints the C6's (`net: co-processor esp_hosted
