@@ -55,6 +55,7 @@ void settings_defaults(settings_t *out)
         .alert_nm10 = 20,
         .alert_ft = 5000,
         .alert_sound = true,
+        .show_vector = false,
     };
 }
 
@@ -171,6 +172,7 @@ void settings_load(void)
         get_int(h, "alert_nm10", &s.alert_nm10);
         get_int(h, "alert_ft", &s.alert_ft);
         get_bool(h, "alert_snd", &s.alert_sound);
+        get_bool(h, "vector", &s.show_vector);
         nvs_close(h);
     }
 
@@ -230,6 +232,7 @@ esp_err_t settings_save(const settings_t *s)
     if (err == ESP_OK) err = nvs_set_i32(h, "alert_nm10", s->alert_nm10);
     if (err == ESP_OK) err = nvs_set_i32(h, "alert_ft", s->alert_ft);
     if (err == ESP_OK) err = nvs_set_u8(h, "alert_snd", s->alert_sound);
+    if (err == ESP_OK) err = nvs_set_u8(h, "vector", s->show_vector);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     if (err == ESP_OK) s_settings = *s;

@@ -252,6 +252,7 @@ static esp_err_t on_state(httpd_req_t *req)
     cJSON_AddNumberToObject(set, "alert_nm10", s->alert_nm10);
     cJSON_AddNumberToObject(set, "alert_ft", s->alert_ft);
     cJSON_AddBoolToObject(set, "alert_sound", s->alert_sound);
+    cJSON_AddBoolToObject(set, "show_vector", s->show_vector);
 
     openaip_status_t oa;
     openaip_get_status(&oa);
@@ -345,6 +346,7 @@ static esp_err_t on_settings(httpd_req_t *req)
     take_int(json, "alert_nm10", &s.alert_nm10);
     take_int(json, "alert_ft", &s.alert_ft);
     take_bool(json, "alert_sound", &s.alert_sound);
+    take_bool(json, "show_vector", &s.show_vector);
     const cJSON *tz = cJSON_GetObjectItemCaseSensitive(json, "tz");
     if (cJSON_IsString(tz)) {
         if (strlen(tz->valuestring) >= sizeof(s.tz)) {

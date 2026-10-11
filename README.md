@@ -10,8 +10,9 @@ point on a radar scope.
 | ESP32-S3-Touch-LCD-2.8C | `s3_28c` | 480x480 ST7701 RGB, native WiFi |
 | M5Stack Tab5 | `tab5` | 720x1280 MIPI DSI portrait, WiFi via ESP32-C6 |
 
-- Aircraft drawn as arrowheads along their track with a one-minute velocity
-  vector, coloured by altitude (amber low, lime, cyan, blue, violet high).
+- Aircraft drawn as arrowheads along their track, coloured by altitude (amber
+  low, lime, cyan, blue, violet high), with an optional line to where each
+  will be in a minute.
 - Radar-style data tags: callsign, altitude in hundreds of feet, and a climb or
   descent arrow, with type and ground speed as options. The nearest aircraft
   get labelled first.

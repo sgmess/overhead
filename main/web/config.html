@@ -103,6 +103,7 @@ a{color:var(--accent)}
       <option value="300">5 minutes</option><option value="600">10 minutes</option>
     </select>
     <p class="hint">Where each of the nearest 50 aircraft has been, fading with age.</p>
+    <label class="check"><input type="checkbox" id="show_vector"> Direction line: where each aircraft will be in a minute</label>
     <label class="check"><input type="checkbox" id="sweep"> Animated sweep</label>
     <label class="check"><input type="checkbox" id="show_ground"> Show aircraft on the ground</label>
     <label class="check"><input type="checkbox" id="show_military"> Highlight military aircraft</label>
@@ -262,7 +263,7 @@ const $ = id => document.getElementById(id);
 const FIELDS = ['range_idx', 'max_labels', 'feed', 'fetch_s', 'rotation', 'batt_shutdown_mv', 'dim_mode', 'clock',
                 'trail_s', 'alert_nm10', 'alert_ft'];
 const CHECKS = ['sweep', 'show_ground', 'batt_auto_off', 'show_airspace', 'show_airfields', 'show_military', 'show_route',
-                'alert', 'alert_sound'];
+                'alert', 'alert_sound', 'show_vector'];
 const SLIDERS = ['brightness', 'dim_brightness'];
 let map, pin, keyCleared = false;
 

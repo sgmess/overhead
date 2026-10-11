@@ -41,6 +41,7 @@ typedef struct {
     int alert_nm10;     // tenths of a NM, 2..100
     int alert_ft;       // 500..20000
     bool alert_sound;   // on boards with a speaker
+    bool show_vector;   // a line ahead of each aircraft, where it will be in a minute
 } settings_t;
 
 // What a data tag shows. Callsign and type share the first line, altitude and

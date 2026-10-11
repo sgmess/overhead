@@ -782,7 +782,7 @@ static void draw_aircraft(lv_layer_t *layer)
 
         const bool moving = a->gs_kt > 0 && a->track_deg >= 0;
         const float t = moving ? a->track_deg * DEG2RAD : 0;
-        if (moving && !a->on_ground) {
+        if (moving && !a->on_ground && settings()->show_vector) {
             // One-minute velocity vector, clamped so jets don't streak across the 5 NM view
             float len = fminf(a->gs_kt / 60.0f * ppn, (float)VECTOR_MAX);
             draw_line(layer, s->x, s->y, s->x + (int)(len * sinf(t)), s->y - (int)(len * cosf(t)), c, 2,
