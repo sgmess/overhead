@@ -21,6 +21,9 @@ esp_err_t ota_check(void);
 // ESP_ERR_INVALID_STATE without a successful check, or while busy.
 esp_err_t ota_install(void);
 
+// An install is downloading or writing; other network work should wait.
+bool ota_installing(void);
+
 typedef struct {
     const char *state;    // "idle", "checking", "checked", "installing", "error"
     const char *detail;   // what went wrong, for "error"

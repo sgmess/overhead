@@ -81,6 +81,14 @@ static void fetch_task(void *arg)
         if (!net_is_connected()) {
             wait_for_network();
         }
+        // An update needs the link and the internal RAM to itself
+        if (ota_installing()) {
+            board_lock();
+            radar_ui_set_status("Installing update");
+            board_unlock();
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
 
         // Ask for a little beyond the scope edge so aircraft don't pop in at the rim
         int range = radar_ui_range_nm();

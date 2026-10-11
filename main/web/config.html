@@ -501,7 +501,19 @@ async function load() {
   $('battery-card').classList.toggle('hidden', !j.has_battery);
   $('batt_shutdown_mv').disabled = !s.batt_auto_off;
   if (!map) loadMap(s.lat, s.lon);
-  api('/api/ota').then(showOta, () => {});
+  api('/api/ota').then(showOta, () => {}).then(() => checkUpdated(j.firmware));
+}
+
+// After an install the page reloads once Overhead answers again: say whether
+// it came back on the new version, since a failed install also restarts the
+// page's wait (the connection drops either way)
+function checkUpdated(firmware) {
+  let expect = null;
+  try { expect = sessionStorage.getItem('ota-expect'); sessionStorage.removeItem('ota-expect'); } catch (e) {}
+  if (!expect) return;
+  $('ota-state').textContent = firmware === expect
+    ? 'Updated to ' + expect + '.'
+    : 'The update to ' + expect + ' didn\'t install; still running ' + firmware + '. Check again and retry.';
 }
 
 // ---- firmware updates
@@ -570,6 +582,7 @@ $('ota-install').onclick = async () => {
   if (!confirm('Install ' + $('ota-install').textContent.replace('Install ', '') +
                '? Overhead restarts when it is done. If the new firmware can\'t reach the network, the next restart goes back to ' + running + '.')) return;
   try { await api('/api/ota/install', {}); } catch (err) { $('ota-state').textContent = err.message; return; }
+  try { sessionStorage.setItem('ota-expect', $('ota-install').textContent.replace('Install ', '')); } catch (e) {}
   pollOta();
 };
 

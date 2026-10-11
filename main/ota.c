@@ -153,7 +153,16 @@ static esp_err_t install(void)
         .buffer_size_tx = 2048,
         .user_agent = USER_AGENT,
     };
-    esp_https_ota_config_t cfg = {.http_config = &http};
+    // The buffer each chunk is read into and written to flash from. Flash
+    // can't be written straight from PSRAM, where malloc() would put 4 KB, so
+    // IDF would copy it 32 bytes at a time, pausing the caches of both cores
+    // for each: about 62,000 pauses for a 2 MB image. That starved the C6's
+    // SDIO link until it dropped data and the network died mid-download
+    // (measured on v0.1.1, 2026-10-11). From internal RAM a chunk is one write.
+    esp_https_ota_config_t cfg = {
+        .http_config = &http,
+        .buffer_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT,
+    };
     esp_https_ota_handle_t h = NULL;
     esp_err_t err = esp_https_ota_begin(&cfg, &h);
     if (err != ESP_OK) {
@@ -173,8 +182,9 @@ static esp_err_t install(void)
     ESP_LOGI(TAG, "installing %s (%s)", incoming.version, incoming.project_name);
 
     const int size = esp_https_ota_get_image_size(h);
+    // 100 only once the image has been checked: the page takes it as done
     while ((err = esp_https_ota_perform(h)) == ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
-        if (size > 0) s_progress = (int)(100LL * esp_https_ota_get_image_len_read(h) / size);
+        if (size > 0) s_progress = (int)(99LL * esp_https_ota_get_image_len_read(h) / size);
     }
     if (err == ESP_OK && !esp_https_ota_is_complete_data_received(h)) err = ESP_ERR_INVALID_SIZE;
     if (err != ESP_OK) {
@@ -238,6 +248,11 @@ esp_err_t ota_install(void)
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
+}
+
+bool ota_installing(void)
+{
+    return s_state == INSTALLING;
 }
 
 void ota_get_status(ota_status_t *out)
