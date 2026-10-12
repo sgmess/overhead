@@ -7,11 +7,15 @@
 
 #include "backlight.h"
 #include "battery.h"
+#include "board.h"
 #include "bsp/display.h"
 #include "esp_app_desc.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "lvgl.h"
 #include "net.h"
+#include "openaip.h"
+#include "ota.h"
 #include "settings.h"
 #include "zones.h"
 
@@ -27,8 +31,6 @@
 #define SWITCH_H 34
 #define COL_MAX 720 // landscape is 1280 wide: a column, not a sprawl
 #define ROUND 0
-#define HAS_SPEAKER 1
-#define CAN_ROTATE 1
 #elif defined(OVERHEAD_BOARD_P4_34C)
 #define F_ROW lv_font_montserrat_16
 #define F_HEAD lv_font_montserrat_14
@@ -39,8 +41,6 @@
 #define SWITCH_H 30
 #define COL_MAX 800
 #define ROUND 1
-#define HAS_SPEAKER 0
-#define CAN_ROTATE 0
 #else // S3 2.8C
 #define F_ROW lv_font_montserrat_14
 #define F_HEAD lv_font_montserrat_12
@@ -51,8 +51,6 @@
 #define SWITCH_H 24
 #define COL_MAX 480
 #define ROUND 1
-#define HAS_SPEAKER 0
-#define CAN_ROTATE 0
 #endif
 
 #define C_BG 0x030806
@@ -102,6 +100,13 @@ static lv_obj_t *s_root, *s_col, *s_msgbox;
 static lv_obj_t *s_dim_times, *s_dim_level;
 static lv_timer_t *s_idle_timer;
 
+// Status, refreshed every second while open
+enum { ST_NETWORK, ST_ADDRESS, ST_UP, ST_MEMORY, ST_BATTERY, ST_MAPS, ST_COUNT };
+static lv_obj_t *s_status[ST_COUNT];
+
+// Firmware updates
+static lv_obj_t *s_ota_check, *s_ota_install, *s_ota_text, *s_ota_bar;
+
 // ---------------------------------------------------------------- applying
 //
 // Closing happens from the screen's own buttons' events, so the objects go
@@ -139,7 +144,11 @@ static void close_screen(void)
 static void on_root_deleted(lv_event_t *e)
 {
     ui_t *ui = lv_event_get_user_data(e);
-    if (s_ui == ui) s_ui = NULL;
+    if (s_ui == ui) {
+        s_ui = NULL;
+        memset(s_status, 0, sizeof(s_status));
+        s_ota_check = s_ota_install = s_ota_text = s_ota_bar = NULL;
+    }
     free(ui);
 }
 
@@ -148,9 +157,153 @@ static void on_done(lv_event_t *e)
     close_screen();
 }
 
+static void set_if_changed(lv_obj_t *label, const char *text)
+{
+    if (label && strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
+}
+
+static void fmt_uptime(char *buf, size_t n, int64_t s)
+{
+    const int d = s / 86400, h = s / 3600 % 24, m = s / 60 % 60;
+    if (d) {
+        snprintf(buf, n, "%dd %dh %dm", d, h, m);
+    } else if (h) {
+        snprintf(buf, n, "%dh %dm", h, m);
+    } else {
+        snprintf(buf, n, "%dm", m);
+    }
+}
+
+static void update_status(void)
+{
+    char buf[96];
+    char ip[16] = "";
+    if (net_get_ip(ip, sizeof(ip))) {
+        const int rssi = net_rssi();
+        const char *q = rssi > -55 ? "excellent" : rssi > -67 ? "good" : rssi > -78 ? "fair" : "weak";
+        snprintf(buf, sizeof(buf), "%s, %s (%d dBm)", settings()->ssid, q, rssi);
+        set_if_changed(s_status[ST_NETWORK], buf);
+        snprintf(buf, sizeof(buf), "%s  " LV_SYMBOL_BULLET "  " NET_HOSTNAME ".local", ip);
+        set_if_changed(s_status[ST_ADDRESS], buf);
+    } else {
+        snprintf(buf, sizeof(buf), "%s, not connected", settings()->ssid);
+        set_if_changed(s_status[ST_NETWORK], buf);
+        set_if_changed(s_status[ST_ADDRESS], "-");
+    }
+    fmt_uptime(buf, sizeof(buf), esp_timer_get_time() / 1000000);
+    set_if_changed(s_status[ST_UP], buf);
+    snprintf(buf, sizeof(buf), "%u KB internal, %.1f MB PSRAM",
+             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+             heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1048576.0);
+    set_if_changed(s_status[ST_MEMORY], buf);
+
+    battery_status_t b;
+    if (s_status[ST_BATTERY] && battery_get(&b)) {
+        static const char *const STATES[] = {"No battery", "Checking", "External power", "Charging", "On battery"};
+        if (b.state >= BATT_EXTERNAL) {
+            snprintf(buf, sizeof(buf), "%s, %d%% (%.2f V)", STATES[b.state], b.percent, b.volts);
+        } else {
+            snprintf(buf, sizeof(buf), "%s", STATES[b.state]);
+        }
+        set_if_changed(s_status[ST_BATTERY], buf);
+    }
+
+    openaip_status_t o;
+    openaip_get_status(&o);
+    if (strcmp(o.state, "ok") == 0) {
+        snprintf(buf, sizeof(buf), "%d airspaces, %d airfields (%s)", o.airspaces, o.airfields, o.countries);
+    } else if (strcmp(o.state, "loading") == 0) {
+        snprintf(buf, sizeof(buf), "Loading from OpenAIP");
+    } else if (strcmp(o.state, "error") == 0) {
+        snprintf(buf, sizeof(buf), "Failed: %s", o.detail);
+    } else {
+        snprintf(buf, sizeof(buf), "%s", o.detail[0] ? o.detail : "Off");
+    }
+    set_if_changed(s_status[ST_MAPS], buf);
+}
+
+static void update_ota(void)
+{
+    ota_status_t o;
+    ota_get_status(&o);
+    char buf[160];
+    const bool checking = strcmp(o.state, "checking") == 0;
+    const bool installing = strcmp(o.state, "installing") == 0;
+    const bool offer = strcmp(o.state, "checked") == 0 && o.has_image &&
+                       strcmp(o.latest, esp_app_get_description()->version) != 0;
+    lv_obj_set_state(s_ota_check, LV_STATE_DISABLED, checking || installing);
+    lv_obj_set_hidden(s_ota_install, !offer);
+    lv_obj_set_hidden(s_ota_bar, !installing);
+    if (checking) {
+        snprintf(buf, sizeof(buf), "Checking GitHub...");
+    } else if (installing) {
+        snprintf(buf, sizeof(buf), "Installing %s: %d%%. Keep it powered; it restarts when done.", o.latest,
+                 o.progress);
+        lv_bar_set_value(s_ota_bar, o.progress, LV_ANIM_OFF);
+    } else if (strcmp(o.state, "error") == 0) {
+        snprintf(buf, sizeof(buf), "%s.", o.detail);
+    } else if (strcmp(o.state, "checked") == 0) {
+        if (!o.has_image) {
+            snprintf(buf, sizeof(buf), "The latest release, %s, has no image for this board.", o.latest);
+        } else if (!offer) {
+            snprintf(buf, sizeof(buf), "Up to date: %s is the latest release.", o.latest);
+        } else {
+            char install[48];
+            snprintf(install, sizeof(install), "Install %s", o.latest);
+            set_if_changed(lv_obj_get_child(s_ota_install, 0), install);
+            snprintf(buf, sizeof(buf), "%s was released on %s.", o.latest, o.published);
+        }
+    } else {
+        buf[0] = '\0';
+    }
+    set_if_changed(s_ota_text, buf);
+    lv_obj_set_hidden(s_ota_text, !buf[0]);
+}
+
 static void on_idle(lv_timer_t *t)
 {
-    if (lv_display_get_inactive_time(NULL) > IDLE_CLOSE_MS) close_screen();
+    update_status();
+    update_ota();
+    // Not while an update is being checked or installed: it shows the progress
+    ota_status_t o;
+    ota_get_status(&o);
+    const bool busy = strcmp(o.state, "checking") == 0 || strcmp(o.state, "installing") == 0;
+    if (!busy && lv_display_get_inactive_time(NULL) > IDLE_CLOSE_MS) close_screen();
+}
+
+static void on_ota_check(lv_event_t *e)
+{
+    ota_check();
+    update_ota();
+}
+
+static void on_ota_confirm(lv_event_t *e)
+{
+    const bool go = (bool)(intptr_t)lv_event_get_user_data(e);
+    lv_msgbox_close_async(s_msgbox);
+    s_msgbox = NULL;
+    if (go) ota_install();
+    update_ota();
+}
+
+static void on_ota_install(lv_event_t *e)
+{
+    ota_status_t o;
+    ota_get_status(&o);
+    char text[200];
+    snprintf(text, sizeof(text),
+             "Overhead restarts when it is done. If the new firmware can't reach the network, the next restart "
+             "goes back to %s.",
+             esp_app_get_description()->version);
+    s_msgbox = lv_msgbox_create(NULL);
+    char title[48];
+    snprintf(title, sizeof(title), "Install %s?", o.latest);
+    lv_msgbox_add_title(s_msgbox, title);
+    lv_msgbox_add_text(s_msgbox, text);
+    lv_obj_t *yes = lv_msgbox_add_footer_button(s_msgbox, "Install");
+    lv_obj_t *no = lv_msgbox_add_footer_button(s_msgbox, "Cancel");
+    lv_obj_add_event_cb(yes, on_ota_confirm, LV_EVENT_CLICKED, (void *)(intptr_t) true);
+    lv_obj_add_event_cb(no, on_ota_confirm, LV_EVENT_CLICKED, (void *)(intptr_t) false);
 }
 
 static void on_switch(lv_event_t *e)
@@ -276,6 +429,28 @@ static lv_obj_t *row(lv_obj_t *parent, const char *text)
     lv_obj_set_flex_grow(l, 1);
     lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
     return r;
+}
+
+// A key on the left and a value on the right, for the status
+static lv_obj_t *add_info(const char *key, const char *value)
+{
+    lv_obj_t *r = box(s_col, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(r, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_column(r, GAP, 0);
+    label(r, key, &F_ROW, C_DIM);
+    lv_obj_t *v = label(r, value, &F_ROW, C_TEXT);
+    lv_label_set_long_mode(v, LV_LABEL_LONG_WRAP);
+    lv_obj_set_flex_grow(v, 1);
+    lv_obj_set_style_text_align(v, LV_TEXT_ALIGN_RIGHT, 0);
+    return v;
+}
+
+static lv_obj_t *button(lv_obj_t *parent, const char *text, lv_event_cb_t cb)
+{
+    lv_obj_t *b = lv_button_create(parent);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
+    label(b, text, &F_ROW, C_BG);
+    return b;
 }
 
 static void add_switch(const char *text, bool *field)
@@ -426,6 +601,17 @@ static void build(void)
         hh_ptrs[i] = s_ui->hh_names[i];
     }
 
+    section("STATUS");
+    add_info("Board", BOARD_NAME);
+    s_status[ST_NETWORK] = add_info("Network", "");
+    s_status[ST_ADDRESS] = add_info("Address", "");
+    s_status[ST_UP] = add_info("Up", "");
+    s_status[ST_MEMORY] = add_info("Free memory", "");
+    battery_status_t batt_now;
+    s_status[ST_BATTERY] = battery_get(&batt_now) ? add_info("Battery", "") : NULL;
+    s_status[ST_MAPS] = add_info("Map layers", "");
+    update_status();
+
     section("DISPLAY");
     add_slider("Brightness", &s_ui->edit.brightness, 5, 100, true);
     add_choice("Dim at night", &s_ui->edit.dim_mode, DIM_V, DIM_N, 3, "");
@@ -436,7 +622,7 @@ static void build(void)
     s_dim_level = add_slider("Night brightness", &s_ui->edit.dim_brightness, 1, 100, true);
     add_choice("Clock", &s_ui->edit.clock, CLOCK_V, CLOCK_N, 3, "");
     add_timezone();
-#if CAN_ROTATE
+#if BOARD_CAN_ROTATE
     lv_obj_t *r = row(s_col, "Orientation");
     bind_t *b = new_bind(B_ROTATION, &s_ui->edit.rotation);
     b->values = ROT_V;
@@ -464,7 +650,7 @@ static void build(void)
     add_switch("Alert", &s_ui->edit.alert);
     add_choice("Within", &s_ui->edit.alert_nm10, NM10_V, NM10_N, 6, "");
     add_choice("Below", &s_ui->edit.alert_ft, FT_V, FT_N, 8, " ft");
-#if HAS_SPEAKER
+#if BOARD_HAS_SPEAKER
     add_switch("Chime", &s_ui->edit.alert_sound);
 #endif
 
@@ -484,13 +670,33 @@ static void build(void)
         add_choice("Power off below", &s_ui->edit.batt_shutdown_mv, MV_V, MV_N, 14, " mV");
     }
 
+    section("FIRMWARE");
+    char text[160];
+    snprintf(text, sizeof(text), "Running %s. Updates come from the latest release of %s on GitHub.",
+             esp_app_get_description()->version, CONFIG_OVERHEAD_OTA_REPO);
+    lv_obj_t *fw = label(s_col, text, &F_ROW, C_TEXT);
+    lv_label_set_long_mode(fw, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(fw, LV_PCT(100));
+    lv_obj_t *btns = box(s_col, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_column(btns, GAP, 0);
+    lv_obj_set_style_pad_row(btns, GAP, 0);
+    s_ota_check = button(btns, "Check for updates", on_ota_check);
+    s_ota_install = button(btns, "Install", on_ota_install);
+    s_ota_text = label(s_col, "", &F_ROW, C_TEXT);
+    lv_label_set_long_mode(s_ota_text, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(s_ota_text, LV_PCT(100));
+    s_ota_bar = lv_bar_create(s_col);
+    lv_obj_set_width(s_ota_bar, LV_PCT(100));
+    lv_bar_set_range(s_ota_bar, 0, 100);
+    update_ota();
+
     // What this screen can't do, and where to do it
-    char ip[16] = "", text[160];
+    char ip[16] = "";
     if (net_get_ip(ip, sizeof(ip))) {
-        snprintf(text, sizeof(text), "Centre, WiFi and the OpenAIP key: http://%s\nFirmware %s", ip,
-                 esp_app_get_description()->version);
+        snprintf(text, sizeof(text), "Centre, WiFi and the OpenAIP key: http://%s or http://" NET_HOSTNAME ".local",
+                 ip);
     } else {
-        snprintf(text, sizeof(text), "Firmware %s", esp_app_get_description()->version);
+        snprintf(text, sizeof(text), "Centre, WiFi and the OpenAIP key are on the configuration page.");
     }
     lv_obj_t *info = label(s_col, text, &F_HEAD, C_DIM);
     lv_obj_set_style_pad_top(info, GAP * 2, 0);

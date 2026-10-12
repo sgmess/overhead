@@ -459,13 +459,14 @@ static void openaip_task(void *arg)
             ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
             continue;
         }
+        // Said before waiting for the network, so the status doesn't read
+        // "off" for the first seconds after boot
+        s_state = "loading";
+        s_detail[0] = '\0';
         while (!net_wait_connected(60000)) {
         }
         // Let the traffic come up first
         vTaskDelay(pdMS_TO_TICKS(5000));
-
-        s_state = "loading";
-        s_detail[0] = '\0';
         bool rejected = false;
         aero_map_t *map = fetch(s, &rejected);
         if (!map) {

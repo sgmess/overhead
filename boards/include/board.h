@@ -8,6 +8,21 @@
 // Each also defines one of OVERHEAD_BOARD_P4_34C, OVERHEAD_BOARD_S3_28C or
 // OVERHEAD_BOARD_TAB5 for code that lays out differently per board.
 
+// What the board has, for the configuration page and the settings screen
+#if defined(OVERHEAD_BOARD_TAB5)
+#define BOARD_NAME "M5Stack Tab5"
+#define BOARD_CAN_ROTATE 1
+#define BOARD_HAS_SPEAKER 1
+#elif defined(OVERHEAD_BOARD_P4_34C)
+#define BOARD_NAME "Waveshare ESP32-P4-WIFI6-Touch-LCD-3.4C"
+#define BOARD_CAN_ROTATE 0
+#define BOARD_HAS_SPEAKER 0
+#else
+#define BOARD_NAME "Waveshare ESP32-S3-Touch-LCD-2.8C"
+#define BOARD_CAN_ROTATE 0
+#define BOARD_HAS_SPEAKER 0
+#endif
+
 // Panel, touch and the LVGL task, with the backlight on. rotation_deg is
 // clockwise from the panel's native orientation: 0, 90 or 270 on the Tab5;
 // the round boards ignore it.

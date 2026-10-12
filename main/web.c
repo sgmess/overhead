@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "backlight.h"
+#include "board.h"
 #include "battery.h"
 #include "cJSON.h"
 #include "esp_app_desc.h"
@@ -29,19 +30,6 @@ extern const char setup_html_end[] asm("_binary_setup_html_end");
 extern const char config_html_start[] asm("_binary_config_html_start");
 extern const char config_html_end[] asm("_binary_config_html_end");
 
-#if defined(OVERHEAD_BOARD_TAB5)
-#define BOARD_NAME "M5Stack Tab5"
-#define CAN_ROTATE true
-#define HAS_SPEAKER true
-#elif defined(OVERHEAD_BOARD_P4_34C)
-#define BOARD_NAME "Waveshare ESP32-P4-WIFI6-Touch-LCD-3.4C"
-#define CAN_ROTATE false
-#define HAS_SPEAKER false
-#else
-#define BOARD_NAME "Waveshare ESP32-S3-Touch-LCD-2.8C"
-#define CAN_ROTATE false
-#define HAS_SPEAKER false
-#endif
 
 // Every change ends in a restart, and the flash write happens just before it,
 // in the esp_timer task: the server's own stack is in PSRAM, which is
@@ -189,8 +177,8 @@ static esp_err_t on_state(httpd_req_t *req)
     cJSON_AddStringToObject(json, "firmware", app->version);
     cJSON_AddStringToObject(json, "project", app->project_name);
     cJSON_AddStringToObject(json, "update_repo", CONFIG_OVERHEAD_OTA_REPO);
-    cJSON_AddBoolToObject(json, "can_rotate", CAN_ROTATE);
-    cJSON_AddBoolToObject(json, "has_speaker", HAS_SPEAKER);
+    cJSON_AddBoolToObject(json, "can_rotate", BOARD_CAN_ROTATE);
+    cJSON_AddBoolToObject(json, "has_speaker", BOARD_HAS_SPEAKER);
     cJSON_AddBoolToObject(json, "dimmed", backlight_night());
     cJSON_AddNumberToObject(json, "uptime_s", (double)(esp_timer_get_time() / 1000000));
     cJSON_AddNumberToObject(json, "heap_internal", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
@@ -330,7 +318,7 @@ static esp_err_t on_settings(httpd_req_t *req)
     take_int(json, "max_labels", &s.max_labels);
     take_bool(json, "batt_auto_off", &s.batt_auto_off);
     take_int(json, "batt_shutdown_mv", &s.batt_shutdown_mv);
-    if (CAN_ROTATE) take_int(json, "rotation", &s.rotation);
+    if (BOARD_CAN_ROTATE) take_int(json, "rotation", &s.rotation);
     take_bool(json, "show_airspace", &s.show_airspace);
     take_bool(json, "show_airfields", &s.show_airfields);
     take_int(json, "brightness", &s.brightness);

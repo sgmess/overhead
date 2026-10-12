@@ -126,7 +126,9 @@ or forgetting the network. Saving applies at once; only a new orientation or
 network restarts the device. The pages are unauthenticated, so anyone on the
 same network can change the settings.
 
-A long press on the scope opens the same settings on the device itself:
+A long press on the scope opens the same settings on the device itself,
+with the status (network, address, uptime, memory, battery, map layers) at
+the top and firmware updates (check, then install) at the bottom:
 everything that needs no typing (so not the centre, the WiFi password, the
 OpenAIP key or a typed-in timezone, which the screen sends you to the page
 for). Each change applies as it is made, and the screen closes after a minute

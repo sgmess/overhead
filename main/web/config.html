@@ -340,6 +340,12 @@ function showStatus(j) {
     rows.push(['Battery', j.battery.state + (j.battery.percent !== undefined ?
       ', ' + j.battery.percent + '% (' + j.battery.volts.toFixed(2) + ' V)' : '')]);
   }
+  const o = j.openaip;
+  rows.push(['Map layers',
+    o.state === 'ok' ? o.airspaces + ' airspaces, ' + o.airfields + ' airfields (' + o.countries + '), ' + ago(o.age_s)
+    : o.state === 'loading' ? 'Loading from OpenAIP'
+    : o.state === 'error' ? 'Failed: ' + o.detail
+    : o.detail || 'Off']);
   const dl = $('status');
   dl.textContent = '';
   for (const [k, v] of rows) {
