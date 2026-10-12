@@ -227,6 +227,14 @@ PSRAM, and the workflow fails a Tab5 build whose static D/IRAM passes
 esp_hosted's buffers can't go to PSRAM (`ESP_HOSTED_MEMPOOL_PREFER_SPIRAM`):
 the first small transmit after joining failed every boot and restarted it.
 
+LVGL's heap is in PSRAM too (`main/lvgl_mem.c`, `LV_USE_CUSTOM_MALLOC`).
+With the C library's malloc, everything LVGL allocates of 1 KB or less went
+to internal RAM: the radar's objects took about 48 KB of it, and opening the
+settings screen another 36 KB in small pieces, after which esp_hosted
+couldn't get a 3.5 KB receive buffer and the network stopped (v0.2.5). Now
+about 120 KB of internal RAM stays free while running, with the settings
+screen open or not.
+
 **Code runs from PSRAM** (`SPIRAM_XIP_FROM_PSRAM`), as traffic-display found
 it must on the P4. Otherwise IDF disables the cache for every flash write and
 erase, both cores lose PSRAM and the frame buffer with it, and the panel
