@@ -53,3 +53,8 @@ CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
 # The setup screen's join-the-network QR code
 CONFIG_LV_USE_QRCODE=y
+
+# A root IDF's certificate bundle has dropped but two of our hosts still
+# chain to; see certs/extra_roots.pem
+CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE_PATH="certs/extra_roots.pem"

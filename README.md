@@ -56,7 +56,8 @@ gives way at once to the WiFi setup portal.
 
 ## Build and flash
 
-Needs ESP-IDF 5.5. Each board has its own build directory, `sdkconfig.<board>`
+Needs ESP-IDF 6.1 (the Tab5; the parked boards' lock files are still from
+5.5). Each board has its own build directory, `sdkconfig.<board>`
 and `dependencies.lock.<board>`, so building one never touches the other.
 There is nothing to configure first: WiFi and every radar setting are set on
 the device (see [Setup and settings](#setup-and-settings)).
@@ -267,6 +268,16 @@ Updates over WiFi write each 4 KB chunk to flash from an internal buffer.
 From PSRAM, IDF copies it 32 bytes at a time with the caches paused for each,
 which starved the C6's link until the download died (v0.1.1's updater). A
 2 MB update now takes about 12 s.
+
+**ESP-IDF 6.1.** Moved from 5.5.5 on 12 October 2026. What it took:
+cJSON from the registry (`espressif/cjson`, IDF dropped its own); certificate
+checks in software (`MBEDTLS_HARDWARE_ECDSA_VERIFY=n`), because 6.1's PSA
+driver uses the ECDSA peripheral this rev v1.x P4 lacks and every
+ECDSA-signed chain failed; and GlobalSign Root CA added back to the bundle
+(`certs/extra_roots.pem`), which 6.1 dropped but adsb.fi and OpenAIP still
+chain to. Static internal RAM fell 13 KB (FreeRTOS out of IRAM) and 317 KB
+is free at `app_main`. The C library is now picolibc; the local clock's POSIX
+timezone works with it.
 
 **C6 firmware.** The host's esp_hosted major version must match the one on
 the C6; the boot log prints the C6's (`net: co-processor esp_hosted

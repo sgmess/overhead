@@ -59,3 +59,9 @@ CONFIG_LVGL_PORT_ENABLE_PPA=y
 # Extra font sizes for the larger, finer-pitched panel
 CONFIG_LV_FONT_MONTSERRAT_24=y
 CONFIG_LV_FONT_MONTSERRAT_32=y
+
+# Certificates are checked in software. IDF 6's PSA driver otherwise uses the
+# ECDSA peripheral, which this rev v1.x P4 lacks ("ECDSA peripheral not
+# supported on this chip revision"), and every ECDSA-signed chain failed to
+# verify: adsb.fi, Let's Encrypt's E intermediates (12 October 2026).
+CONFIG_MBEDTLS_HARDWARE_ECDSA_VERIFY=n

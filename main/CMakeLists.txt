@@ -3,7 +3,7 @@ idf_component_register(
          "route.c" "settings.c" "settings_ui.c" "splash.c" "trails.c" "web.c" "zones.c"
     INCLUDE_DIRS "."
     # "board" is boards/<OVERHEAD_BOARD>/board, added by the top-level CMakeLists.txt
-    REQUIRES app_update board esp_app_format esp_https_ota esp_http_client esp_http_server esp_netif esp_wifi esp_timer json
+    REQUIRES app_update board esp_app_format esp_https_ota esp_http_client esp_http_server esp_netif esp_wifi esp_timer
              esp_partition esp_rom lwip mbedtls nvs_flash
     EMBED_TXTFILES "web/setup.html" "web/config.html"
 )
