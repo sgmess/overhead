@@ -21,8 +21,8 @@ point on a radar scope.
   `dbFlags`) in a pink diamond.
 - Origin and destination in the aircraft card, from
   [adsb.im](https://adsb.im)'s route database (the one tar1090 uses), with
-  the flight number, the airline's name and the flag of the country the
-  aircraft is registered in, all worked out on the device.
+  the flight number, the airline's name and logo, and the flag of the
+  country the aircraft is registered in, all worked out on the device.
 - An overhead alert: an aircraft within a set distance and below a set
   altitude blinks amber, a banner names it, and the Tab5 chimes.
 - Brightness, with dimming from sunset to sunrise at the radar centre or
@@ -50,7 +50,7 @@ gives way at once to the WiFi setup portal.
 
 | Tap | Does |
 | --- | --- |
-| An aircraft | Opens its card: flag, flight number, airline, registration, type, route, altitude, V/S, speed, track, squawk, range and bearing |
+| An aircraft | Opens its card: flag, flight number, airline and logo, registration, type, route, altitude, V/S, speed, track, squawk, range and bearing |
 | The alert banner | Opens the card of the nearest aircraft that set it off |
 | Empty scope, card open | Closes the card |
 | Empty scope | Next range: 5, 10, 25, 50, 100 NM |
@@ -215,7 +215,11 @@ country from the block of ICAO addresses each state is allocated
 (`main/countries.c`); an aircraft that isn't an airliner gets its country's
 name in place of the airline. The flags are Twemoji's, halved to 36x26 and
 kept in `main/flags.bin`, which `tools/make_flags.py` rebuilds after a
-country is added.
+country is added. The airline logos are pics.avs.io's, drawn on white,
+trimmed and fitted to 138x40, and shown on a white badge because many are
+dark and would vanish on the card; `tools/make_logos.py` rebuilds
+`main/logos.bin` after an airline is added (about 1 MB for 133). The 2.8C's
+card has no room for one.
 
 Settings are kept in NVS (namespace `overhead`). Until something is saved
 the firmware's defaults apply (`settings_defaults()` in `main/settings.c`):
@@ -340,8 +344,8 @@ nobody has measured, so it reports none.
 | `main/backlight.c` | Brightness, night dimming by sun elevation or clock, the page's preview |
 | `main/trails.c` | Position history per aircraft for the trails |
 | `main/route.c` | Origin and destination by callsign from adsb.im, cached |
-| `main/airlines.c`, `main/countries.c`, `main/flags.c` | Airline and flight number by callsign, country by ICAO address, and its flag |
-| `tools/` | `make_flags.py`, which builds `main/flags.bin` from Twemoji |
+| `main/airlines.c`, `main/countries.c`, `main/flags.c`, `main/logos.c` | Airline, flight number and logo by callsign; country by ICAO address, and its flag |
+| `tools/` | `make_flags.py` and `make_logos.py`, which build `main/flags.bin` and `main/logos.bin` |
 | `main/settings_ui.c` | The on-device settings screen |
 | `main/splash.c` | The start-up screen |
 | `main/zones.c` | Timezones and their POSIX rules, for the page and the screen |
@@ -363,7 +367,8 @@ own Apache-2.0 terms. The flag images in `main/flags.bin` are from
 [Twemoji](https://github.com/jdecked/twemoji), Copyright 2019 Twitter, Inc
 and other contributors, licensed under
 [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/); they were scaled
-down for the screen. The licence covers this code only: aircraft data from
+down for the screen. The airline logos in `main/logos.bin` are trademarks of
+their airlines and are not covered by this licence. The licence covers this code only: aircraft data from
 adsb.fi and adsb.lol, routes from adsb.im, airspace from OpenAIP and the
 IP-location answers from ipinfo.io and ipwho.is are under those services'
 own terms.

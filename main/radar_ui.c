@@ -17,6 +17,7 @@
 #include "airlines.h"
 #include "countries.h"
 #include "flags.h"
+#include "logos.h"
 #include "settings.h"
 #include "settings_ui.h"
 #include "splash.h"
@@ -59,6 +60,7 @@
 #define CARD_LINE_SPACE 6
 #define CARD_LINE 28 // the airline line, which pushes the rest down
 #define FLAG_SCALE 256 // 36x26
+#define HAS_LOGO 1 // the airline's logo on a badge at the card's right
 #define F_CARDINAL lv_font_montserrat_24
 #define F_ROSE lv_font_montserrat_16
 #define F_RING lv_font_montserrat_14
@@ -102,6 +104,7 @@
 #define CARD_LINE_SPACE 8
 #define CARD_LINE 26
 #define FLAG_SCALE 256
+#define HAS_LOGO 1
 #define CARD_COLS {0, 48, 210, 256}
 #define F_CARDINAL lv_font_montserrat_20
 #define F_ROSE lv_font_montserrat_14
@@ -259,6 +262,10 @@ static lv_obj_t *s_scope, *s_clock, *s_clock2, *s_range_lbl, *s_status_lbl, *s_a
 static lv_obj_t *s_card, *s_card_flag, *s_card_title, *s_card_route, *s_card_airline, *s_card_sub;
 static lv_obj_t *s_card_k1, *s_card_v1, *s_card_k2, *s_card_v2;
 static char s_card_iso[3]; // the flag showing; "" for none
+#ifdef HAS_LOGO
+static lv_obj_t *s_card_logo_box, *s_card_logo;
+static char s_card_logo_icao[4]; // the logo showing; "" for none
+#endif
 static lv_obj_t *s_sweep[SWEEP_SEGS];
 static lv_timer_t *s_sweep_timer;
 static lv_point_precise_t s_sweep_pts[SWEEP_SEGS][2];
@@ -1035,6 +1042,17 @@ static void update_card_flag(const char *iso)
     lv_obj_set_pos(s_card_title, w + w / 3, 0);
 }
 
+#ifdef HAS_LOGO
+static void update_card_logo(const char *icao)
+{
+    if (strcmp(icao, s_card_logo_icao) == 0) return;
+    strlcpy(s_card_logo_icao, icao, sizeof(s_card_logo_icao));
+    const lv_image_dsc_t *img = icao[0] ? logo_image(icao) : NULL;
+    if (img) lv_image_set_src(s_card_logo, img);
+    lv_obj_set_hidden(s_card_logo_box, !img);
+}
+#endif
+
 static void update_card(void)
 {
     int i = s_sel_hex[0] ? find_aircraft(s_sel_hex) : -1;
@@ -1080,6 +1098,9 @@ static void update_card(void)
         strlcpy(airline, country->name, sizeof(airline));
     }
     set_text_if_changed(s_card_airline, airline);
+#ifdef HAS_LOGO
+    update_card_logo(al ? al->icao : "");
+#endif
 
     char sub[64] = "";
     if (a->reg[0] && strcmp(a->reg, ac_name(a)) != 0) strlcat(sub, a->reg, sizeof(sub));
@@ -1345,6 +1366,23 @@ static void create_card(lv_obj_t *parent)
     lv_obj_set_pos(s_card_airline, 0, CARD_SUB_Y);
     s_card_sub = make_label(s_card, &F_CARD, C_TEXT);
     lv_obj_set_pos(s_card_sub, 0, CARD_SUB_Y + CARD_LINE);
+#ifdef HAS_LOGO
+    // Beside those two lines: logos are made for white, and many vanish on
+    // the card's dark green
+    s_card_logo_box = lv_obj_create(s_card);
+    lv_obj_remove_style_all(s_card_logo_box);
+    lv_obj_set_size(s_card_logo_box, LOGO_MAX_W + 12, LOGO_MAX_H + 10);
+    lv_obj_set_style_bg_color(s_card_logo_box, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(s_card_logo_box, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_card_logo_box, 8, 0);
+    lv_obj_set_scrollable(s_card_logo_box, false);
+    lv_obj_set_clickable(s_card_logo_box, false);
+    lv_obj_align(s_card_logo_box, LV_ALIGN_TOP_RIGHT, 0,
+                 CARD_SUB_Y + (CARD_LINE + lv_font_get_line_height(&F_CARD) - (LOGO_MAX_H + 10)) / 2);
+    s_card_logo = lv_image_create(s_card_logo_box);
+    lv_obj_center(s_card_logo);
+    lv_obj_set_hidden(s_card_logo_box, true);
+#endif
 
     s_card_k1 = make_label(s_card, &F_CARD, C_DIM);
     s_card_v1 = make_label(s_card, &F_CARD, C_SELECT);
