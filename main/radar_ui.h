@@ -5,6 +5,7 @@
 #include "aircraft.h"
 #include "battery.h"
 #include "openaip.h"
+#include "settings.h"
 
 // All functions except radar_ui_range_nm() must be called with the
 // display lock held (board_lock).
@@ -27,6 +28,13 @@ void radar_ui_set_aero(aero_map_t *map);
 
 // Show how to join the setup portal's network, or hide that with NULL.
 void radar_ui_show_setup(const char *ssid, const char *url);
+
+// The settings changed (old is what ran before): apply what isn't simply
+// read as it draws.
+void radar_ui_apply_settings(const settings_t *old);
+
+// A new centre: the traffic and the airspace go until fetched for it.
+void radar_ui_set_centre(double lat, double lon);
 
 // Current range in NM. Safe to call without the lock.
 int radar_ui_range_nm(void);

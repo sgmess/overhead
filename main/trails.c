@@ -39,7 +39,7 @@ static uint32_t hash(const char *s)
 
 void trails_init(void)
 {
-    if (settings()->trail_s <= 0) return;
+    if (s_trails || settings()->trail_s <= 0) return;
     s_trails = heap_caps_calloc(SLOTS, sizeof(trail_t), MALLOC_CAP_SPIRAM);
     s_buckets = heap_caps_malloc(BUCKETS * sizeof(int16_t), MALLOC_CAP_SPIRAM);
     if (!s_trails || !s_buckets) {

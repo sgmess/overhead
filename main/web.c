@@ -16,6 +16,7 @@
 #include "openaip.h"
 #include "ota.h"
 #include "settings.h"
+#include "zones.h"
 
 static const char *TAG = "web";
 
@@ -385,7 +386,29 @@ static esp_err_t on_settings(httpd_req_t *req)
                            "A value is out of range (countries are two-letter codes, up to four; a timezone is a "
                            "POSIX TZ string such as GMT0BST,M3.5.0/1,M10.5.0)");
     }
-    return send_result(req, commit(&s), NULL);
+    // Applied at once, except the orientation, which restarts. Waits until
+    // applied, so the page's next look at the state shows it.
+    const bool restart = settings_need_restart(&s);
+    esp_err_t err = settings_change(&s, !restart);
+    if (err != ESP_OK) return send_result(req, err, err == ESP_ERR_TIMEOUT ? "Saved, but still applying" : NULL);
+    cJSON *reply = cJSON_CreateObject();
+    cJSON_AddBoolToObject(reply, "ok", true);
+    cJSON_AddBoolToObject(reply, "restart", restart);
+    return send_json(req, reply);
+}
+
+// The timezone list, shared with the settings screen
+static esp_err_t on_zones(httpd_req_t *req)
+{
+    cJSON *list = cJSON_CreateArray();
+    for (int i = 0; i < ZONE_COUNT; i++) {
+        cJSON *z = cJSON_CreateArray();
+        cJSON_AddItemToArray(z, cJSON_CreateString(ZONES[i].iana));
+        cJSON_AddItemToArray(z, cJSON_CreateString(ZONES[i].label));
+        cJSON_AddItemToArray(z, cJSON_CreateString(ZONES[i].posix));
+        cJSON_AddItemToArray(list, z);
+    }
+    return send_json(req, list);
 }
 
 // The brightness slider, shown for a few seconds without saving
@@ -471,6 +494,7 @@ void web_start(void)
         {.uri = "/api/settings", .method = HTTP_POST, .handler = on_settings},
         {.uri = "/api/forget", .method = HTTP_POST, .handler = on_forget},
         {.uri = "/api/brightness", .method = HTTP_POST, .handler = on_brightness},
+        {.uri = "/api/zones", .method = HTTP_GET, .handler = on_zones},
         {.uri = "/api/defaults", .method = HTTP_POST, .handler = on_defaults},
         {.uri = "/api/ota", .method = HTTP_GET, .handler = on_ota_status},
         {.uri = "/api/ota/check", .method = HTTP_POST, .handler = on_ota_check},

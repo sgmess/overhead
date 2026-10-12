@@ -52,6 +52,10 @@ void aero_map_free(aero_map_t *map);
 // Does nothing without a key or with both layers off.
 void openaip_start(void);
 
+// The key, countries, layers or centre changed: fetch again, or drop the
+// map if there is now nothing to fetch.
+void openaip_restart(void);
+
 typedef struct {
     const char *state; // "off", "loading", "ok" or "error"
     const char *detail;

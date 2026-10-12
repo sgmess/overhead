@@ -47,6 +47,7 @@ Data comes from [adsb.lol](https://adsb.lol), with an automatic switch to
 | Empty scope, card open | Closes the card |
 | Empty scope | Next range: 5, 10, 25, 50, 100 NM |
 | A list row (Tab5) | Selects that aircraft; tap it again to clear |
+| Long press on the scope | Opens the settings screen |
 
 ## Build and flash
 
@@ -121,9 +122,20 @@ covers the centre (with a map), starting range, labels and what the data tags
 show, trails, sweep, ground traffic, military highlighting, routes, the
 overhead alert, brightness and night dimming, the clock and timezone, primary
 feed, poll interval, the Tab5's orientation and battery cut-off, and changing
-or forgetting the network. Every save restarts the
-device. The pages are unauthenticated, so anyone on the same network can
-change the settings.
+or forgetting the network. Saving applies at once; only a new orientation or
+network restarts the device. The pages are unauthenticated, so anyone on the
+same network can change the settings.
+
+A long press on the scope opens the same settings on the device itself:
+everything that needs no typing (so not the centre, the WiFi password, the
+OpenAIP key or a typed-in timezone, which the screen sends you to the page
+for). Each change applies as it is made, and the screen closes after a minute
+untouched. Both save through one task (`settings_change()` in
+`main/settings.c`) with its stack in internal RAM, which stores the change in
+NVS, makes it the running settings under the display lock, then applies what
+isn't read afresh: the timezone, the centre (the radar re-projects and the
+airspace is fetched again), the sweep, trails, starting range, feed and the
+OpenAIP layers.
 
 ### Airspace and airfields
 
@@ -267,6 +279,8 @@ nobody has measured, so it reports none.
 | `main/backlight.c` | Brightness, night dimming by sun elevation or clock, the page's preview |
 | `main/trails.c` | Position history per aircraft for the trails |
 | `main/route.c` | Origin and destination by callsign from adsb.im, cached |
+| `main/settings_ui.c` | The on-device settings screen |
+| `main/zones.c` | Timezones and their POSIX rules, for the page and the screen |
 | `main/ota.c` | Updates from GitHub releases, image check, rollback confirmation |
 | `web/flash/`, `.github/workflows/` | Web flasher page and the build, release and Pages workflow |
 | `main/openaip.c` | OpenAIP airspace and airfields: fetch by country, trim to range, project to NM |

@@ -1,10 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 #include "board.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
@@ -21,6 +23,10 @@
 
 static const char *TAG = "overhead";
 
+// Woken early (a range tap, a settings change), still no sooner than this
+// after the last request: two 70 ms apart drew HTTP 429 from adsb.fi
+#define FETCH_GAP_MS 2000
+
 #if CONFIG_IDF_TARGET_ESP32P4
 #define FETCH_STACK (16 * 1024)
 #else
@@ -34,6 +40,38 @@ static double s_lat, s_lon;
 static void on_range_change(void)
 {
     xTaskNotifyGive(s_fetch_task);
+}
+
+static void apply_tz(const char *tz)
+{
+    setenv("TZ", tz[0] ? tz : "UTC0", 1);
+    tzset();
+}
+
+// A change from the configuration page or the settings screen, already the
+// running settings: apply whatever isn't read afresh each time it's used
+static void on_settings_changed(const settings_t *old, const settings_t *now)
+{
+    if (strcmp(now->tz, old->tz) != 0) apply_tz(now->tz);
+    const bool moved = now->lat != old->lat || now->lon != old->lon;
+
+    board_lock();
+    if (moved) radar_ui_set_centre(now->lat, now->lon);
+    radar_ui_apply_settings(old);
+    board_unlock();
+
+    if (moved || strcmp(now->openaip_key, old->openaip_key) != 0 ||
+        strcmp(now->openaip_countries, old->openaip_countries) != 0 ||
+        now->show_airspace != old->show_airspace || now->show_airfields != old->show_airfields) {
+        openaip_restart();
+    }
+    if (now->feed != old->feed) feed_reset();
+    if (moved) {
+        s_lat = now->lat;
+        s_lon = now->lon;
+    }
+    // A new centre, feed or interval: fetch now rather than at the old pace
+    if (moved || now->feed != old->feed || now->fetch_s != old->fetch_s) xTaskNotifyGive(s_fetch_task);
 }
 
 // Until connected: say what we're joining, and how to reach the setup
@@ -76,6 +114,7 @@ static void fetch_task(void *arg)
 {
     aircraft_t *buf = heap_caps_calloc(AC_MAX, sizeof(aircraft_t), MALLOC_CAP_SPIRAM);
     assert(buf);
+    int64_t last_us = 0;
 
     for (;;) {
         if (!net_is_connected()) {
@@ -89,6 +128,10 @@ static void fetch_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
+
+        const int64_t since_ms = (esp_timer_get_time() - last_us) / 1000;
+        if (last_us && since_ms < FETCH_GAP_MS) vTaskDelay(pdMS_TO_TICKS(FETCH_GAP_MS - since_ms));
+        last_us = esp_timer_get_time();
 
         // Ask for a little beyond the scope edge so aircraft don't pop in at the rim
         int range = radar_ui_range_nm();
@@ -132,10 +175,7 @@ void app_main(void)
 
     settings_load();
     // Local time for the clock and the dimming hours
-    if (settings()->tz[0]) {
-        setenv("TZ", settings()->tz, 1);
-        tzset();
-    }
+    apply_tz(settings()->tz);
     // Early, so the web flasher finds it within its wait after installing
     improv_start();
     s_lat = settings()->lat;
@@ -158,4 +198,6 @@ void app_main(void)
     route_start();
     // TLS and JSON parsing buffers are in PSRAM; this is just call depth.
     xTaskCreate(fetch_task, "fetch", FETCH_STACK, NULL, 5, &s_fetch_task);
+    // Last: a change can wake any of the above
+    settings_start(on_settings_changed);
 }

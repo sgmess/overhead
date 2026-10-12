@@ -119,10 +119,22 @@ void aero_map_free(aero_map_t *map)
     free(map);
 }
 
-// pdMS_TO_TICKS overflows 32 bits long before a day, so an hour at a time
+static TaskHandle_t s_task;
+
+// pdMS_TO_TICKS overflows 32 bits long before a day, so an hour at a time.
+// A change of settings (openaip_restart()) ends it early.
 static void sleep_s(int seconds)
 {
-    for (; seconds > 0; seconds -= 3600) vTaskDelay(pdMS_TO_TICKS((seconds < 3600 ? seconds : 3600) * 1000));
+    for (; seconds > 0; seconds -= 3600) {
+        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS((seconds < 3600 ? seconds : 3600) * 1000))) return;
+    }
+}
+
+static bool configured(const settings_t *s)
+{
+    if (s->openaip_key[0] && (s->show_airspace || s->show_airfields)) return true;
+    strlcpy(s_detail, s->openaip_key[0] ? "Both layers are off" : "No API key", sizeof(s_detail));
+    return false;
 }
 
 // ---------------------------------------------------------------- HTTP
@@ -439,6 +451,14 @@ static void openaip_task(void *arg)
 {
     const settings_t *s = settings();
     for (;;) {
+        if (!configured(s)) {
+            s_state = "off";
+            board_lock();
+            radar_ui_set_aero(NULL);
+            board_unlock();
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            continue;
+        }
         while (!net_wait_connected(60000)) {
         }
         // Let the traffic come up first
@@ -451,9 +471,12 @@ static void openaip_task(void *arg)
         if (!map) {
             ESP_LOGW(TAG, "%s", s_detail);
             s_state = "error";
-            // A refused key won't start working; a new one restarts us
-            if (rejected) break;
-            sleep_s(RETRY_S);
+            // A refused key won't start working; a new one wakes us
+            if (rejected) {
+                ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            } else {
+                sleep_s(RETRY_S);
+            }
             continue;
         }
 
@@ -468,21 +491,21 @@ static void openaip_task(void *arg)
         board_unlock();
         sleep_s(REFRESH_S);
     }
-    vTaskDelete(NULL);
 }
 
 void openaip_start(void)
 {
-    const settings_t *s = settings();
-    if (!s->openaip_key[0] || (!s->show_airspace && !s->show_airfields)) {
-        strlcpy(s_detail, s->openaip_key[0] ? "Both layers are off" : "No API key", sizeof(s_detail));
-        return;
-    }
-    // Its stack can be in PSRAM: nothing here writes flash
-    if (xTaskCreateWithCaps(openaip_task, "openaip", 8192, NULL, 3, NULL,
+    // Its stack can be in PSRAM: nothing here writes flash. It waits for a
+    // key while there is none.
+    if (xTaskCreateWithCaps(openaip_task, "openaip", 8192, NULL, 3, &s_task,
                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
-        xTaskCreate(openaip_task, "openaip", 8192, NULL, 3, NULL);
+        xTaskCreate(openaip_task, "openaip", 8192, NULL, 3, &s_task);
     }
+}
+
+void openaip_restart(void)
+{
+    if (s_task) xTaskNotifyGive(s_task);
 }
 
 void openaip_get_status(openaip_status_t *out)

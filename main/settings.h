@@ -4,9 +4,10 @@
 
 #include "esp_err.h"
 
-// User settings. menuconfig gives the defaults; anything saved from the setup
-// portal or the configuration page is kept in NVS and wins. They are read
-// once at boot, and a change takes effect on the restart that follows saving.
+// User settings. The firmware gives the defaults; anything saved from the
+// setup portal, the configuration page or the device's settings screen is
+// kept in NVS and wins. Most take effect at once (settings_change()); a
+// different network or orientation needs a restart.
 
 #define SETTINGS_RANGE_COUNT 5 // 5, 10, 25, 50, 100 NM
 
@@ -71,3 +72,21 @@ esp_err_t settings_save(const settings_t *s);
 
 // Forget everything saved, so the next boot uses the defaults again.
 esp_err_t settings_erase(void);
+
+// Whether going from the running settings to s needs a restart: the network
+// and the display's orientation are only set up at boot.
+bool settings_need_restart(const settings_t *s);
+
+// Called after a change has been stored and made the running settings, from
+// the settings task, without the display lock. old is what ran before.
+typedef void (*settings_listener_t)(const settings_t *old, const settings_t *now);
+
+// Start the task that stores and applies changes. After settings_load().
+void settings_start(settings_listener_t listener);
+
+// Store s and apply it, or with settings_need_restart(s) store it and
+// restart. ESP_ERR_INVALID_ARG unless settings_valid(). A newer change
+// waiting replaces an older one. With wait, returns once it has been applied
+// (up to a couple of seconds). Safe from any task, display lock or not
+// unless waiting.
+esp_err_t settings_change(const settings_t *s, bool wait);

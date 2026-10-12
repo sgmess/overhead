@@ -3,7 +3,13 @@
 #include <math.h>
 #include <string.h>
 
+#include "board.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "nvs.h"
 
 static const char *TAG = "settings";
@@ -191,10 +197,8 @@ const settings_t *settings(void)
     return &s_settings;
 }
 
-esp_err_t settings_save(const settings_t *s)
+static esp_err_t store(const settings_t *s)
 {
-    if (!settings_valid(s)) return ESP_ERR_INVALID_ARG;
-
     nvs_handle_t h;
     esp_err_t err = nvs_open(NS, NVS_READWRITE, &h);
     if (err != ESP_OK) return err;
@@ -235,6 +239,13 @@ esp_err_t settings_save(const settings_t *s)
     if (err == ESP_OK) err = nvs_set_u8(h, "vector", s->show_vector);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
+    return err;
+}
+
+esp_err_t settings_save(const settings_t *s)
+{
+    if (!settings_valid(s)) return ESP_ERR_INVALID_ARG;
+    esp_err_t err = store(s);
     if (err == ESP_OK) s_settings = *s;
     return err;
 }
@@ -248,4 +259,79 @@ esp_err_t settings_erase(void)
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     return err;
+}
+
+bool settings_need_restart(const settings_t *s)
+{
+    return strcmp(s->ssid, s_settings.ssid) != 0 || strcmp(s->password, s_settings.password) != 0 ||
+           s->rotation != s_settings.rotation;
+}
+
+// ---------------------------------------------------------------- changes
+//
+// One task stores and applies every change, so the web page and the screen
+// can't interleave, and its stack is internal: on a board without XIP a
+// flash write takes PSRAM away, and with it any stack there.
+
+static QueueHandle_t s_queue;          // of settings_t, one deep: the newest wins
+static SemaphoreHandle_t s_applied;    // given after each change, for waiters
+static SemaphoreHandle_t s_wait_lock;  // one waiter at a time
+static settings_listener_t s_listener;
+
+static void settings_task(void *arg)
+{
+    static settings_t next, old; // too big for a 4 KB stack twice over
+    for (;;) {
+        xQueueReceive(s_queue, &next, portMAX_DELAY);
+        if (memcmp(&next, &s_settings, sizeof(next)) == 0) {
+            xSemaphoreGive(s_applied);
+            continue;
+        }
+        const bool restart = settings_need_restart(&next);
+        esp_err_t err = store(&next);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "not stored: %s", esp_err_to_name(err));
+            xSemaphoreGive(s_applied);
+            continue;
+        }
+        if (restart) {
+            ESP_LOGW(TAG, "network or orientation changed, restarting");
+            vTaskDelay(pdMS_TO_TICKS(500)); // lets a web reply get out
+            esp_restart();
+        }
+        // The display task reads them all the time; this keeps it from
+        // seeing half of a string
+        old = s_settings;
+        board_lock();
+        s_settings = next;
+        board_unlock();
+        ESP_LOGI(TAG, "changed and applied");
+        if (s_listener) s_listener(&old, &s_settings);
+        xSemaphoreGive(s_applied);
+    }
+}
+
+void settings_start(settings_listener_t listener)
+{
+    s_listener = listener;
+    s_queue = xQueueCreate(1, sizeof(settings_t));
+    s_applied = xSemaphoreCreateBinary();
+    s_wait_lock = xSemaphoreCreateMutex();
+    xTaskCreate(settings_task, "settings", 4096, NULL, 4, NULL);
+}
+
+esp_err_t settings_change(const settings_t *s, bool wait)
+{
+    if (!settings_valid(s)) return ESP_ERR_INVALID_ARG;
+    if (!s_queue) return ESP_ERR_INVALID_STATE;
+    if (!wait) {
+        xQueueOverwrite(s_queue, s);
+        return ESP_OK;
+    }
+    xSemaphoreTake(s_wait_lock, portMAX_DELAY);
+    xSemaphoreTake(s_applied, 0); // drop a give left from a change nobody waited for
+    xQueueOverwrite(s_queue, s);
+    const bool done = xSemaphoreTake(s_applied, pdMS_TO_TICKS(3000)) == pdTRUE;
+    xSemaphoreGive(s_wait_lock);
+    return done ? ESP_OK : ESP_ERR_TIMEOUT;
 }

@@ -220,6 +220,11 @@ esp_err_t feed_fetch(double lat, double lon, int radius_nm,
     return ESP_OK;
 }
 
+void feed_reset(void)
+{
+    s_feed = -1;
+}
+
 const char *feed_name(void)
 {
     return FEEDS[s_feed < 0 ? settings()->feed : s_feed].name;

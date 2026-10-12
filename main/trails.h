@@ -13,7 +13,8 @@ typedef struct {
     float lat, lon;
 } trail_pt_t;
 
-// Allocate the history, if trails are on. Before trails_update().
+// Allocate the history, if trails are on and it isn't yet. Before
+// trails_update(); again when trails are turned on.
 void trails_init(void);
 
 // Add each aircraft's latest report. slot_out[i] is list[i]'s trail for

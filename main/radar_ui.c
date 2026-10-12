@@ -15,6 +15,7 @@
 #include "openaip.h"
 #include "route.h"
 #include "settings.h"
+#include "settings_ui.h"
 #include "trails.h"
 
 // The scope is the top SCR_W x SCR_W square: the whole panel on the round
@@ -247,6 +248,7 @@ static void (*s_on_range_change)(void);
 static lv_obj_t *s_scope, *s_clock, *s_clock2, *s_range_lbl, *s_status_lbl, *s_alert_lbl;
 static lv_obj_t *s_card, *s_card_title, *s_card_route, *s_card_sub, *s_card_k1, *s_card_v1, *s_card_k2, *s_card_v2;
 static lv_obj_t *s_sweep[SWEEP_SEGS];
+static lv_timer_t *s_sweep_timer;
 static lv_point_precise_t s_sweep_pts[SWEEP_SEGS][2];
 static float s_sweep_deg;
 static lv_obj_t *s_setup, *s_setup_text;
@@ -1180,6 +1182,29 @@ static void on_scope_click(lv_event_t *e)
     }
 }
 
+static void on_scope_long_press(lv_event_t *e)
+{
+    settings_ui_open();
+}
+
+static void show_sweep(bool on)
+{
+    for (int i = 0; i < SWEEP_SEGS; i++) lv_obj_set_hidden(s_sweep[i], !on);
+    if (on) {
+        lv_timer_resume(s_sweep_timer);
+    } else {
+        lv_timer_pause(s_sweep_timer);
+    }
+}
+
+// The history and its screen points, once trails are on
+static void start_trails(void)
+{
+    if (settings()->trail_s <= 0) return;
+    trails_init();
+    if (!s_trail_xy) s_trail_xy = heap_caps_calloc(AC_MAX, sizeof(*s_trail_xy), MALLOC_CAP_SPIRAM);
+}
+
 static void on_card_click(lv_event_t *e)
 {
     select_aircraft(NULL);
@@ -1452,10 +1477,7 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     s_order = heap_caps_calloc(AC_MAX, sizeof(int), MALLOC_CAP_SPIRAM);
     s_scr = heap_caps_calloc(AC_MAX, sizeof(ac_screen_t), MALLOC_CAP_SPIRAM);
     s_trail_slot = heap_caps_calloc(AC_MAX, sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    trails_init();
-    if (settings()->trail_s > 0) {
-        s_trail_xy = heap_caps_calloc(AC_MAX, sizeof(*s_trail_xy), MALLOC_CAP_SPIRAM);
-    }
+    start_trails();
     s_lat0 = center_lat;
     s_lon0 = center_lon;
     s_coslat0 = cos(center_lat * M_PI / 180.0);
@@ -1468,6 +1490,7 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     }
 #endif
 
+    settings_ui_init(); // the theme, before any widget
     lv_obj_t *scr = lv_screen_active();
     lv_obj_set_style_bg_color(scr, lv_color_hex(C_BG), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
@@ -1479,20 +1502,23 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     lv_obj_set_size(s_scope, SCR_W, SCR_W);
     lv_obj_set_clickable(s_scope, true);
     lv_obj_add_event_cb(s_scope, on_scope_draw, LV_EVENT_DRAW_MAIN, NULL);
-    lv_obj_add_event_cb(s_scope, on_scope_click, LV_EVENT_CLICKED, NULL);
+    // Short: a long press opens the settings, and its release isn't a tap
+    lv_obj_add_event_cb(s_scope, on_scope_click, LV_EVENT_SHORT_CLICKED, NULL);
+    lv_obj_add_event_cb(s_scope, on_scope_long_press, LV_EVENT_LONG_PRESSED, NULL);
 
-    if (settings()->sweep) {
-        for (int i = 0; i < SWEEP_SEGS; i++) {
-            s_sweep[i] = lv_line_create(scr);
-            lv_obj_set_style_line_color(s_sweep[i], lv_color_hex(C_SWEEP), 0);
-            lv_obj_set_style_line_width(s_sweep[i], 3, 0);
-            // Brighter towards the rim, like a phosphor trace
-            lv_obj_set_style_line_opa(s_sweep[i], 40 + 170 * i / (SWEEP_SEGS - 1), 0);
-            lv_obj_set_clickable(s_sweep[i], false);
-        }
-        on_sweep(NULL);
-        lv_timer_create(on_sweep, SWEEP_TICK_MS, NULL);
+    // Made whether it is on or not, so turning it on later keeps it under
+    // the card and the panel
+    for (int i = 0; i < SWEEP_SEGS; i++) {
+        s_sweep[i] = lv_line_create(scr);
+        lv_obj_set_style_line_color(s_sweep[i], lv_color_hex(C_SWEEP), 0);
+        lv_obj_set_style_line_width(s_sweep[i], 3, 0);
+        // Brighter towards the rim, like a phosphor trace
+        lv_obj_set_style_line_opa(s_sweep[i], 40 + 170 * i / (SWEEP_SEGS - 1), 0);
+        lv_obj_set_clickable(s_sweep[i], false);
     }
+    on_sweep(NULL);
+    s_sweep_timer = lv_timer_create(on_sweep, SWEEP_TICK_MS, NULL);
+    show_sweep(settings()->sweep);
 
     // Children of the scope, so they sit against its edges on every board.
     // Labels aren't clickable, so taps still reach the scope.
@@ -1568,6 +1594,35 @@ void radar_ui_set_status(const char *text)
 {
     strlcpy(s_status, text ? text : "", sizeof(s_status));
     update_status_label();
+}
+
+void radar_ui_apply_settings(const settings_t *old)
+{
+    const settings_t *s = settings();
+    if (s->sweep != old->sweep) show_sweep(s->sweep);
+    if (s->trail_s != old->trail_s) start_trails();
+    // The starting range, chosen again: go to it now
+    if (s->range_idx != old->range_idx && s->range_idx != s_range_idx) {
+        s_range_idx = s->range_idx;
+        update_range_label();
+        if (s_on_range_change) s_on_range_change();
+    }
+    if (s->show_airspace != old->show_airspace || s->show_airfields != old->show_airfields) {
+        s_segs_range = -1;
+        s_bg_range = -1;
+    }
+    if (strcmp(s->tz, old->tz) != 0 || s->clock != old->clock) update_clock();
+    refresh();
+}
+
+void radar_ui_set_centre(double lat, double lon)
+{
+    s_lat0 = lat;
+    s_lon0 = lon;
+    s_coslat0 = cos(lat * M_PI / 180.0);
+    s_count = 0; // the next fetch fills in around the new centre
+    s_sel_hex[0] = '\0';
+    radar_ui_set_aero(NULL); // projected for the old one; OpenAIP fetches again
 }
 
 int radar_ui_range_nm(void)

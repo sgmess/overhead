@@ -36,6 +36,7 @@ dt{color:var(--dim)}dd{margin:0;overflow-wrap:anywhere}
 .save{position:sticky;bottom:12px;margin-top:6px}
 #msg{min-height:1.4em;margin:8px 0 0;text-align:center}
 #msg.bad{color:var(--bad)}
+#msg.ok{color:var(--accent)}
 .hidden{display:none!important}
 .overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(3,8,6,.88);z-index:10}
 .overlay .card{max-width:360px;text-align:center}
@@ -211,6 +212,7 @@ a{color:var(--accent)}
         <option value="90">Landscape: scope left, list right</option>
         <option value="270">Landscape, the other way up</option>
       </select>
+      <p class="hint">Changing it restarts Overhead. Everything else here applies as soon as you save.</p>
     </div>
   </section>
 
@@ -223,7 +225,7 @@ a{color:var(--accent)}
   </section>
 
   <div class="save">
-    <button id="save" class="primary">Save and restart</button>
+    <button id="save" class="primary">Save</button>
     <p id="msg" role="status"></p>
   </div>
 </form>
@@ -267,47 +269,9 @@ const CHECKS = ['sweep', 'show_ground', 'batt_auto_off', 'show_airspace', 'show_
 const SLIDERS = ['brightness', 'dim_brightness'];
 let map, pin, keyCleared = false;
 
-// IANA zone, label, POSIX rule (newlib only understands the POSIX form)
-const ZONES = [
-  ['UTC', 'UTC', 'UTC0'],
-  ['Europe/London', 'London, Edinburgh (GMT/BST)', 'GMT0BST,M3.5.0/1,M10.5.0'],
-  ['Europe/Dublin', 'Dublin (GMT/IST)', 'IST-1GMT0,M10.5.0,M3.5.0/1'],
-  ['Europe/Lisbon', 'Lisbon, Canaries (WET/WEST)', 'WET0WEST,M3.5.0/1,M10.5.0'],
-  ['Europe/Paris', 'Paris, Berlin, Madrid, Rome, Amsterdam (CET/CEST)', 'CET-1CEST,M3.5.0,M10.5.0/3'],
-  ['Europe/Athens', 'Athens, Helsinki, Kyiv, Bucharest (EET/EEST)', 'EET-2EEST,M3.5.0/3,M10.5.0/4'],
-  ['Europe/Istanbul', 'Istanbul (+03)', '<+03>-3'],
-  ['Europe/Moscow', 'Moscow (MSK)', 'MSK-3'],
-  ['Asia/Jerusalem', 'Jerusalem (IST/IDT)', 'IST-2IDT,M3.4.4/26,M10.5.0'],
-  ['Asia/Dubai', 'Dubai (+04)', '<+04>-4'],
-  ['Asia/Karachi', 'Karachi (PKT)', 'PKT-5'],
-  ['Asia/Kolkata', 'India (IST)', 'IST-5:30'],
-  ['Asia/Bangkok', 'Bangkok, Jakarta (+07)', '<+07>-7'],
-  ['Asia/Singapore', 'Singapore, Kuala Lumpur (+08)', '<+08>-8'],
-  ['Asia/Hong_Kong', 'Hong Kong (HKT)', 'HKT-8'],
-  ['Asia/Shanghai', 'China (CST)', 'CST-8'],
-  ['Asia/Tokyo', 'Tokyo (JST)', 'JST-9'],
-  ['Asia/Seoul', 'Seoul (KST)', 'KST-9'],
-  ['Australia/Perth', 'Perth (AWST)', 'AWST-8'],
-  ['Australia/Darwin', 'Darwin (ACST)', 'ACST-9:30'],
-  ['Australia/Adelaide', 'Adelaide (ACST/ACDT)', 'ACST-9:30ACDT,M10.1.0,M4.1.0/3'],
-  ['Australia/Brisbane', 'Brisbane (AEST)', 'AEST-10'],
-  ['Australia/Sydney', 'Sydney, Melbourne, Canberra (AEST/AEDT)', 'AEST-10AEDT,M10.1.0,M4.1.0/3'],
-  ['Pacific/Auckland', 'Auckland (NZST/NZDT)', 'NZST-12NZDT,M9.5.0,M4.1.0/3'],
-  ['Pacific/Honolulu', 'Hawaii (HST)', 'HST10'],
-  ['America/Anchorage', 'Alaska (AKST/AKDT)', 'AKST9AKDT,M3.2.0,M11.1.0'],
-  ['America/Los_Angeles', 'Pacific time (PST/PDT)', 'PST8PDT,M3.2.0,M11.1.0'],
-  ['America/Phoenix', 'Arizona (MST)', 'MST7'],
-  ['America/Denver', 'Mountain time (MST/MDT)', 'MST7MDT,M3.2.0,M11.1.0'],
-  ['America/Chicago', 'Central time (CST/CDT)', 'CST6CDT,M3.2.0,M11.1.0'],
-  ['America/Mexico_City', 'Mexico City (CST)', 'CST6'],
-  ['America/New_York', 'Eastern time (EST/EDT)', 'EST5EDT,M3.2.0,M11.1.0'],
-  ['America/Halifax', 'Atlantic time (AST/ADT)', 'AST4ADT,M3.2.0,M11.1.0'],
-  ['America/St_Johns', 'Newfoundland (NST/NDT)', 'NST3:30NDT,M3.2.0,M11.1.0'],
-  ['America/Sao_Paulo', 'São Paulo, Buenos Aires (-03)', '<-03>3'],
-  ['Africa/Lagos', 'Lagos (WAT)', 'WAT-1'],
-  ['Africa/Johannesburg', 'Johannesburg (SAST)', 'SAST-2'],
-  ['Africa/Nairobi', 'Nairobi (EAT)', 'EAT-3'],
-];
+// [IANA zone, label, POSIX rule], from the device (/api/zones), which offers
+// the same list on its own settings screen. newlib only understands POSIX.
+let ZONES = [];
 // Browser zones that share a rule with one listed
 const ALIASES = {
   'Europe/Berlin': 'Europe/Paris', 'Europe/Madrid': 'Europe/Paris', 'Europe/Rome': 'Europe/Paris',
@@ -327,8 +291,11 @@ const ALIASES = {
   'America/Argentina/Buenos_Aires': 'America/Sao_Paulo', 'Asia/Riyadh': 'Europe/Istanbul', 'Asia/Qatar': 'Europe/Istanbul',
 };
 
-for (const [, label, posix] of ZONES) $('tz-select').add(new Option(label, posix));
-$('tz-select').add(new Option('Other: type a POSIX TZ string', 'custom'));
+async function loadZones() {
+  try { ZONES = await api('/api/zones'); } catch (e) { ZONES = [['UTC', 'UTC', 'UTC0']]; }
+  for (const [, label, posix] of ZONES) $('tz-select').add(new Option(label, posix));
+  $('tz-select').add(new Option('Other: type a POSIX TZ string', 'custom'));
+}
 
 for (let mv = 6100; mv <= 7400; mv += 100) {
   $('batt_shutdown_mv').add(new Option((mv / 1000).toFixed(1) + ' V' + (mv === 6300 ? ' (recommended)' : ''), mv));
@@ -647,12 +614,22 @@ $('form').onsubmit = async e => {
   $('save').disabled = true;
   msg.textContent = '';
   try {
-    await api('/api/settings', body);
-    waitForRestart();
+    const r = await api('/api/settings', body);
+    // Only a new orientation restarts; everything else is live already
+    if (r.restart) {
+      waitForRestart('Overhead is restarting into the new orientation. This page reloads when it is back.', true);
+      return;
+    }
+    keyCleared = false;
+    $('openaip_key').value = '';
+    await load();
+    msg.className = 'ok';
+    msg.textContent = 'Saved. The radar is already using it.';
+    setTimeout(() => { if (msg.className === 'ok') msg.textContent = ''; }, 4000);
   } catch (err) {
     msg.textContent = err.message || 'Could not save. Try again.';
-    $('save').disabled = false;
   }
+  $('save').disabled = false;
 };
 
 $('forget').onclick = async () => {
@@ -671,7 +648,7 @@ $('defaults').onclick = async () => {
   } catch (err) { alert(err.message); }
 };
 
-load().catch(() => { $('status').innerHTML = '<dt>Error</dt><dd>Could not reach Overhead. Reload to try again.</dd>'; });
+loadZones().then(load).catch(() => { $('status').innerHTML = '<dt>Error</dt><dd>Could not reach Overhead. Reload to try again.</dd>'; });
 </script>
 </body>
 </html>

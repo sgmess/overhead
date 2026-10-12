@@ -11,5 +11,8 @@ void feed_init(void);
 esp_err_t feed_fetch(double lat, double lon, int radius_nm,
                      aircraft_t *out, int max, int *count);
 
+// The primary feed setting changed: use it from the next fetch.
+void feed_reset(void);
+
 // Short name of the feed used by the last successful fetch.
 const char *feed_name(void);
