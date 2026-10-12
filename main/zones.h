@@ -14,3 +14,6 @@ extern const int ZONE_COUNT;
 
 // The zone with this POSIX rule, or -1 (a rule typed in on the page)
 int zone_find(const char *posix);
+
+// The zone with this IANA name, "Europe/London", or -1
+int zone_find_iana(const char *iana);

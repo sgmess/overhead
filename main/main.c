@@ -13,6 +13,7 @@
 
 #include "battery.h"
 #include "feed.h"
+#include "geoloc.h"
 #include "improv.h"
 #include "net.h"
 #include "openaip.h"
@@ -32,6 +33,8 @@ static const char *TAG = "overhead";
 #else
 #define FETCH_STACK (10 * 1024) // internal RAM is tight on the S3
 #endif
+
+#define GEOLOC_RETRY_US (10 * 60 * 1000000LL)
 
 static TaskHandle_t s_fetch_task;
 static double s_lat, s_lon;
@@ -115,6 +118,8 @@ static void fetch_task(void *arg)
     aircraft_t *buf = heap_caps_calloc(AC_MAX, sizeof(aircraft_t), MALLOC_CAP_SPIRAM);
     assert(buf);
     int64_t last_us = 0;
+    bool located = false;
+    int64_t locate_us = 0;
 
     for (;;) {
         if (!net_is_connected()) {
@@ -127,6 +132,15 @@ static void fetch_task(void *arg)
             board_unlock();
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
+        }
+
+        // A new device: centred on where the connection is before its first
+        // fetch, rather than on Heathrow
+        if (!located && esp_timer_get_time() >= locate_us) {
+            located = geoloc_locate();
+            locate_us = esp_timer_get_time() + GEOLOC_RETRY_US;
+            // The new centre woke this task, which is about to fetch anyway
+            ulTaskNotifyTake(pdTRUE, 0);
         }
 
         const int64_t since_ms = (esp_timer_get_time() - last_us) / 1000;

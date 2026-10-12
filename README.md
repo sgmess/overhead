@@ -35,8 +35,9 @@ point on a radar scope.
 - Battery level, charging state and time left on the Tab5, with charging
   enabled and a clean power-off before the pack runs flat.
 
-Data comes from [adsb.lol](https://adsb.lol), with an automatic switch to
-[adsb.fi](https://adsb.fi) if a request fails. Neither needs an API key.
+Data comes from [adsb.fi](https://adsb.fi), with an automatic switch to
+[adsb.lol](https://adsb.lol) if a request fails; either can be made the
+primary in the settings. Neither needs an API key.
 
 ## Touch
 
@@ -205,8 +206,13 @@ whether the route fits (a "?" after it when not).
 
 Settings are kept in NVS (namespace `overhead`). Until something is saved
 the firmware's defaults apply (`settings_defaults()` in `main/settings.c`):
-no network, so the setup portal opens, and the centre on Heathrow. "Reset all
-settings to defaults" on the page erases the saved ones, network included.
+no network, so the setup portal opens, and the centre on Heathrow. Once
+connected, a device whose centre has never been set asks where its internet
+connection is (ipinfo.io, then ipwho.is) and centres there, usually within a
+few km; the timezone comes from the same answer if none was chosen. That
+happens once: it never moves a centre set on the setup or configuration page.
+"Reset all settings to defaults" on the page erases the saved ones, network
+included, so the next connection looks the centre up again.
 
 The web server's task stack is in PSRAM. PSRAM is unreachable while flash is
 written, so a save is written to NVS from the esp_timer task just before the
@@ -223,10 +229,11 @@ non-touch 2.8C aborts at boot because its GT911 never answers.
 
 ### Tab5 notes
 
-Portrait by default, the panel's native orientation: the scope fills the top
-720x720 and the nearest aircraft are listed below it, with the details card
-above the list while something is selected. Landscape (scope left, list right,
-15 rows) is set on the configuration page.
+Landscape by default: the scope on the left, and the nearest aircraft listed
+on the right (15 rows), with the details card above the list while something
+is selected. Portrait, the panel's native orientation, puts the scope in the
+top 720x720 and the list below it; it is set on the configuration page or the
+settings screen.
 In landscape LVGL renders 1280x720 and the P4's PPA rotates each strip into
 the portrait frame buffer, so the CPU never rotates pixels. Measured against
 portrait: about 65 ms more per once-a-second redraw (mostly from the smaller

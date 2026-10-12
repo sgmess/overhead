@@ -129,6 +129,15 @@ static void take_double(const cJSON *json, const char *key, double *v)
     if (cJSON_IsNumber(item)) *v = item->valuedouble;
 }
 
+// The centre, which counts as chosen once it differs from the one running:
+// the pages send it back unchanged with everything else
+static void take_centre(const cJSON *json, settings_t *s)
+{
+    take_double(json, "lat", &s->lat);
+    take_double(json, "lon", &s->lon);
+    if (s->lat != settings()->lat || s->lon != settings()->lon) s->centre_set = true;
+}
+
 static void take_bool(const cJSON *json, const char *key, bool *v)
 {
     const cJSON *item = cJSON_GetObjectItemCaseSensitive(json, key);
@@ -216,6 +225,7 @@ static esp_err_t on_state(httpd_req_t *req)
     cJSON_AddBoolToObject(set, "has_password", s->password[0] != '\0');
     cJSON_AddNumberToObject(set, "lat", s->lat);
     cJSON_AddNumberToObject(set, "lon", s->lon);
+    cJSON_AddBoolToObject(set, "centre_set", s->centre_set);
     cJSON_AddNumberToObject(set, "range_idx", s->range_idx);
     cJSON_AddNumberToObject(set, "feed", s->feed);
     cJSON_AddNumberToObject(set, "fetch_s", s->fetch_s);
@@ -282,7 +292,8 @@ static esp_err_t on_scan(httpd_req_t *req)
     return send_json(req, json);
 }
 
-// The setup page: network, password and, optionally, the radar centre
+// The setup page: network, password and, optionally, the radar centre;
+// without one it is found from the internet address once connected
 static esp_err_t on_wifi(httpd_req_t *req)
 {
     cJSON *json = read_json(req);
@@ -296,8 +307,7 @@ static esp_err_t on_wifi(httpd_req_t *req)
     settings_t s = *settings();
     strlcpy(s.ssid, ssid->valuestring, sizeof(s.ssid));
     strlcpy(s.password, pass ? pass->valuestring : "", sizeof(s.password));
-    take_double(json, "lat", &s.lat);
-    take_double(json, "lon", &s.lon);
+    take_centre(json, &s);
     cJSON_Delete(json);
 
     if (!settings_valid(&s)) return send_result(req, ESP_ERR_INVALID_ARG, "Latitude or longitude out of range");
@@ -311,8 +321,7 @@ static esp_err_t on_settings(httpd_req_t *req)
     cJSON *json = read_json(req);
     if (!json) return send_result(req, ESP_ERR_INVALID_ARG, "Expected JSON");
     settings_t s = *settings();
-    take_double(json, "lat", &s.lat);
-    take_double(json, "lon", &s.lon);
+    take_centre(json, &s);
     take_int(json, "range_idx", &s.range_idx);
     take_int(json, "feed", &s.feed);
     take_int(json, "fetch_s", &s.fetch_s);

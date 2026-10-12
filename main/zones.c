@@ -51,3 +51,11 @@ int zone_find(const char *posix)
     }
     return -1;
 }
+
+int zone_find_iana(const char *iana)
+{
+    for (int i = 0; i < ZONE_COUNT; i++) {
+        if (strcmp(ZONES[i].iana, iana) == 0) return i;
+    }
+    return -1;
+}

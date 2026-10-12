@@ -63,10 +63,11 @@ b{color:#effff6}
   <section class="card">
     <h2>Radar centre</h2>
     <div class="row">
-      <div><label for="lat">Latitude</label><input id="lat" autocomplete="off"></div>
-      <div><label for="lon">Longitude</label><input id="lon" autocomplete="off"></div>
+      <div><label for="lat">Latitude</label><input id="lat" autocomplete="off" placeholder="Automatic"></div>
+      <div><label for="lon">Longitude</label><input id="lon" autocomplete="off" placeholder="Automatic"></div>
     </div>
-    <p class="hint">Decimal degrees, south and west negative. The settings page has a map for this later.</p>
+    <p class="hint">Decimal degrees, south and west negative. Leave them empty to start where your internet connection
+      says you are; the settings page has a map for this later.</p>
   </section>
 
   <button id="save" class="primary">Save and connect</button>
@@ -151,8 +152,10 @@ async function scan() {
 async function load() {
   try {
     const j = await getJSON('/api/state');
-    $('lat').value = j.settings.lat.toFixed(4);
-    $('lon').value = j.settings.lon.toFixed(4);
+    if (j.settings.centre_set) {
+      $('lat').value = j.settings.lat.toFixed(4);
+      $('lon').value = j.settings.lon.toFixed(4);
+    }
     if (j.settings.ssid) $('ssid').value = j.settings.ssid;
     if (j.setup_ssid) $('done-ap').textContent = j.setup_ssid;
   } catch (e) {}
@@ -170,10 +173,11 @@ $('form').onsubmit = async e => {
   e.preventDefault();
   const msg = $('msg');
   const ssid = $('ssid').value.trim();
+  const auto = !$('lat').value.trim() && !$('lon').value.trim();
   const lat = parseFloat($('lat').value), lon = parseFloat($('lon').value);
   if (!ssid) { msg.textContent = 'Choose or type a network name.'; return; }
-  if (!(lat >= -90 && lat <= 90) || !(lon >= -180 && lon <= 180)) {
-    msg.textContent = 'Latitude -90 to 90 and longitude -180 to 180, please.';
+  if (!auto && (!(lat >= -90 && lat <= 90) || !(lon >= -180 && lon <= 180))) {
+    msg.textContent = 'Latitude -90 to 90 and longitude -180 to 180, or both empty, please.';
     return;
   }
   $('save').disabled = true;
@@ -182,7 +186,7 @@ $('form').onsubmit = async e => {
     await getJSON('/api/wifi', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ssid, password: $('pw').value, lat, lon}),
+      body: JSON.stringify(auto ? {ssid, password: $('pw').value} : {ssid, password: $('pw').value, lat, lon}),
     });
     $('done-ssid').textContent = ssid;
     $('form').classList.add('hidden');

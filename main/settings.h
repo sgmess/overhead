@@ -15,6 +15,7 @@ typedef struct {
     char ssid[33];      // empty: no network yet, so open the setup portal
     char password[65];
     double lat, lon;    // radar centre
+    bool centre_set;    // chosen, or found from the IP address; until then it is looked up
     int range_idx;      // starting range, 0..SETTINGS_RANGE_COUNT-1
     int feed;           // primary feed: 0 adsb.lol, 1 adsb.fi
     int fetch_s;        // seconds between feed requests, 2..60

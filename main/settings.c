@@ -19,7 +19,8 @@ static const char *TAG = "settings";
 static settings_t s_settings;
 
 // Before anything is saved: no network (so the setup portal opens) and the
-// radar centred on Heathrow. Everything here can be changed on the
+// radar centred on Heathrow until, once connected, the internet address says
+// where it is (geoloc.c). Everything here can be changed on the
 // configuration page.
 void settings_defaults(settings_t *out)
 {
@@ -27,7 +28,7 @@ void settings_defaults(settings_t *out)
         .lat = 51.4700,
         .lon = -0.4543,
         .range_idx = 2, // 25 NM
-        .feed = 0,      // adsb.lol, with adsb.fi as the fallback
+        .feed = 1,      // adsb.fi, with adsb.lol as the fallback
         .fetch_s = 5,
         .show_ground = true,
         .sweep = true,
@@ -40,7 +41,9 @@ void settings_defaults(settings_t *out)
         // be refitted before it charges again
         .batt_auto_off = true,
         .batt_shutdown_mv = 6300,
-        .rotation = 0, // the Tab5 in portrait, its panel's native way up
+#if defined(OVERHEAD_BOARD_TAB5)
+        .rotation = 90, // landscape: scope left, list right
+#endif
         .show_airspace = true,
         .show_airfields = true,
         .brightness = 100,
@@ -150,6 +153,10 @@ void settings_load(void)
         get_str(h, "pass", s.password, sizeof(s.password));
         get_deg(h, "lat", &s.lat);
         get_deg(h, "lon", &s.lon);
+        // Saved before this was: a centre was already saved, so keep it
+        int32_t lat;
+        s.centre_set = nvs_get_i32(h, "lat", &lat) == ESP_OK;
+        get_bool(h, "centre", &s.centre_set);
         get_int(h, "range", &s.range_idx);
         get_int(h, "feed", &s.feed);
         get_int(h, "fetch", &s.fetch_s);
@@ -208,6 +215,7 @@ static esp_err_t store(const settings_t *s)
     if (err == ESP_OK) err = nvs_set_str(h, "pass", s->password);
     if (err == ESP_OK) err = nvs_set_i32(h, "lat", (int32_t)lround(s->lat * 1e6));
     if (err == ESP_OK) err = nvs_set_i32(h, "lon", (int32_t)lround(s->lon * 1e6));
+    if (err == ESP_OK) err = nvs_set_u8(h, "centre", s->centre_set);
     if (err == ESP_OK) err = nvs_set_i32(h, "range", s->range_idx);
     if (err == ESP_OK) err = nvs_set_i32(h, "feed", s->feed);
     if (err == ESP_OK) err = nvs_set_i32(h, "fetch", s->fetch_s);
