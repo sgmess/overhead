@@ -7,3 +7,4 @@ sdkconfig.p4_34c
 sdkconfig.s3_28c
 sdkconfig.tab5
 sdkconfig*.old
+__pycache__/
