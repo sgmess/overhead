@@ -340,3 +340,11 @@ nobody has measured, so it reports none.
 The P4 3.4C and Tab5 BSPs come from the component registry
 (`waveshare/esp32_p4_wifi6_touch_lcd_xc` 3.0.1, `espressif/m5stack_tab5` 1.3.1),
 each fetched only for its own board.
+
+## Licence
+
+Apache License 2.0; see [LICENSE](LICENSE). The vendored 2.8C BSP keeps its
+own Apache-2.0 terms. The licence covers this code only: aircraft data from
+adsb.fi and adsb.lol, routes from adsb.im, airspace from OpenAIP and the
+IP-location answers from ipinfo.io and ipwho.is are under those services'
+own terms.
