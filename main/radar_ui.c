@@ -16,6 +16,7 @@
 #include "route.h"
 #include "settings.h"
 #include "settings_ui.h"
+#include "splash.h"
 #include "trails.h"
 
 // The scope is the top SCR_W x SCR_W square: the whole panel on the round
@@ -1577,6 +1578,7 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     refresh();
     backlight_update(false);
     lv_timer_create(on_tick, 1000, NULL);
+    splash_show(); // last, over everything
 }
 
 void radar_ui_set_aircraft(const aircraft_t *list, int count, const char *feed)
@@ -1587,12 +1589,14 @@ void radar_ui_set_aircraft(const aircraft_t *list, int count, const char *feed)
     s_count = count;
     s_last_update_us = esp_timer_get_time();
     strlcpy(s_feed, feed, sizeof(s_feed));
+    splash_set_status("Receiving traffic");
     refresh();
 }
 
 void radar_ui_set_status(const char *text)
 {
     strlcpy(s_status, text ? text : "", sizeof(s_status));
+    splash_set_status(s_status);
     update_status_label();
 }
 
@@ -1680,6 +1684,7 @@ void radar_ui_show_setup(const char *ssid, const char *url)
         lv_obj_set_hidden(s_setup, true);
         return;
     }
+    splash_hide();
 #if LV_USE_QRCODE
     char qr[64];
     snprintf(qr, sizeof(qr), "WIFI:T:nopass;S:%s;;", ssid);

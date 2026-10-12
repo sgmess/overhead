@@ -40,6 +40,11 @@ Data comes from [adsb.lol](https://adsb.lol), with an automatic switch to
 
 ## Touch
 
+At power-up a start-up screen shows the radar in miniature, what start-up is
+doing (joining WiFi, then receiving traffic) and the firmware version, with an
+arc counting down 10 s. A tap dismisses it sooner, and does nothing else. It
+gives way at once to the WiFi setup portal.
+
 | Tap | Does |
 | --- | --- |
 | An aircraft | Opens its card: registration, type, route, altitude, V/S, speed, track, squawk, range and bearing |
@@ -300,6 +305,7 @@ nobody has measured, so it reports none.
 | `main/trails.c` | Position history per aircraft for the trails |
 | `main/route.c` | Origin and destination by callsign from adsb.im, cached |
 | `main/settings_ui.c` | The on-device settings screen |
+| `main/splash.c` | The start-up screen |
 | `main/zones.c` | Timezones and their POSIX rules, for the page and the screen |
 | `main/ota.c` | Updates from GitHub releases, image check, rollback confirmation |
 | `web/flash/`, `.github/workflows/` | Web flasher page and the build, release and Pages workflow |
