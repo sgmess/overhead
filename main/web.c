@@ -175,6 +175,9 @@ static esp_err_t on_state(httpd_req_t *req)
 
     cJSON_AddStringToObject(json, "board", BOARD_NAME);
     cJSON_AddStringToObject(json, "firmware", app->version);
+    char fw[96];
+    ota_summary(fw, sizeof(fw));
+    cJSON_AddStringToObject(json, "firmware_status", fw);
     cJSON_AddStringToObject(json, "project", app->project_name);
     cJSON_AddStringToObject(json, "update_repo", CONFIG_OVERHEAD_OTA_REPO);
     cJSON_AddBoolToObject(json, "can_rotate", BOARD_CAN_ROTATE);

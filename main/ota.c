@@ -12,7 +12,10 @@
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
+#include "esp_timer.h"
+#include "net.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/task.h"
 
 static const char *TAG = "ota";
@@ -32,6 +35,7 @@ static const char *const STATE_NAMES[] = {"idle", "checking", "checked", "instal
 
 static volatile state_t s_state = IDLE;
 static volatile int s_progress;
+static int64_t s_checked_us; // last successful check; 0 before one
 static char s_detail[96];
 static char s_latest[32], s_published[11], s_notes_url[160];
 static char s_image_url[512]; // empty: the release has no image for this board
@@ -137,6 +141,7 @@ static void check(void)
     ESP_LOGI(TAG, "latest release %s (%s), running %s; %s %s", s_latest, s_published,
              esp_app_get_description()->version, want, s_image_url[0] ? "found" : "not in it");
     s_state = CHECKED;
+    s_checked_us = esp_timer_get_time();
 }
 
 // ---------------------------------------------------------------- install
@@ -255,6 +260,57 @@ bool ota_installing(void)
     return s_state == INSTALLING;
 }
 
+#define AUTO_FIRST_MS 60000 // after joining: let the traffic and airspace start
+#define AUTO_EVERY_H 24
+
+static void auto_task(void *arg)
+{
+    while (!net_wait_connected(60000)) {
+    }
+    vTaskDelay(pdMS_TO_TICKS(AUTO_FIRST_MS));
+    for (;;) {
+        // Not over one the page or the screen started, nor an install
+        if (!busy()) ota_check();
+        for (int h = 0; h < AUTO_EVERY_H; h++) vTaskDelay(pdMS_TO_TICKS(3600 * 1000));
+    }
+}
+
+void ota_start_auto_check(void)
+{
+    // It only waits and starts checks; its stack can be in PSRAM
+    if (xTaskCreateWithCaps(auto_task, "ota_auto", 3072, NULL, 2, NULL, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) !=
+        pdPASS) {
+        xTaskCreate(auto_task, "ota_auto", 3072, NULL, 2, NULL);
+    }
+}
+
+void ota_summary(char *buf, size_t n)
+{
+    const char *running = esp_app_get_description()->version;
+    switch (s_state) {
+    case CHECKING:
+        snprintf(buf, n, "%s, checking for updates", running);
+        break;
+    case INSTALLING:
+        snprintf(buf, n, "%s, installing %s (%d%%)", running, s_latest, s_progress);
+        break;
+    case FAILED:
+        snprintf(buf, n, "%s, last update attempt failed", running);
+        break;
+    case CHECKED:
+        if (!s_image_url[0]) {
+            snprintf(buf, n, "%s (%s has no image for this board)", running, s_latest);
+        } else if (strcmp(s_latest, running) == 0) {
+            snprintf(buf, n, "%s, up to date", running);
+        } else {
+            snprintf(buf, n, "%s, %s available", running, s_latest);
+        }
+        break;
+    default:
+        snprintf(buf, n, "%s", running);
+    }
+}
+
 void ota_get_status(ota_status_t *out)
 {
     *out = (ota_status_t){
@@ -265,5 +321,6 @@ void ota_get_status(ota_status_t *out)
         .notes_url = s_notes_url,
         .has_image = s_image_url[0] != '\0',
         .progress = s_progress,
+        .checked_ago_s = s_checked_us ? (int)((esp_timer_get_time() - s_checked_us) / 1000000) : -1,
     };
 }

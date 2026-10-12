@@ -199,6 +199,7 @@ void app_main(void)
     feed_init();
     net_start();
     route_start();
+    ota_start_auto_check();
     // TLS and JSON parsing buffers are in PSRAM; this is just call depth.
     xTaskCreate(fetch_task, "fetch", FETCH_STACK, NULL, 5, &s_fetch_task);
     // Last: a change can wake any of the above

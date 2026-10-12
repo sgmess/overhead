@@ -334,6 +334,7 @@ function signal(rssi) {
 
 function showStatus(j) {
   const rows = [
+    ['Firmware', j.firmware_status || j.firmware],
     ['Board', j.board],
     ['Network', j.settings.ssid + (j.rssi ? ', ' + signal(j.rssi) : '')],
     ['Address', (j.ip ? j.ip + ' · ' : '') + j.hostname],

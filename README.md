@@ -96,6 +96,11 @@ Release builds start from the `sdkconfig.defaults*` files, never a local
 `sdkconfig`, so they contain no WiFi network and open the setup portal on
 first boot. Only the Tab5 is built while the other boards are parked.
 
+The device also checks by itself, a minute after joining WiFi and then
+daily, and shows the result first in the status on the configuration page
+and the settings screen ("v0.2.6, up to date", "v0.2.6, v0.2.7 available").
+It never installs on its own.
+
 Updates install over WiFi from the configuration page: *Firmware > Check
 for updates* reads the latest release of `sgmess/overhead` (the one option
 left in menuconfig, `OVERHEAD_OTA_REPO`, for forks) and installs `<project>-ota.bin`. The project name

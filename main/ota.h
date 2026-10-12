@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #include "esp_err.h"
 
@@ -24,6 +25,14 @@ esp_err_t ota_install(void);
 // An install is downloading or writing; other network work should wait.
 bool ota_installing(void);
 
+// Check by itself: once a minute after joining, then daily. It only looks;
+// installing is still asked for.
+void ota_start_auto_check(void);
+
+// "v0.2.6, up to date", "v0.2.6, v0.2.7 available" and so on: the running
+// version and where it stands, for the status lists.
+void ota_summary(char *buf, size_t n);
+
 typedef struct {
     const char *state;    // "idle", "checking", "checked", "installing", "error"
     const char *detail;   // what went wrong, for "error"
@@ -32,6 +41,7 @@ typedef struct {
     const char *notes_url; // its page on GitHub
     bool has_image;       // it has an image for this board
     int progress;         // percent, while installing
+    int checked_ago_s;    // since the last successful check; -1 before one
 } ota_status_t;
 
 void ota_get_status(ota_status_t *out);

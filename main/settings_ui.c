@@ -101,7 +101,7 @@ static lv_obj_t *s_dim_times, *s_dim_level;
 static lv_timer_t *s_idle_timer;
 
 // Status, refreshed every second while open
-enum { ST_NETWORK, ST_ADDRESS, ST_UP, ST_MEMORY, ST_BATTERY, ST_MAPS, ST_COUNT };
+enum { ST_FIRMWARE, ST_NETWORK, ST_ADDRESS, ST_UP, ST_MEMORY, ST_BATTERY, ST_MAPS, ST_COUNT };
 static lv_obj_t *s_status[ST_COUNT];
 
 // Firmware updates
@@ -177,6 +177,8 @@ static void fmt_uptime(char *buf, size_t n, int64_t s)
 static void update_status(void)
 {
     char buf[96];
+    ota_summary(buf, sizeof(buf));
+    set_if_changed(s_status[ST_FIRMWARE], buf);
     char ip[16] = "";
     if (net_get_ip(ip, sizeof(ip))) {
         const int rssi = net_rssi();
@@ -602,6 +604,7 @@ static void build(void)
     }
 
     section("STATUS");
+    s_status[ST_FIRMWARE] = add_info("Firmware", "");
     add_info("Board", BOARD_NAME);
     s_status[ST_NETWORK] = add_info("Network", "");
     s_status[ST_ADDRESS] = add_info("Address", "");
