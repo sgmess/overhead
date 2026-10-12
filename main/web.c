@@ -400,9 +400,11 @@ static esp_err_t on_settings(httpd_req_t *req)
 #if CONFIG_LV_USE_SNAPSHOT
 // For development, with LVGL's snapshot turned on in a local sdkconfig (it is
 // off in the defaults, so releases have none of this): the screen as raw
-// RGB565, X-Size giving width, height and stride, and the settings screen
-// opened without a finger. How the invisible sliders were found.
+// RGB565, X-Size giving width, height and stride, and the settings screen or
+// an aircraft's card (?hex=4010ee) opened without a finger. How the
+// invisible sliders were found.
 #include "lvgl.h"
+#include "radar_ui.h"
 #include "settings_ui.h"
 static esp_err_t on_debug_screen(httpd_req_t *req)
 {
@@ -422,6 +424,17 @@ static esp_err_t on_debug_settings(httpd_req_t *req)
 {
     board_lock();
     settings_ui_open();
+    board_unlock();
+    return send_result(req, ESP_OK, NULL);
+}
+static esp_err_t on_debug_select(httpd_req_t *req)
+{
+    char query[32], hex[8] = "";
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        httpd_query_key_value(query, "hex", hex, sizeof(hex));
+    }
+    board_lock();
+    radar_ui_select(hex[0] ? hex : NULL);
     board_unlock();
     return send_result(req, ESP_OK, NULL);
 }
@@ -532,6 +545,7 @@ void web_start(void)
 #if CONFIG_LV_USE_SNAPSHOT
         {.uri = "/api/debug/screen", .method = HTTP_GET, .handler = on_debug_screen},
         {.uri = "/api/debug/settings", .method = HTTP_POST, .handler = on_debug_settings},
+        {.uri = "/api/debug/select", .method = HTTP_POST, .handler = on_debug_select},
 #endif
         {.uri = "/api/defaults", .method = HTTP_POST, .handler = on_defaults},
         {.uri = "/api/ota", .method = HTTP_GET, .handler = on_ota_status},

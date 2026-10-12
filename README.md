@@ -20,7 +20,9 @@ point on a radar scope.
 - Helicopters drawn with a rotor and tail boom; military aircraft (the feed's
   `dbFlags`) in a pink diamond.
 - Origin and destination in the aircraft card, from
-  [adsb.im](https://adsb.im)'s route database (the one tar1090 uses).
+  [adsb.im](https://adsb.im)'s route database (the one tar1090 uses), with
+  the flight number, the airline's name and the flag of the country the
+  aircraft is registered in, all worked out on the device.
 - An overhead alert: an aircraft within a set distance and below a set
   altitude blinks amber, a banner names it, and the Tab5 chimes.
 - Brightness, with dimming from sunset to sunrise at the radar centre or
@@ -48,7 +50,7 @@ gives way at once to the WiFi setup portal.
 
 | Tap | Does |
 | --- | --- |
-| An aircraft | Opens its card: registration, type, route, altitude, V/S, speed, track, squawk, range and bearing |
+| An aircraft | Opens its card: flag, flight number, airline, registration, type, route, altitude, V/S, speed, track, squawk, range and bearing |
 | The alert banner | Opens the card of the nearest aircraft that set it off |
 | Empty scope, card open | Closes the card |
 | Empty scope | Next range: 5, 10, 25, 50, 100 NM |
@@ -204,6 +206,17 @@ Routes are looked up only for the aircraft whose card is open, one request
 per callsign per session, and sent with its position so adsb.im can say
 whether the route fits (a "?" after it when not).
 
+The flight number is shown only for a callsign of an airline's code and
+digits, BAW189 as BA189, which is usually the flight number; alphanumeric
+callsigns (BAW22B, EZY45GT) are assigned to avoid confusion on the radio and
+aren't, so they get none. The airline comes from the callsign's first three letters (`main/airlines.c`, the
+carriers most often seen over Europe and the large ones elsewhere), and the
+country from the block of ICAO addresses each state is allocated
+(`main/countries.c`); an aircraft that isn't an airliner gets its country's
+name in place of the airline. The flags are Twemoji's, halved to 36x26 and
+kept in `main/flags.bin`, which `tools/make_flags.py` rebuilds after a
+country is added.
+
 Settings are kept in NVS (namespace `overhead`). Until something is saved
 the firmware's defaults apply (`settings_defaults()` in `main/settings.c`):
 no network, so the setup portal opens, and the centre on Heathrow. Once
@@ -327,6 +340,8 @@ nobody has measured, so it reports none.
 | `main/backlight.c` | Brightness, night dimming by sun elevation or clock, the page's preview |
 | `main/trails.c` | Position history per aircraft for the trails |
 | `main/route.c` | Origin and destination by callsign from adsb.im, cached |
+| `main/airlines.c`, `main/countries.c`, `main/flags.c` | Airline and flight number by callsign, country by ICAO address, and its flag |
+| `tools/` | `make_flags.py`, which builds `main/flags.bin` from Twemoji |
 | `main/settings_ui.c` | The on-device settings screen |
 | `main/splash.c` | The start-up screen |
 | `main/zones.c` | Timezones and their POSIX rules, for the page and the screen |
@@ -344,7 +359,11 @@ each fetched only for its own board.
 ## Licence
 
 Apache License 2.0; see [LICENSE](LICENSE). The vendored 2.8C BSP keeps its
-own Apache-2.0 terms. The licence covers this code only: aircraft data from
+own Apache-2.0 terms. The flag images in `main/flags.bin` are from
+[Twemoji](https://github.com/jdecked/twemoji), Copyright 2019 Twitter, Inc
+and other contributors, licensed under
+[CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/); they were scaled
+down for the screen. The licence covers this code only: aircraft data from
 adsb.fi and adsb.lol, routes from adsb.im, airspace from OpenAIP and the
 IP-location answers from ipinfo.io and ipwho.is are under those services'
 own terms.

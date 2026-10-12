@@ -14,6 +14,9 @@
 #include "lvgl.h"
 #include "openaip.h"
 #include "route.h"
+#include "airlines.h"
+#include "countries.h"
+#include "flags.h"
 #include "settings.h"
 #include "settings_ui.h"
 #include "splash.h"
@@ -54,6 +57,8 @@
 #define CARD_SUB_Y 40
 #define CARD_ROWS_Y 76
 #define CARD_LINE_SPACE 6
+#define CARD_LINE 28 // the airline line, which pushes the rest down
+#define FLAG_SCALE 256 // 36x26
 #define F_CARDINAL lv_font_montserrat_24
 #define F_ROSE lv_font_montserrat_16
 #define F_RING lv_font_montserrat_14
@@ -95,6 +100,8 @@
 #define CARD_SUB_Y 38
 #define CARD_ROWS_Y 76
 #define CARD_LINE_SPACE 8
+#define CARD_LINE 26
+#define FLAG_SCALE 256
 #define CARD_COLS {0, 48, 210, 256}
 #define F_CARDINAL lv_font_montserrat_20
 #define F_ROSE lv_font_montserrat_14
@@ -129,6 +136,8 @@
 #define CARD_SUB_Y 26
 #define CARD_ROWS_Y 52
 #define CARD_LINE_SPACE 4
+#define CARD_LINE 20
+#define FLAG_SCALE 180 // 25x18 beside the smaller title
 #define CARD_COLS {0, 38, 148, 184}
 #define F_CARDINAL lv_font_montserrat_16
 #define F_ROSE lv_font_montserrat_12
@@ -247,7 +256,9 @@ static int s_bg_range = -1; // range index it shows; -1: stale
 static void (*s_on_range_change)(void);
 
 static lv_obj_t *s_scope, *s_clock, *s_clock2, *s_range_lbl, *s_status_lbl, *s_alert_lbl;
-static lv_obj_t *s_card, *s_card_title, *s_card_route, *s_card_sub, *s_card_k1, *s_card_v1, *s_card_k2, *s_card_v2;
+static lv_obj_t *s_card, *s_card_flag, *s_card_title, *s_card_route, *s_card_airline, *s_card_sub;
+static lv_obj_t *s_card_k1, *s_card_v1, *s_card_k2, *s_card_v2;
+static char s_card_iso[3]; // the flag showing; "" for none
 static lv_obj_t *s_sweep[SWEEP_SEGS];
 static lv_timer_t *s_sweep_timer;
 static lv_point_precise_t s_sweep_pts[SWEEP_SEGS][2];
@@ -1007,6 +1018,23 @@ static void update_alert(void)
     lv_obj_set_hidden(s_alert_lbl, false);
 }
 
+// The flag before the callsign, and the callsign after it or at the edge
+static void update_card_flag(const char *iso)
+{
+    if (strcmp(iso, s_card_iso) == 0) return;
+    strlcpy(s_card_iso, iso, sizeof(s_card_iso));
+    const lv_image_dsc_t *img = iso[0] ? flag_image(iso) : NULL;
+    lv_obj_set_hidden(s_card_flag, !img);
+    if (!img) {
+        lv_obj_set_pos(s_card_title, 0, 0);
+        return;
+    }
+    lv_image_set_src(s_card_flag, img);
+    const int w = img->header.w * FLAG_SCALE / 256, h = img->header.h * FLAG_SCALE / 256;
+    lv_obj_set_pos(s_card_flag, 0, (lv_font_get_line_height(&F_TITLE) - h) / 2);
+    lv_obj_set_pos(s_card_title, w + w / 3, 0);
+}
+
 static void update_card(void)
 {
     int i = s_sel_hex[0] ? find_aircraft(s_sel_hex) : -1;
@@ -1020,6 +1048,8 @@ static void update_card(void)
     char alt[24], vs[24], num[16];
 
     lv_label_set_text(s_card_title, ac_name(a));
+    const country_t *country = country_for_hex(a->hex);
+    update_card_flag(country ? country->iso : "");
 
     char route[48] = "";
     if (settings()->show_route) {
@@ -1038,6 +1068,18 @@ static void update_card(void)
     }
     set_text_if_changed(s_card_route, route);
     lv_obj_set_hidden(s_card_route, !route[0]);
+
+    // "BA117  •  British Airways"
+    char airline[64] = "";
+    const airline_t *al = airline_for_callsign(a->callsign);
+    airline_flight_number(a->callsign, airline, sizeof(airline));
+    if (al) {
+        if (airline[0]) strlcat(airline, "  " LV_SYMBOL_BULLET "  ", sizeof(airline));
+        strlcat(airline, al->name, sizeof(airline));
+    } else if (country) {
+        strlcpy(airline, country->name, sizeof(airline));
+    }
+    set_text_if_changed(s_card_airline, airline);
 
     char sub[64] = "";
     if (a->reg[0] && strcmp(a->reg, ac_name(a)) != 0) strlcat(sub, a->reg, sizeof(sub));
@@ -1154,6 +1196,11 @@ static void select_aircraft(const char *hex)
     refresh();
 }
 
+void radar_ui_select(const char *hex)
+{
+    select_aircraft(hex);
+}
+
 static void on_scope_click(lv_event_t *e)
 {
     lv_point_t p;
@@ -1268,7 +1315,7 @@ static lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font, uint32_t co
 static void create_card(lv_obj_t *parent)
 {
     s_card = lv_obj_create(parent);
-    lv_obj_set_size(s_card, CARD_W, CARD_H);
+    lv_obj_set_size(s_card, CARD_W, CARD_H + CARD_LINE);
 #ifndef HAS_LIST
     // Over the lower half of the scope; on the Tab5 the panel places it
     lv_obj_align(s_card, LV_ALIGN_CENTER, 0, SCR_W * 18 / 100);
@@ -1282,14 +1329,22 @@ static void create_card(lv_obj_t *parent)
     lv_obj_set_scrollable(s_card, false);
     lv_obj_add_event_cb(s_card, on_card_click, LV_EVENT_CLICKED, NULL);
 
+    // The registration country's flag, level with the callsign before it
+    s_card_flag = lv_image_create(s_card);
+    lv_image_set_pivot(s_card_flag, 0, 0);
+    lv_image_set_scale(s_card_flag, FLAG_SCALE);
+    lv_obj_set_hidden(s_card_flag, true);
     s_card_title = make_label(s_card, &F_TITLE, C_SELECT);
     // Origin and destination, level with the callsign at the far side
     s_card_route = make_label(s_card, &F_CARD, C_TEXT);
     lv_obj_align(s_card_route, LV_ALIGN_TOP_RIGHT, 0,
                  (lv_font_get_line_height(&F_TITLE) - lv_font_get_line_height(&F_CARD)) / 2);
     lv_obj_set_hidden(s_card_route, true);
+    // The flight number and airline, or for anything else the country
+    s_card_airline = make_label(s_card, &F_CARD, C_TEXT);
+    lv_obj_set_pos(s_card_airline, 0, CARD_SUB_Y);
     s_card_sub = make_label(s_card, &F_CARD, C_TEXT);
-    lv_obj_set_pos(s_card_sub, 0, CARD_SUB_Y);
+    lv_obj_set_pos(s_card_sub, 0, CARD_SUB_Y + CARD_LINE);
 
     s_card_k1 = make_label(s_card, &F_CARD, C_DIM);
     s_card_v1 = make_label(s_card, &F_CARD, C_SELECT);
@@ -1302,7 +1357,7 @@ static void create_card(lv_obj_t *parent)
     static const int xs[] = CARD_COLS;
 #endif
     for (int k = 0; k < 4; k++) {
-        lv_obj_set_pos(cols[k], xs[k], CARD_ROWS_Y);
+        lv_obj_set_pos(cols[k], xs[k], CARD_ROWS_Y + CARD_LINE);
         lv_obj_set_style_text_line_space(cols[k], CARD_LINE_SPACE, 0);
     }
     lv_label_set_text(s_card_k1, "ALT\nGS\nSQK");

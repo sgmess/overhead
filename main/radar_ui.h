@@ -36,5 +36,9 @@ void radar_ui_apply_settings(const settings_t *old);
 // A new centre: the traffic and the airspace go until fetched for it.
 void radar_ui_set_centre(double lat, double lon);
 
+// Open the card of the aircraft with this ICAO address, as a tap would; NULL
+// closes it. With the display lock held.
+void radar_ui_select(const char *hex);
+
 // Current range in NM. Safe to call without the lock.
 int radar_ui_range_nm(void);
