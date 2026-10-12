@@ -178,7 +178,7 @@ a{color:var(--accent)}
 
   <section class="card">
     <h2>Display</h2>
-    <label for="brightness">Brightness</label>
+    <label for="brightness" id="brightness-label">Brightness</label>
     <div class="slider"><input type="range" id="brightness" min="5" max="100" step="5"><output id="brightness-out"></output></div>
     <label for="dim_mode">Dim at night</label>
     <select id="dim_mode">
@@ -189,7 +189,7 @@ a{color:var(--accent)}
       <div><label for="dim_to">Until</label><input type="time" id="dim_to"></div>
     </div>
     <div id="dim-level">
-      <label for="dim_brightness">Night brightness</label>
+      <label for="dim_brightness" id="dim-brightness-label">Night brightness</label>
       <div class="slider"><input type="range" id="dim_brightness" min="1" max="100" step="1"><output id="dim_brightness-out"></output></div>
     </div>
     <p class="hint" id="dim-hint">Sunset and sunrise are worked out for the radar centre. Moving a slider shows that level on the
@@ -333,6 +333,8 @@ function signal(rssi) {
 }
 
 function showStatus(j) {
+  dimmedNow = !!j.dimmed;
+  showBrightnessLabels();
   const rows = [
     ['Firmware', j.firmware_status || j.firmware],
     ['Board', j.board],
@@ -419,7 +421,17 @@ function loadMap(lat, lon) {
 const hhmm = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
 const minutes = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
 
+// Which brightness is in use now, from the device: "(now)" moves at sunset
+// and sunrise. Without dimming there is only the one.
+let dimmedNow = false;
+function showBrightnessLabels() {
+  const dims = +$('dim_mode').value !== 0;
+  $('brightness-label').textContent = !dims ? 'Brightness' : 'Day brightness' + (dimmedNow ? '' : ' (now)');
+  $('dim-brightness-label').textContent = 'Night brightness' + (dimmedNow ? ' (now)' : '');
+}
+
 function showDim() {
+  showBrightnessLabels();
   const mode = +$('dim_mode').value;
   $('dim-times').classList.toggle('hidden', mode !== 2);
   $('dim-level').classList.toggle('hidden', mode === 0);

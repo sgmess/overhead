@@ -71,6 +71,7 @@ typedef enum {
     B_TZ,
     B_TAG,    // one bit of tag_fields
     B_ROTATION,
+    B_QUICK, // brightness: the day or the night level, whichever is in use
 } bind_kind_t;
 
 typedef struct {
@@ -82,6 +83,7 @@ typedef struct {
     int bit;
     bool preview; // a brightness: show it on the backlight while dragging
     lv_obj_t *value_label;
+    lv_obj_t *name, *slider, *row; // a slider's
 } bind_t;
 
 // Everything the open screen needs, in PSRAM while it is open: static
@@ -97,7 +99,11 @@ typedef struct {
 } ui_t;
 static ui_t *s_ui;
 static lv_obj_t *s_root, *s_col, *s_msgbox;
-static lv_obj_t *s_dim_times, *s_dim_level;
+static lv_obj_t *s_dim_times;
+// Brightness: the quick slider first, then the day and night levels it
+// moves, whichever is in use (pointers into s_ui)
+static bind_t *s_quick, *s_day, *s_night;
+static bool s_quick_night; // which level the quick slider is showing
 static lv_timer_t *s_idle_timer;
 
 // Status, refreshed every second while open
@@ -112,6 +118,11 @@ static lv_obj_t *s_ota_check, *s_ota_install, *s_ota_text, *s_ota_bar;
 // Closing happens from the screen's own buttons' events, so the objects go
 // once the event is over (the _async calls), not from under it.
 
+static void set_if_changed(lv_obj_t *label, const char *text)
+{
+    if (label && strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
+}
+
 static void commit(void)
 {
     settings_change(&s_ui->edit, false);
@@ -120,7 +131,32 @@ static void commit(void)
 static void show_dependent(void)
 {
     lv_obj_set_hidden(s_dim_times, s_ui->edit.dim_mode != 2);
-    lv_obj_set_hidden(s_dim_level, s_ui->edit.dim_mode == 0);
+    // Without dimming, the quick slider is the one brightness there is
+    lv_obj_set_hidden(s_day->row, s_ui->edit.dim_mode == 0);
+    lv_obj_set_hidden(s_night->row, s_ui->edit.dim_mode == 0);
+}
+
+static void show_slider(bind_t *b, int v)
+{
+    lv_slider_set_value(b->slider, v, LV_ANIM_OFF);
+    char t[8];
+    snprintf(t, sizeof(t), "%d%%", v);
+    set_if_changed(b->value_label, t);
+}
+
+// Which level is in use now, in the labels: it changes at sunset and
+// sunrise, and with the dimming settings
+static void update_brightness(void)
+{
+    const bool night = backlight_night();
+    const bool dims = s_ui->edit.dim_mode != 0;
+    set_if_changed(s_quick->name, !dims ? "Brightness" : night ? "Brightness now (night)" : "Brightness now (day)");
+    set_if_changed(s_day->name, night ? "Day brightness" : "Day brightness (now)");
+    set_if_changed(s_night->name, night ? "Night brightness (now)" : "Night brightness");
+    if (night != s_quick_night && !lv_obj_has_state(s_quick->slider, LV_STATE_PRESSED)) {
+        show_slider(s_quick, night ? s_ui->edit.dim_brightness : s_ui->edit.brightness);
+        s_quick_night = night;
+    }
 }
 
 static void close_screen(void)
@@ -146,6 +182,7 @@ static void on_root_deleted(lv_event_t *e)
     ui_t *ui = lv_event_get_user_data(e);
     if (s_ui == ui) {
         s_ui = NULL;
+        s_quick = s_day = s_night = NULL;
         memset(s_status, 0, sizeof(s_status));
         s_ota_check = s_ota_install = s_ota_text = s_ota_bar = NULL;
     }
@@ -155,11 +192,6 @@ static void on_root_deleted(lv_event_t *e)
 static void on_done(lv_event_t *e)
 {
     close_screen();
-}
-
-static void set_if_changed(lv_obj_t *label, const char *text)
-{
-    if (label && strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
 }
 
 static void fmt_uptime(char *buf, size_t n, int64_t s)
@@ -266,6 +298,7 @@ static void on_idle(lv_timer_t *t)
 {
     update_status();
     update_ota();
+    update_brightness();
     // Not while an update is being checked or installed: it shows the progress
     ota_status_t o;
     ota_get_status(&o);
@@ -342,7 +375,18 @@ static void on_slider(lv_event_t *e)
         if (b->preview) backlight_preview(v);
         return;
     }
-    *(int *)b->field = v; // released: keep it
+    if (b->kind == B_QUICK) { // released: into whichever level is in use
+        const bool night = backlight_night();
+        bind_t *level = night ? s_night : s_day;
+        const int kept = night ? v : (v < 5 ? 5 : v); // the day level's floor
+        *(int *)level->field = kept;
+        show_slider(level, kept);
+        s_quick_night = night;
+    } else {
+        *(int *)b->field = v; // released: keep it
+        // The quick slider shows this one while it is the level in use
+        if (backlight_night() == (b == s_night)) show_slider(s_quick, v);
+    }
     commit();
 }
 
@@ -509,23 +553,31 @@ static lv_obj_t *add_choice(const char *text, int *field, const int *values, con
     return add_choice_in(s_col, text, field, values, names, n, unit);
 }
 
-static lv_obj_t *add_slider(const char *text, int *field, int min, int max, bool preview)
+static bind_t *add_slider(const char *text, int *field, int min, int max, bool preview)
 {
     lv_obj_t *col = box(s_col, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(col, GAP, 0);
     lv_obj_t *head = row(col, text);
     bind_t *b = new_bind(B_SLIDER, field);
+    b->row = col;
+    b->name = lv_obj_get_child(head, 0);
     b->preview = preview;
     b->value_label = label(head, "", &F_ROW, C_TEXT);
     lv_label_set_text_fmt(b->value_label, "%d%%", *field);
-    lv_obj_t *sl = lv_slider_create(col);
-    lv_obj_set_width(sl, LV_PCT(94));
-    lv_obj_set_style_margin_left(sl, LV_PCT(3), 0);
+    // Room either side for the knob. Not a percentage margin: LVGL 9 takes
+    // that as a raw offset, which put the slider out of sight, 536 million
+    // pixels to the right
+    lv_obj_t *track = box(col, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_hor(track, SWITCH_H / 2, 0);
+    lv_obj_set_style_pad_ver(track, SWITCH_H / 4, 0);
+    lv_obj_t *sl = lv_slider_create(track);
+    lv_obj_set_width(sl, LV_PCT(100));
     lv_slider_set_range(sl, min, max);
     lv_slider_set_value(sl, *field, LV_ANIM_OFF);
     lv_obj_add_event_cb(sl, on_slider, LV_EVENT_VALUE_CHANGED, b);
     lv_obj_add_event_cb(sl, on_slider, LV_EVENT_RELEASED, b);
-    return col;
+    b->slider = sl;
+    return b;
 }
 
 static void add_timezone(void)
@@ -616,13 +668,17 @@ static void build(void)
     update_status();
 
     section("DISPLAY");
-    add_slider("Brightness", &s_ui->edit.brightness, 5, 100, true);
+    s_quick_night = backlight_night();
+    s_quick = add_slider("Brightness", s_quick_night ? &s_ui->edit.dim_brightness : &s_ui->edit.brightness, 1,
+                         100, true);
+    s_quick->kind = B_QUICK;
     add_choice("Dim at night", &s_ui->edit.dim_mode, DIM_V, DIM_N, 3, "");
+    s_day = add_slider("Day brightness", &s_ui->edit.brightness, 5, 100, true);
     s_dim_times = box(s_col, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(s_dim_times, GAP, 0);
     add_choice_in(s_dim_times, "From", &s_ui->edit.dim_from, half_hours, hh_ptrs, 48, " min");
     add_choice_in(s_dim_times, "Until", &s_ui->edit.dim_to, half_hours, hh_ptrs, 48, " min");
-    s_dim_level = add_slider("Night brightness", &s_ui->edit.dim_brightness, 1, 100, true);
+    s_night = add_slider("Night brightness", &s_ui->edit.dim_brightness, 1, 100, true);
     add_choice("Clock", &s_ui->edit.clock, CLOCK_V, CLOCK_N, 3, "");
     add_timezone();
 #if BOARD_CAN_ROTATE
@@ -713,6 +769,7 @@ static void build(void)
     lv_obj_center(label(done, "Done", &F_ROW, C_BG));
 
     show_dependent();
+    update_brightness();
 }
 
 // ---------------------------------------------------------------- public

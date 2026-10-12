@@ -388,6 +388,36 @@ static esp_err_t on_settings(httpd_req_t *req)
     return send_json(req, reply);
 }
 
+#if CONFIG_LV_USE_SNAPSHOT
+// For development, with LVGL's snapshot turned on in a local sdkconfig (it is
+// off in the defaults, so releases have none of this): the screen as raw
+// RGB565, X-Size giving width, height and stride, and the settings screen
+// opened without a finger. How the invisible sliders were found.
+#include "lvgl.h"
+#include "settings_ui.h"
+static esp_err_t on_debug_screen(httpd_req_t *req)
+{
+    board_lock();
+    lv_draw_buf_t *b = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_RGB565);
+    board_unlock();
+    if (!b) return httpd_resp_send_500(req);
+    char hdr[48];
+    snprintf(hdr, sizeof(hdr), "%u %u %u", (unsigned)b->header.w, (unsigned)b->header.h, (unsigned)b->header.stride);
+    httpd_resp_set_type(req, "application/octet-stream");
+    httpd_resp_set_hdr(req, "X-Size", hdr);
+    esp_err_t err = httpd_resp_send(req, (const char *)b->data, b->header.stride * b->header.h);
+    lv_draw_buf_destroy(b);
+    return err;
+}
+static esp_err_t on_debug_settings(httpd_req_t *req)
+{
+    board_lock();
+    settings_ui_open();
+    board_unlock();
+    return send_result(req, ESP_OK, NULL);
+}
+#endif
+
 // The timezone list, shared with the settings screen
 static esp_err_t on_zones(httpd_req_t *req)
 {
@@ -461,11 +491,15 @@ void web_start(void)
     ESP_ERROR_CHECK(esp_timer_create(&timer, &s_commit_timer));
 
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+#if CONFIG_LV_USE_SNAPSHOT
+    cfg.stack_size = 16384; // a snapshot renders the whole screen in this task
+#else
     cfg.stack_size = 6144; // cJSON and the scan records; about 3.3 KB used
+#endif
 #if CONFIG_SPIRAM && CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
     cfg.task_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT; // see commit_and_restart()
 #endif
-    cfg.max_uri_handlers = 14;
+    cfg.max_uri_handlers = 16;
     cfg.max_open_sockets = 5;
     // A phone opens several connections at once and leaves them open
     cfg.lru_purge_enable = true;
@@ -486,6 +520,10 @@ void web_start(void)
         {.uri = "/api/forget", .method = HTTP_POST, .handler = on_forget},
         {.uri = "/api/brightness", .method = HTTP_POST, .handler = on_brightness},
         {.uri = "/api/zones", .method = HTTP_GET, .handler = on_zones},
+#if CONFIG_LV_USE_SNAPSHOT
+        {.uri = "/api/debug/screen", .method = HTTP_GET, .handler = on_debug_screen},
+        {.uri = "/api/debug/settings", .method = HTTP_POST, .handler = on_debug_settings},
+#endif
         {.uri = "/api/defaults", .method = HTTP_POST, .handler = on_defaults},
         {.uri = "/api/ota", .method = HTTP_GET, .handler = on_ota_status},
         {.uri = "/api/ota/check", .method = HTTP_POST, .handler = on_ota_check},
