@@ -225,6 +225,8 @@ a{color:var(--accent)}
   </section>
 
   <div class="save">
+    <p id="stale" class="hint hidden">Changed on the device since you started editing here. Saving sends what
+      this page shows; reload to see the device's settings instead.</p>
     <button id="save" class="primary">Save</button>
     <p id="msg" role="status"></p>
   </div>
@@ -268,6 +270,9 @@ const CHECKS = ['sweep', 'show_ground', 'batt_auto_off', 'show_airspace', 'show_
                 'alert', 'alert_sound', 'show_vector'];
 const SLIDERS = ['brightness', 'dim_brightness'];
 let map, pin, keyCleared = false;
+// The fields follow the device (a change on its own settings screen, say)
+// until something here is edited; then they stay as typed
+let dirty = false, shown = '';
 
 // [IANA zone, label, POSIX rule], from the device (/api/zones), which offers
 // the same list on its own settings screen. newlib only understands POSIX.
@@ -366,10 +371,9 @@ function ago(s) {
 
 function showOpenaip(j) {
   const o = j.openaip;
-  $('key-state').textContent = j.settings.has_openaip_key
-    ? 'A key is saved. Type a new one to replace it.' : 'No key saved.';
-  $('openaip_key').placeholder = j.settings.has_openaip_key ? 'Saved' : '';
-  $('openaip_countries').value = j.settings.openaip_countries;
+  $('key-state').textContent = keyCleared ? 'The key will be removed when you save.'
+    : j.settings.has_openaip_key ? 'A key is saved. Type a new one to replace it.' : 'No key saved.';
+  $('openaip_key').placeholder = j.settings.has_openaip_key && !keyCleared ? 'Saved' : '';
   $('openaip_countries').placeholder = 'Automatic' + (o.countries ? ' (' + o.countries + ')' : '');
   $('oaip-state').textContent =
     o.state === 'ok' ? 'Loaded ' + o.airspaces + ' airspaces and ' + o.airfields + ' airfields (' +
@@ -387,6 +391,7 @@ function placePin() {
 function setLatLon(p) {
   $('lat').value = p.lat.toFixed(4);
   $('lon').value = p.lng.toFixed(4);
+  dirty = true;
 }
 
 // The map needs the internet as well as the radar; without it the fields still work
@@ -455,11 +460,10 @@ function preview(id) {
   previewTimer = setTimeout(() => api('/api/brightness', {percent: +$(id).value}).catch(() => {}), 150);
 }
 
-async function load() {
-  const j = await api('/api/state');
+// The settings into the form, which is then as the device has it
+function fillFields(j) {
   const s = j.settings;
-  showStatus(j);
-  showOpenaip(j);
+  $('openaip_countries').value = s.openaip_countries;
   $('lat').value = s.lat.toFixed(4);
   $('lon').value = s.lon.toFixed(4);
   for (const f of FIELDS) setSelect($(f), s[f]);
@@ -470,10 +474,23 @@ async function load() {
   $('dim_to').value = hhmm(s.dim_to);
   showDim();
   loadTz(s.tz);
+  $('batt_shutdown_mv').disabled = !s.batt_auto_off;
+  placePin();
+  if (map && pin) map.panTo(pin.getLatLng());
+  shown = JSON.stringify(s);
+  dirty = false;
+  $('stale').classList.add('hidden');
+}
+
+async function load() {
+  const j = await api('/api/state');
+  const s = j.settings;
+  showStatus(j);
+  showOpenaip(j);
+  fillFields(j);
   $('rotation-row').classList.toggle('hidden', !j.can_rotate);
   $('alert-sound-row').classList.toggle('hidden', !j.has_speaker);
   $('battery-card').classList.toggle('hidden', !j.has_battery);
-  $('batt_shutdown_mv').disabled = !s.batt_auto_off;
   if (!map) loadMap(s.lat, s.lon);
   api('/api/ota').then(showOta, () => {}).then(() => checkUpdated(j.firmware));
 }
@@ -569,6 +586,7 @@ $('clear-key').onclick = () => {
   $('openaip_key').value = '';
   $('openaip_key').placeholder = '';
   keyCleared = true;
+  dirty = true;
   $('key-state').textContent = 'The key will be removed when you save.';
 };
 
@@ -630,7 +648,7 @@ $('form').onsubmit = async e => {
     $('openaip_key').value = '';
     await load();
     msg.className = 'ok';
-    msg.textContent = 'Saved. The radar is already using it.';
+    msg.textContent = 'Saved. No restart needed.';
     setTimeout(() => { if (msg.className === 'ok') msg.textContent = ''; }, 4000);
   } catch (err) {
     msg.textContent = err.message || 'Could not save. Try again.';
@@ -653,6 +671,41 @@ $('defaults').onclick = async () => {
     waitForRestart('Overhead is restarting with the defaults. If they include no network, join the setup network shown on the radar.');
   } catch (err) { alert(err.message); }
 };
+
+// Every 5 s while the page is in view: the status, and the settings if they
+// changed on the device and nothing here has been edited since
+let polling = false;
+async function poll() {
+  if (polling || document.hidden || !$('restarting').classList.contains('hidden')) return;
+  polling = true;
+  try {
+    const j = await api('/api/state');
+    showStatus(j);
+    showOpenaip(j);
+    if (JSON.stringify(j.settings) !== shown) {
+      if (dirty) {
+        $('stale').classList.remove('hidden');
+      } else {
+        fillFields(j);
+      }
+    }
+    // A check or install started from the device's own screen; idle, it
+    // would only wipe a note such as "Updated to …"
+    api('/api/ota').then(o => { if (o.state !== 'idle') showOta(o); }, () => {});
+  } catch (e) {
+    const dl = $('status');
+    dl.textContent = '';
+    const dt = document.createElement('dt'), dd = document.createElement('dd');
+    dt.textContent = 'Overhead';
+    dd.textContent = 'Not reachable, retrying…';
+    dl.append(dt, dd);
+  }
+  polling = false;
+}
+setInterval(poll, 5000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+$('form').addEventListener('input', () => { dirty = true; });
+$('form').addEventListener('change', () => { dirty = true; });
 
 loadZones().then(load).catch(() => { $('status').innerHTML = '<dt>Error</dt><dd>Could not reach Overhead. Reload to try again.</dd>'; });
 </script>
