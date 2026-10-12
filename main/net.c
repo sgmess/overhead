@@ -334,6 +334,11 @@ int net_scan(net_ap_t *out, int max)
 
 bool net_wait_connected(int timeout_ms)
 {
+    // Asked before net_start(): nothing to wait on yet
+    if (!s_events) {
+        vTaskDelay(pdMS_TO_TICKS(timeout_ms < 1000 ? timeout_ms : 1000));
+        return false;
+    }
     return xEventGroupWaitBits(s_events, BIT_CONNECTED, pdFALSE, pdTRUE,
                                pdMS_TO_TICKS(timeout_ms)) & BIT_CONNECTED;
 }

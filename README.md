@@ -160,6 +160,16 @@ own task, so the traffic keeps updating, and again daily. The country is the
 nearest airfield's unless the page lists some (for a centre near a border,
 say `FR,CH`).
 
+So that this minute and a half isn't spent at every boot, each fetched map
+is kept in the `aipcache` partition (185 KB for GB at 107 NM) and drawn from
+there 4.6 s after power-on, before WiFi is even up. It is fetched again in
+the background once it is a day old, or at once when the centre or the
+countries change. The partition was added after release, in flash the app
+slots leave free; an update over WiFi can't add a partition, so a device
+only ever updated that way fetches at every boot as before, until one USB
+flash of the partition table (`idf.py -B build_tab5 partition-table-flash`,
+which keeps the saved settings). The web flasher's full image has it.
+
 Everything under the traffic (disc, rings, compass rose, airspace and
 airfields) is drawn once per range into a PSRAM image and copied each frame.
 Drawing about 4,000 outline segments every second took a frame from about

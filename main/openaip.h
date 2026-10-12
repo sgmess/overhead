@@ -49,7 +49,9 @@ void aero_map_free(aero_map_t *map);
 
 // Start the task that fetches, once connected, around the centre in
 // settings(): at once and then daily, and ten minutes after a failure.
-// Does nothing without a key or with both layers off.
+// Does nothing without a key or with both layers off. A map kept from an
+// earlier fetch for the same centre and countries is shown at once, and
+// fetched again only when it is a day old.
 void openaip_start(void);
 
 // The key, countries, layers or centre changed: fetch again, or drop the

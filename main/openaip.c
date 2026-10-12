@@ -1,6 +1,7 @@
 #include "openaip.h"
 
 #include <math.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,8 @@
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_partition.h"
+#include "esp_rom_crc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
@@ -86,7 +89,8 @@ typedef struct {
     bool overflow;
 } buf_t;
 
-static int64_t s_updated_us; // last success; 0 before one
+static int64_t s_updated_us; // last success, or when the cache was read; 0 before
+static time_t s_fetched;     // when the map shown was fetched, if the clock was set; 0 if not
 static const char *s_state = "off";
 static char s_detail[80];
 static char s_countries[MAX_COUNTRIES * 3]; // as last fetched, e.g. "GB" or "FR,CH"
@@ -445,6 +449,129 @@ static aero_map_t *fetch(const settings_t *s, bool *rejected)
     return bld.map;
 }
 
+// ---------------------------------------------------------------- cache
+//
+// The last map, kept in its own partition so the airspace is on the scope a
+// second after boot instead of after the minute and a half a fetch takes.
+// Devices updated only over WiFi have no such partition (an update can't add
+// one) and fetch at every boot as before.
+
+#define CACHE_LABEL "aipcache"
+#define CACHE_MAGIC 0x5049414f // "OAIP"
+// Up when what a fetch keeps changes (types, MIN_STEP_NM, the structs)
+#define CACHE_VERSION 1
+#define CACHE_DATA 4096 // the header has the first sector to itself
+
+typedef struct {
+    uint32_t magic, version;
+    int32_t lat_e6, lon_e6; // the centre it was projected around
+    char countries_set[12]; // the setting it was fetched for; "" automatic
+    char countries[12];     // what was fetched
+    int64_t fetched;        // unix time, 0 if the clock wasn't set
+    uint32_t n_spaces, n_pts, n_fields;
+    uint32_t crc; // of the data
+} cache_hdr_t;
+
+static const esp_partition_t *cache_part(void)
+{
+    return esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, CACHE_LABEL);
+}
+
+static bool cache_matches(const cache_hdr_t *h, const settings_t *s)
+{
+    return h->magic == CACHE_MAGIC && h->version == CACHE_VERSION && h->lat_e6 == (int32_t)lround(s->lat * 1e6) &&
+           h->lon_e6 == (int32_t)lround(s->lon * 1e6) && strcmp(h->countries_set, s->openaip_countries) == 0;
+}
+
+// The cached map for these settings, or NULL
+static aero_map_t *cache_load(const settings_t *s, cache_hdr_t *hdr)
+{
+    const esp_partition_t *p = cache_part();
+    if (!p || esp_partition_read(p, 0, hdr, sizeof(*hdr)) != ESP_OK || !cache_matches(hdr, s)) return NULL;
+    const size_t sz_s = hdr->n_spaces * sizeof(aero_space_t), sz_p = hdr->n_pts * sizeof(aero_pt_t),
+                 sz_f = hdr->n_fields * sizeof(aero_field_t);
+    if (CACHE_DATA + sz_s + sz_p + sz_f > p->size) return NULL;
+
+    aero_map_t *map = heap_caps_calloc(1, sizeof(*map), MALLOC_CAP_SPIRAM);
+    if (!map) return NULL;
+    map->spaces = heap_caps_malloc(sz_s + 1, MALLOC_CAP_SPIRAM);
+    map->pts = heap_caps_malloc(sz_p + 1, MALLOC_CAP_SPIRAM);
+    map->fields = heap_caps_malloc(sz_f + 1, MALLOC_CAP_SPIRAM);
+    map->n_spaces = hdr->n_spaces;
+    map->n_pts = hdr->n_pts;
+    map->n_fields = hdr->n_fields;
+    bool ok = map->spaces && map->pts && map->fields &&
+              esp_partition_read(p, CACHE_DATA, map->spaces, sz_s) == ESP_OK &&
+              esp_partition_read(p, CACHE_DATA + sz_s, map->pts, sz_p) == ESP_OK &&
+              esp_partition_read(p, CACHE_DATA + sz_s + sz_p, map->fields, sz_f) == ESP_OK;
+    if (ok) {
+        uint32_t crc = esp_rom_crc32_le(0, (const uint8_t *)map->spaces, sz_s);
+        crc = esp_rom_crc32_le(crc, (const uint8_t *)map->pts, sz_p);
+        crc = esp_rom_crc32_le(crc, (const uint8_t *)map->fields, sz_f);
+        ok = crc == hdr->crc;
+    }
+    if (!ok) {
+        ESP_LOGW(TAG, "cached map unreadable, fetching");
+        aero_map_free(map);
+        return NULL;
+    }
+    return map;
+}
+
+// Keep map for the next boot. Writes flash, which on a board without XIP
+// takes PSRAM away, this task's stack included; every board that has the
+// partition runs with XIP, and without it this does nothing.
+static void cache_save(const settings_t *s, const aero_map_t *map)
+{
+#if CONFIG_SPIRAM_XIP_FROM_PSRAM
+    const esp_partition_t *p = cache_part();
+    if (!p) return;
+    const size_t sz_s = map->n_spaces * sizeof(aero_space_t), sz_p = map->n_pts * sizeof(aero_pt_t),
+                 sz_f = map->n_fields * sizeof(aero_field_t);
+    const size_t total = CACHE_DATA + sz_s + sz_p + sz_f;
+    if (total > p->size) {
+        ESP_LOGW(TAG, "map of %u bytes is bigger than the cache", (unsigned)total);
+        return;
+    }
+    cache_hdr_t h = {
+        .magic = CACHE_MAGIC,
+        .version = CACHE_VERSION,
+        .lat_e6 = (int32_t)lround(s->lat * 1e6),
+        .lon_e6 = (int32_t)lround(s->lon * 1e6),
+        .fetched = s_fetched,
+        .n_spaces = map->n_spaces,
+        .n_pts = map->n_pts,
+        .n_fields = map->n_fields,
+    };
+    strlcpy(h.countries_set, s->openaip_countries, sizeof(h.countries_set));
+    strlcpy(h.countries, s_countries, sizeof(h.countries));
+    h.crc = esp_rom_crc32_le(0, (const uint8_t *)map->spaces, sz_s);
+    h.crc = esp_rom_crc32_le(h.crc, (const uint8_t *)map->pts, sz_p);
+    h.crc = esp_rom_crc32_le(h.crc, (const uint8_t *)map->fields, sz_f);
+
+    // The header last: cut off part way, the cache is just missing
+    const size_t erase = (total + 4095) & ~(size_t)4095;
+    esp_err_t err = esp_partition_erase_range(p, 0, erase);
+    if (err == ESP_OK) err = esp_partition_write(p, CACHE_DATA, map->spaces, sz_s);
+    if (err == ESP_OK) err = esp_partition_write(p, CACHE_DATA + sz_s, map->pts, sz_p);
+    if (err == ESP_OK) err = esp_partition_write(p, CACHE_DATA + sz_s + sz_p, map->fields, sz_f);
+    if (err == ESP_OK) err = esp_partition_write(p, 0, &h, sizeof(h));
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "map kept for the next boot (%u bytes)", (unsigned)total);
+    } else {
+        ESP_LOGW(TAG, "map not kept: %s", esp_err_to_name(err));
+    }
+#else
+    (void)s;
+    (void)map;
+#endif
+}
+
+static bool clock_set(void)
+{
+    return time(NULL) > 1700000000; // after November 2023: SNTP has run
+}
+
 // ---------------------------------------------------------------- public
 
 static void openaip_task(void *arg)
@@ -459,19 +586,50 @@ static void openaip_task(void *arg)
             ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
             continue;
         }
-        // Said before waiting for the network, so the status doesn't read
-        // "off" for the first seconds after boot
-        s_state = "loading";
-        s_detail[0] = '\0';
+
+        // The kept map at once, if it was fetched for this centre and these
+        // countries; fetched again when it is a day old
+        cache_hdr_t hdr;
+        aero_map_t *cached = cache_load(s, &hdr);
+        if (cached) {
+            ESP_LOGI(TAG, "%s: %d airspaces, %d airfields, from the cache", hdr.countries, cached->n_spaces,
+                     cached->n_fields);
+            s_airspaces = cached->n_spaces;
+            s_airfields = cached->n_fields;
+            strlcpy(s_countries, hdr.countries, sizeof(s_countries));
+            s_fetched = hdr.fetched;
+            s_updated_us = esp_timer_get_time();
+            s_state = "ok";
+            s_detail[0] = '\0';
+            board_lock();
+            radar_ui_set_aero(cached); // the radar owns it now
+            board_unlock();
+
+            // Its age needs the clock, which SNTP sets soon after joining
+            while (!net_wait_connected(60000)) {
+            }
+            for (int i = 0; i < 30 && !clock_set(); i++) vTaskDelay(pdMS_TO_TICKS(1000));
+            const int64_t age = clock_set() && hdr.fetched ? time(NULL) - hdr.fetched : -1;
+            if (age >= 0 && age < REFRESH_S) {
+                sleep_s(REFRESH_S - (int)age);
+                continue;
+            }
+            // A day old, or of no known age: fetch, with it on the scope meanwhile
+        } else {
+            // Said before waiting for the network, so the status doesn't read
+            // "off" for the first seconds after boot
+            s_state = "loading";
+            s_detail[0] = '\0';
+        }
+
         while (!net_wait_connected(60000)) {
         }
-        // Let the traffic come up first
-        vTaskDelay(pdMS_TO_TICKS(5000));
         bool rejected = false;
         aero_map_t *map = fetch(s, &rejected);
         if (!map) {
             ESP_LOGW(TAG, "%s", s_detail);
-            s_state = "error";
+            // A cached map stays up, and stays "ok": it is still right
+            if (!cached) s_state = "error";
             // A refused key won't start working; a new one wakes us
             if (rejected) {
                 ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
@@ -485,10 +643,14 @@ static void openaip_task(void *arg)
                  map->n_pts, map->n_fields, OPENAIP_RADIUS_NM);
         s_airspaces = map->n_spaces;
         s_airfields = map->n_fields;
+        s_fetched = clock_set() ? time(NULL) : 0;
         s_updated_us = esp_timer_get_time();
         s_state = "ok";
+        s_detail[0] = '\0';
+        // Before the radar has it: once it does, a new centre can free it
+        cache_save(s, map);
         board_lock();
-        radar_ui_set_aero(map); // the radar owns it now
+        radar_ui_set_aero(map);
         board_unlock();
         sleep_s(REFRESH_S);
     }
@@ -517,6 +679,9 @@ void openaip_get_status(openaip_status_t *out)
         .countries = s_countries,
         .airspaces = s_airspaces,
         .airfields = s_airfields,
-        .age_s = s_updated_us ? (int)((esp_timer_get_time() - s_updated_us) / 1000000) : -1,
+        // From the fetch itself when known: a map read from the cache may be hours old
+        .age_s = s_fetched && clock_set() ? (int)(time(NULL) - s_fetched)
+                 : s_updated_us           ? (int)((esp_timer_get_time() - s_updated_us) / 1000000)
+                                          : -1,
     };
 }

@@ -188,13 +188,16 @@ void app_main(void)
     radar_ui_set_status("Starting WiFi");
     board_unlock();
 
+    // Before WiFi, which takes seconds to come up: the airspace kept from the
+    // last fetch needs no network
+    openaip_start();
+
     // Before WiFi: on the Tab5 this also turns charging on
     battery_start();
 
     board_wifi_power_on();
     feed_init();
     net_start();
-    openaip_start();
     route_start();
     // TLS and JSON parsing buffers are in PSRAM; this is just call depth.
     xTaskCreate(fetch_task, "fetch", FETCH_STACK, NULL, 5, &s_fetch_task);
