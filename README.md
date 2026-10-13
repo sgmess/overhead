@@ -59,8 +59,8 @@ gives way at once to the WiFi setup portal.
 
 ## Build and flash
 
-Needs ESP-IDF 6.1 (the Tab5; the parked boards' lock files are still from
-5.5). Each board has its own build directory, `sdkconfig.<board>`
+Needs ESP-IDF 6.1 (the Tab5 and the 3.4C; the parked S3 2.8C's lock file is
+still from 5.5). Each board has its own build directory, `sdkconfig.<board>`
 and `dependencies.lock.<board>`, so building one never touches the other.
 There is nothing to configure first: WiFi and every radar setting are set on
 the device (see [Setup and settings](#setup-and-settings)).
@@ -312,7 +312,12 @@ esp_hosted's own Tab5 board option, because 2.x ignores the pin options set
 directly. The C6 reset is set to active high: 1.4 always drove that pin high
 whatever the setting (a bug), and with "active low" honoured, 2.x holds the
 C6 in reset. TLS buffers moved to PSRAM because 2.x uses more internal RAM.
-The P4 3.4C is still on 1.4; if its C6 is updated, it needs the same move.
+The P4 3.4C made the same move in October 2026, when its C6 was updated to
+2.x. Its pins are esp_hosted's defaults, so it needs no board option, and its
+TLS buffers are in PSRAM too. Its Waveshare BSP pins esp_lvgl_adapter to
+0.6, which includes LVGL 9.6's deprecated `src/` headers; their `#warning`
+is an error under IDF 6.1, so the top-level CMakeLists keeps it a warning
+for that board.
 
 **Battery.** The Tab5 only charges while firmware holds the charger's enable
 line (CHG_EN, on the second I/O expander) high, so the firmware turns it on at

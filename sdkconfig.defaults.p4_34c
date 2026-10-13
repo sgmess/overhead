@@ -12,10 +12,14 @@ CONFIG_CACHE_L2_CACHE_256KB=y
 CONFIG_CACHE_L2_CACHE_LINE_128B=y
 CONFIG_LV_DEF_REFR_PERIOD=15
 
-# The P4 has room for mbedTLS in internal RAM
-CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC=y
+# TLS buffers in PSRAM. With esp_hosted 1.4 the P4 had room for them
+# internally, but 2.x leaves too little: on the Tab5 about 50 KB, largest
+# block 14 KB, under a full TLS record (see sdkconfig.defaults.tab5).
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 
-# WiFi via the ESP32-C6 co-processor
+# WiFi via the ESP32-C6 co-processor, running esp_hosted 2.x. Its default
+# pins (SDIO slot 1: CLK 18, CMD 19, D0-D3 14-17; reset GPIO 54) are this
+# board's.
 CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_STREAMING_MODE=y
 CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=12
 CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=12
