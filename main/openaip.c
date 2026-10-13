@@ -483,9 +483,14 @@ static bool cache_matches(const cache_hdr_t *h, const settings_t *s)
            h->lon_e6 == (int32_t)lround(s->lon * 1e6) && strcmp(h->countries_set, s->openaip_countries) == 0;
 }
 
-// The cached map for these settings, or NULL
+// The cached map for these settings, or NULL. Without XIP, even reading
+// flash turns the cache off and this task's PSRAM stack with it (a boot loop
+// on the 3.4C, October 2026); cache_save() never writes there either.
 static aero_map_t *cache_load(const settings_t *s, cache_hdr_t *hdr)
 {
+#if !CONFIG_SPIRAM_XIP_FROM_PSRAM
+    return NULL;
+#endif
     const esp_partition_t *p = cache_part();
     if (!p || esp_partition_read(p, 0, hdr, sizeof(*hdr)) != ESP_OK || !cache_matches(hdr, s)) return NULL;
     const size_t sz_s = hdr->n_spaces * sizeof(aero_space_t), sz_p = hdr->n_pts * sizeof(aero_pt_t),
@@ -519,8 +524,8 @@ static aero_map_t *cache_load(const settings_t *s, cache_hdr_t *hdr)
 }
 
 // Keep map for the next boot. Writes flash, which on a board without XIP
-// takes PSRAM away, this task's stack included; every board that has the
-// partition runs with XIP, and without it this does nothing.
+// takes PSRAM away, this task's stack included; without XIP this does
+// nothing, and the map is fetched at every boot.
 static void cache_save(const settings_t *s, const aero_map_t *map)
 {
 #if CONFIG_SPIRAM_XIP_FROM_PSRAM
