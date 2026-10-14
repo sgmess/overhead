@@ -44,7 +44,16 @@ typedef struct {
     int alert_ft;       // 500..20000
     bool alert_sound;   // on boards with a speaker
     bool show_vector;   // a line ahead of each aircraft, where it will be in a minute
+    int filter_min_ft;  // hide airborne aircraft below this; 0 shows all
+    int filter_max_ft;  // and above this; FILTER_NO_CEILING shows all
+    int show_kinds;     // AC_KIND_* bits shown, at least one; emergencies always are
+    bool emerg_alert;   // banner and chime for an emergency squawk anywhere in range
+    bool show_centrelines; // extended runway centrelines at the major airfields
+    bool sleep;         // backlight off from sleep_from to sleep_to, waking on a touch
+    int sleep_from, sleep_to; // minutes after local midnight, 0..1439
 } settings_t;
+
+#define FILTER_NO_CEILING 60000
 
 // What a data tag shows. Callsign and type share the first line, altitude and
 // speed the second.

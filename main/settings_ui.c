@@ -7,6 +7,7 @@
 
 #include "backlight.h"
 #include "battery.h"
+#include "aircraft.h"
 #include "board.h"
 #include "bsp/display.h"
 #include "esp_app_desc.h"
@@ -60,6 +61,7 @@
 #define C_ACCENT 0x46ffa8
 #define C_PRIMARY 0x2fbf84
 #define C_SECONDARY 0x3d7a61
+#define C_WARN 0xffb020
 
 #define IDLE_CLOSE_MS 60000 // nobody touching it: back to the radar
 #define BIND_MAX 48
@@ -69,7 +71,7 @@ typedef enum {
     B_INT,    // one of values[]
     B_SLIDER, // min..max
     B_TZ,
-    B_TAG,    // one bit of tag_fields
+    B_BIT,    // one bit of an int, at least one of which stays set
     B_ROTATION,
     B_QUICK, // brightness: the day or the night level, whichever is in use
 } bind_kind_t;
@@ -99,7 +101,8 @@ typedef struct {
 } ui_t;
 static ui_t *s_ui;
 static lv_obj_t *s_root, *s_col, *s_msgbox;
-static lv_obj_t *s_dim_times;
+static lv_obj_t *s_dim_times, *s_sleep_times;
+static lv_obj_t *s_filter_warn; // shown while the altitude limits cross
 // Brightness: the quick slider first, then the day and night levels it
 // moves, whichever is in use (pointers into s_ui)
 static bind_t *s_quick, *s_day, *s_night;
@@ -125,12 +128,18 @@ static void set_if_changed(lv_obj_t *label, const char *text)
 
 static void commit(void)
 {
+    // Crossed altitude limits would hide everything airborne, and settings
+    // refuse them: hold back until the other one is changed too
+    const bool crossed = s_ui->edit.filter_min_ft >= s_ui->edit.filter_max_ft;
+    if (s_filter_warn) lv_obj_set_hidden(s_filter_warn, !crossed);
+    if (crossed) return;
     settings_change(&s_ui->edit, false);
 }
 
 static void show_dependent(void)
 {
     lv_obj_set_hidden(s_dim_times, s_ui->edit.dim_mode != 2);
+    lv_obj_set_hidden(s_sleep_times, !s_ui->edit.sleep);
     // Without dimming, the quick slider is the one brightness there is
     lv_obj_set_hidden(s_day->row, s_ui->edit.dim_mode == 0);
     lv_obj_set_hidden(s_night->row, s_ui->edit.dim_mode == 0);
@@ -183,6 +192,7 @@ static void on_root_deleted(lv_event_t *e)
     if (s_ui == ui) {
         s_ui = NULL;
         s_quick = s_day = s_night = NULL;
+        s_filter_warn = NULL;
         memset(s_status, 0, sizeof(s_status));
         s_ota_check = s_ota_install = s_ota_text = s_ota_bar = NULL;
     }
@@ -345,24 +355,26 @@ static void on_switch(lv_event_t *e)
 {
     bind_t *b = lv_event_get_user_data(e);
     *(bool *)b->field = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    show_dependent();
     commit();
 }
 
-static void on_tag(lv_event_t *e)
+static void on_bit(lv_event_t *e)
 {
     bind_t *b = lv_event_get_user_data(e);
     lv_obj_t *box = lv_event_get_target(e);
-    int tags = s_ui->edit.tag_fields;
+    int *field = b->field;
+    int bits = *field;
     if (lv_obj_has_state(box, LV_STATE_CHECKED)) {
-        tags |= b->bit;
+        bits |= b->bit;
     } else {
-        tags &= ~b->bit;
+        bits &= ~b->bit;
     }
-    if (!tags) { // a tag has to show something
+    if (!bits) { // a tag has to show something, the filter to let something through
         lv_obj_add_state(box, LV_STATE_CHECKED);
         return;
     }
-    s_ui->edit.tag_fields = tags;
+    *field = bits;
     commit();
 }
 
@@ -599,25 +611,27 @@ static void add_timezone(void)
     dropdown(row(s_col, "Timezone"), opts, sel, b);
 }
 
-static void add_tags(void)
+typedef struct {
+    int bit;
+    const char *name;
+} bit_name_t;
+
+// A checkbox per bit of *field, at least one of which stays ticked
+static void add_bits(const char *text, int *field, const bit_name_t *bits, int n)
 {
-    label(s_col, "Data tags show", &F_ROW, C_TEXT);
+    label(s_col, text, &F_ROW, C_TEXT);
     lv_obj_t *r = box(s_col, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_style_pad_column(r, GAP * 2, 0);
     lv_obj_set_style_pad_row(r, GAP, 0);
-    static const struct {
-        int bit;
-        const char *name;
-    } TAGS[] = {{TAG_CALLSIGN, "Callsign"}, {TAG_ALT, "Altitude"}, {TAG_SPEED, "Speed"}, {TAG_TYPE, "Type"}};
-    for (size_t i = 0; i < sizeof(TAGS) / sizeof(TAGS[0]); i++) {
+    for (int i = 0; i < n; i++) {
         lv_obj_t *cb = lv_checkbox_create(r);
-        lv_checkbox_set_text(cb, TAGS[i].name);
+        lv_checkbox_set_text(cb, bits[i].name);
         lv_obj_set_style_text_font(cb, &F_ROW, 0);
         lv_obj_set_style_text_color(cb, lv_color_hex(C_TEXT), 0);
-        if (s_ui->edit.tag_fields & TAGS[i].bit) lv_obj_add_state(cb, LV_STATE_CHECKED);
-        bind_t *b = new_bind(B_TAG, &s_ui->edit.tag_fields);
-        b->bit = TAGS[i].bit;
-        lv_obj_add_event_cb(cb, on_tag, LV_EVENT_VALUE_CHANGED, b);
+        if (*field & bits[i].bit) lv_obj_add_state(cb, LV_STATE_CHECKED);
+        bind_t *b = new_bind(B_BIT, field);
+        b->bit = bits[i].bit;
+        lv_obj_add_event_cb(cb, on_bit, LV_EVENT_VALUE_CHANGED, b);
     }
 }
 
@@ -638,6 +652,18 @@ static void build(void)
     static const int FT_V[] = {1000, 2000, 3000, 5000, 8000, 10000, 15000, 20000};
     static const char *const FT_N[] = {"1,000 ft", "2,000 ft", "3,000 ft", "5,000 ft",
                                        "8,000 ft", "10,000 ft", "15,000 ft", "20,000 ft"};
+    static const int MIN_V[] = {0, 1000, 2000, 3000, 5000, 10000, 20000};
+    static const char *const MIN_N[] = {"Nothing", "1,000 ft", "2,000 ft", "3,000 ft",
+                                        "5,000 ft", "10,000 ft", "20,000 ft"};
+    static const int MAX_V[] = {FILTER_NO_CEILING, 3000, 5000, 10000, 15000, 20000, 30000};
+    static const char *const MAX_N[] = {"Nothing", "3,000 ft", "5,000 ft", "10,000 ft",
+                                        "15,000 ft", "20,000 ft", "30,000 ft"};
+    static const bit_name_t TAGS[] = {
+        {TAG_CALLSIGN, "Callsign"}, {TAG_ALT, "Altitude"}, {TAG_SPEED, "Speed"}, {TAG_TYPE, "Type"}};
+    static const bit_name_t KINDS[] = {{AC_KIND_LARGE, "Airliners"},
+                                       {AC_KIND_LIGHT, "Light aircraft"},
+                                       {AC_KIND_HELI, "Helicopters"},
+                                       {AC_KIND_OTHER, "Other"}};
     static const int FEED_V[] = {0, 1};
     static const char *const FEED_N[] = {"adsb.lol", "adsb.fi"};
     static const int FETCH_V[] = {2, 3, 5, 10, 15, 30, 60};
@@ -679,6 +705,12 @@ static void build(void)
     add_choice_in(s_dim_times, "From", &s_ui->edit.dim_from, half_hours, hh_ptrs, 48, " min");
     add_choice_in(s_dim_times, "Until", &s_ui->edit.dim_to, half_hours, hh_ptrs, 48, " min");
     s_night = add_slider("Night brightness", &s_ui->edit.dim_brightness, 1, 100, true);
+    add_switch("Screen off overnight", &s_ui->edit.sleep);
+    s_sleep_times = box(s_col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_sleep_times, GAP, 0);
+    add_choice_in(s_sleep_times, "From", &s_ui->edit.sleep_from, half_hours, hh_ptrs, 48, " min");
+    add_choice_in(s_sleep_times, "Until", &s_ui->edit.sleep_to, half_hours, hh_ptrs, 48, " min");
+    label(s_sleep_times, "Off two minutes after the last touch; a touch wakes it.", &F_HEAD, C_DIM);
     add_choice("Clock", &s_ui->edit.clock, CLOCK_V, CLOCK_N, 3, "");
     add_timezone();
 #if BOARD_CAN_ROTATE
@@ -697,7 +729,7 @@ static void build(void)
     section("RADAR");
     add_choice("Starting range", &s_ui->edit.range_idx, RANGE_V, RANGE_N, 5, "");
     add_choice("Label the nearest", &s_ui->edit.max_labels, LABELS_V, LABELS_N, 6, "");
-    add_tags();
+    add_bits("Data tags show", &s_ui->edit.tag_fields, TAGS, 4);
     add_choice("Trails", &s_ui->edit.trail_s, TRAIL_V, TRAIL_N, 5, " s");
     add_switch("Direction line", &s_ui->edit.show_vector);
     add_switch("Animated sweep", &s_ui->edit.sweep);
@@ -705,10 +737,19 @@ static void build(void)
     add_switch("Highlight military", &s_ui->edit.show_military);
     add_switch("Routes in the card", &s_ui->edit.show_route);
 
-    section("OVERHEAD ALERT");
-    add_switch("Alert", &s_ui->edit.alert);
+    section("FILTER");
+    add_bits("Show", &s_ui->edit.show_kinds, KINDS, 4);
+    add_choice("Hide below", &s_ui->edit.filter_min_ft, MIN_V, MIN_N, 7, " ft");
+    add_choice("Hide above", &s_ui->edit.filter_max_ft, MAX_V, MAX_N, 7, " ft");
+    s_filter_warn = label(s_col, "Hide below has to be lower than hide above.", &F_HEAD, C_WARN);
+    lv_obj_set_hidden(s_filter_warn, true);
+    label(s_col, "Emergencies always show.", &F_HEAD, C_DIM);
+
+    section("ALERTS");
+    add_switch("Overhead alert", &s_ui->edit.alert);
     add_choice("Within", &s_ui->edit.alert_nm10, NM10_V, NM10_N, 6, "");
     add_choice("Below", &s_ui->edit.alert_ft, FT_V, FT_N, 8, " ft");
+    add_switch("Emergency alert", &s_ui->edit.emerg_alert);
 #if BOARD_HAS_SPEAKER
     add_switch("Chime", &s_ui->edit.alert_sound);
 #endif
@@ -716,6 +757,7 @@ static void build(void)
     section("MAP LAYERS");
     add_switch("Airspace", &s_ui->edit.show_airspace);
     add_switch("Airfields", &s_ui->edit.show_airfields);
+    add_switch("Runway centrelines", &s_ui->edit.show_centrelines);
     if (!s_ui->edit.openaip_key[0]) label(s_col, "These need an OpenAIP key, set on the web page.", &F_HEAD, C_DIM);
 
     section("TRAFFIC FEED");

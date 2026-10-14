@@ -156,15 +156,41 @@ static bool parse_aircraft(const cJSON *j, int64_t now_us, aircraft_t *a)
 
     a->military = ((int)num_or(j, "dbFlags", 0) & 1) != 0;
     const cJSON *cat = cJSON_GetObjectItemCaseSensitive(j, "category");
-    a->heli = cJSON_IsString(cat) && strcmp(cat->valuestring, "A7") == 0;
+    const char *c = cJSON_IsString(cat) ? cat->valuestring : "";
+    a->heli = strcmp(c, "A7") == 0;
+    if (a->heli) {
+        a->kind = AC_KIND_HELI;
+    } else if (c[0] == 'A' && c[1] >= '3' && c[1] <= '5') {
+        a->kind = AC_KIND_LARGE;
+    } else if (strcmp(c, "A1") == 0 || strcmp(c, "A2") == 0 || strcmp(c, "B1") == 0 || strcmp(c, "B4") == 0) {
+        a->kind = AC_KIND_LIGHT;
+    } else {
+        a->kind = AC_KIND_OTHER;
+    }
 
     double seen_pos = num_or(j, "seen_pos", 0);
     a->pos_time_us = now_us - (int64_t)(seen_pos * 1e6);
 
+    // The squawk first: it is what the crew set. Then readsb's field, which
+    // also carries what only ADS-B can say (medical, low fuel).
     const cJSON *em = cJSON_GetObjectItemCaseSensitive(j, "emergency");
-    a->emergency = (cJSON_IsString(em) && strcmp(em->valuestring, "none") != 0) ||
-                   strcmp(a->squawk, "7500") == 0 || strcmp(a->squawk, "7600") == 0 ||
-                   strcmp(a->squawk, "7700") == 0;
+    const char *e = cJSON_IsString(em) ? em->valuestring : "none";
+    if (strcmp(a->squawk, "7500") == 0 || strcmp(e, "unlawful") == 0) {
+        a->emerg = AC_EMERG_HIJACK;
+    } else if (strcmp(a->squawk, "7600") == 0 || strcmp(e, "nordo") == 0) {
+        a->emerg = AC_EMERG_RADIO;
+    } else if (strcmp(a->squawk, "7700") == 0 || strcmp(e, "general") == 0) {
+        a->emerg = AC_EMERG_GENERAL;
+    } else if (strcmp(e, "lifeguard") == 0) {
+        a->emerg = AC_EMERG_MEDICAL;
+    } else if (strcmp(e, "minfuel") == 0) {
+        a->emerg = AC_EMERG_FUEL;
+    } else if (strcmp(e, "downed") == 0) {
+        a->emerg = AC_EMERG_DOWNED;
+    } else {
+        a->emerg = AC_EMERG_NONE; // "none", and "reserved"
+    }
+    a->emergency = a->emerg != AC_EMERG_NONE;
     return true;
 }
 

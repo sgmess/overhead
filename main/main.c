@@ -21,6 +21,7 @@
 #include "radar_ui.h"
 #include "route.h"
 #include "settings.h"
+#include "stats.h"
 
 static const char *TAG = "overhead";
 
@@ -160,6 +161,7 @@ static void fetch_task(void *arg)
             radar_ui_set_status("Feed error, retrying");
         }
         board_unlock();
+        if (err == ESP_OK) stats_update(buf, n, s_lat, s_lon, range);
 
         // Internal RAM is the constraint on the S3. The IDF low-water mark is
         // not logged: it misreads the DMA reserve pool as once full.

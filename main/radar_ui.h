@@ -5,6 +5,7 @@
 #include "aircraft.h"
 #include "battery.h"
 #include "openaip.h"
+#include "sdkconfig.h"
 #include "settings.h"
 
 // All functions except radar_ui_range_nm() must be called with the
@@ -39,6 +40,12 @@ void radar_ui_set_centre(double lat, double lon);
 // Open the card of the aircraft with this ICAO address, as a tap would; NULL
 // closes it. With the display lock held.
 void radar_ui_select(const char *hex);
+
+#if CONFIG_LV_USE_SNAPSHOT
+// For development: the aircraft with this address squawks 7700 until
+// called again; NULL or "" ends it. With the display lock held.
+void radar_ui_debug_emergency(const char *hex);
+#endif
 
 // Current range in NM. Safe to call without the lock.
 int radar_ui_range_nm(void);

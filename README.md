@@ -25,11 +25,22 @@ point on a radar scope.
   country the aircraft is registered in, all worked out on the device.
 - An overhead alert: an aircraft within a set distance and below a set
   altitude blinks amber, a banner names it, and the Tab5 or 3.4C chimes.
+- An emergency alert: any aircraft in range squawking 7700, 7600 or 7500, or
+  reporting an emergency over ADS-B (medical, low fuel), gets a red banner
+  ("7700 EMERGENCY BAW123 12.3 NM") ahead of any overhead alert, and a chime.
+- A filter by kind of aircraft (airliners, light aircraft, helicopters,
+  other, from the transponder's emitter category) and altitude band. The
+  count then reads "12 of 30 aircraft"; emergencies always show.
 - Brightness, with dimming from sunset to sunrise at the radar centre or
-  between set times.
+  between set times, and the screen fully off overnight if wanted: a touch
+  wakes it (and does nothing else), and it goes off again two minutes later.
+- Today's traffic on the configuration page: aircraft seen, military, the
+  busiest hour, the highest and fastest, and a bar chart by hour.
 - Positions are moved forward between polls using ground speed and track, so
   traffic moves smoothly instead of jumping every few seconds.
 - Emergency squawks (7500/7600/7700) are drawn red and circled.
+- Extended runway centrelines at the airports, a dash a mile out to 9.5 NM,
+  where arrivals line up and departures climb out.
 - UTC or local clock (or both), rotating sweep, compass rose, range rings.
   On the Tab5 the clock, range, traffic count and battery sit in the corners
   around the scope; the round panels have no corners, so they keep them along
@@ -134,7 +145,7 @@ Once connected, the configuration page is at `http://overhead.local` (mDNS),
 or at the address shown on the radar until the first traffic arrives. It
 covers the centre (with a map), starting range, labels and what the data tags
 show, trails, sweep, ground traffic, military highlighting, routes, the
-overhead alert, brightness and night dimming, the clock and timezone, primary
+filter, the overhead and emergency alerts, map layers, brightness and night dimming, the clock and timezone, primary
 feed, poll interval, the Tab5's orientation and battery cut-off, and changing
 or forgetting the network. Saving applies at once; only a new orientation or
 network restarts the device. The pages are unauthenticated, so anyone on the
@@ -164,6 +175,10 @@ areas (red), danger areas (orange), and RMZ and TMZ (purple). FIRs, airways
 and sectors are left out. Airports are always shown, labelled at 50 NM and
 below. Small airfields, glider and microlight sites appear at 25 NM and
 below, labelled at 10 NM. Each is drawn as a ring crossed by its main runway.
+At 50 NM and below, each airport's main runway also gets an extended
+centreline both ways, a dash a mile from 1 to 9.5 NM. OpenAIP gives the
+runway's heading but not its thresholds, so the line runs through the
+airport's reference point: at Heathrow, between the two parallel runways.
 Either layer can be turned off.
 
 The data is fetched a country at a time and trimmed to the range, because
@@ -197,9 +212,22 @@ and takes any other rule typed in (`GMT0BST,M3.5.0/1,M10.5.0`). Night
 dimming either follows the sun's elevation at the radar centre (below
 -0.833°, which is sunset and sunrise with refraction) or local clock times.
 Moving a brightness slider on the page shows that level for 8 seconds without
-saving. While an overhead alert is active the screen comes back to full
-brightness. Each aircraft chimes once and again only after it has been out of
-the alert for two minutes. The chime is the Tab5's ES8388 and speaker, or
+saving. While an overhead or emergency alert is active the screen comes back
+to full brightness. Each aircraft chimes once and again only after it has been
+out of the alert for two minutes; overhead and emergency alerts keep separate
+lists, so one doesn't silence the other.
+
+With "Screen off overnight", the backlight goes off between the set times
+once nobody has touched the screen for two minutes (LVGL's own idle time).
+While it is off, a transparent layer over everything takes the waking touch,
+so it can't also select an aircraft or step the range. Alerts neither wake
+it nor chime meanwhile. The configuration page's sliders still preview.
+
+The day's counts (`main/stats.c`) take each aircraft once by ICAO address,
+in a table in PSRAM, if it comes within the radar's range; an hour's bar is
+the aircraft seen in that hour. Altitudes over 60,000 ft and speeds over
+750 kt are taken as glitches. They start again at local midnight, and at a
+restart, as they are kept only in RAM. The chime is the Tab5's ES8388 and speaker, or
 the 3.4C's ES8311 and a speaker on its header, opened for each chime so the
 amplifier is off between them.
 
@@ -349,7 +377,8 @@ nobody has measured, so it reports none.
 | `main/web.c`, `main/web/` | Web server, JSON API, and the setup and configuration pages |
 | `main/feed.c` | HTTPS poll and readsb JSON parsing (buffers in PSRAM) |
 | `main/battery.c` | Battery state, charge estimate, time left, low-voltage power-off |
-| `main/backlight.c` | Brightness, night dimming by sun elevation or clock, the page's preview |
+| `main/backlight.c` | Brightness, night dimming by sun elevation or clock, sleep, the page's preview |
+| `main/stats.c` | Today's counts for the configuration page |
 | `main/trails.c` | Position history per aircraft for the trails |
 | `main/route.c` | Origin and destination by callsign from adsb.im, cached |
 | `main/airlines.c`, `main/countries.c`, `main/flags.c`, `main/logos.c` | Airline, flight number and logo by callsign; country by ICAO address, and its flag |

@@ -195,13 +195,18 @@ static const struct {
     uint32_t color;
     uint8_t width;
     lv_opa_t opa;
-} AERO_STYLE[AERO_KIND_COUNT] = {
+} AERO_STYLE[AERO_KIND_COUNT + 1] = {
     [AERO_ZONE] = {0x4d8fe0, 2, LV_OPA_80},
     [AERO_AREA] = {0x3a6db0, 1, LV_OPA_70},
     [AERO_RESTRICTED] = {0xd04848, 2, LV_OPA_80},
     [AERO_DANGER] = {0xc8783c, 1, LV_OPA_80},
     [AERO_MANDATORY] = {0x8a72c8, 1, LV_OPA_70},
+    [AERO_KIND_COUNT] = {C_FIELD, 1, LV_OPA_70}, // SEG_CENTRELINE
 };
+// Extended runway centrelines go in with the outlines, as their own kind
+#define SEG_CENTRELINE AERO_KIND_COUNT
+#define CL_DASHES 9      // a dash per NM, from 1 NM out to 9.5
+#define CL_MAX_RANGE 50  // NM; at 100 the dashes would be specks
 #define FIELD_R_MAJOR (R_SCOPE / 50)
 #define FIELD_R_MINOR (R_SCOPE / 75)
 #define RUNWAY_HALF (R_SCOPE / 30)
@@ -225,6 +230,7 @@ static int16_t *s_trail_slot;               // per aircraft, from trails_update(
 static int16_t (*s_trail_xy)[TRAIL_PTS][2]; // per aircraft, screen points
 static int s_count;
 static int s_visible;
+static int s_in_range; // visible, plus those the filter hides
 static int *s_order; // AC_MAX of them: visible, taggable aircraft, nearest first
 static int s_order_n;
 static double s_lat0, s_lon0, s_coslat0;
@@ -234,11 +240,15 @@ static int64_t s_last_update_us;
 static char s_feed[16];
 static char s_status[64];
 static int s_alert_n, s_alert_best; // aircraft alerting, and the nearest
+static int s_emerg_n, s_emerg_best; // in an emergency, and the nearest
 static bool s_blink;                // flips every second, for the alert ring
-static struct {
+typedef struct {
     char hex[8];
     int64_t seen_us;
-} s_alerted[ALERT_MEMORY]; // recently alerting, so each chimes once
+} alert_memory_t;
+// Recently alerting, so each chimes once: overhead and emergency apart, so
+// one doesn't silence the other
+static alert_memory_t s_alerted[ALERT_MEMORY], s_emerg_alerted[ALERT_MEMORY];
 
 // Airspace outlines as screen segments already clipped to the scope, built
 // again only when the range or the data changes
@@ -271,6 +281,7 @@ static lv_timer_t *s_sweep_timer;
 static lv_point_precise_t s_sweep_pts[SWEEP_SEGS][2];
 static float s_sweep_deg;
 static lv_obj_t *s_setup, *s_setup_text;
+static lv_obj_t *s_sleep_shield; // over everything while the screen is off: takes the waking touch
 #if LV_USE_QRCODE
 static lv_obj_t *s_setup_qr;
 #endif
@@ -350,24 +361,34 @@ static bool is_military(const aircraft_t *a)
 
 // Chime for an aircraft that has just started alerting, unless it was
 // alerting a moment ago (wandering in and out at the edge, say)
-static void note_alert(const aircraft_t *a, int64_t now)
+static void note_alert(alert_memory_t *mem, const aircraft_t *a, int64_t now)
 {
     int slot = -1, oldest = 0;
     for (int k = 0; k < ALERT_MEMORY; k++) {
-        if (strcmp(s_alerted[k].hex, a->hex) == 0) {
+        if (strcmp(mem[k].hex, a->hex) == 0) {
             slot = k;
             break;
         }
-        if (s_alerted[k].seen_us < s_alerted[oldest].seen_us) oldest = k;
+        if (mem[k].seen_us < mem[oldest].seen_us) oldest = k;
     }
-    if (slot < 0 || now - s_alerted[slot].seen_us > ALERT_REARM_S * 1000000LL) {
-        if (settings()->alert_sound) board_chime();
+    if (slot < 0 || now - mem[slot].seen_us > ALERT_REARM_S * 1000000LL) {
+        if (settings()->alert_sound && !backlight_asleep()) board_chime(); // no chimes in the night
         if (slot < 0) {
             slot = oldest;
-            strlcpy(s_alerted[slot].hex, a->hex, sizeof(s_alerted[slot].hex));
+            strlcpy(mem[slot].hex, a->hex, sizeof(mem[slot].hex));
         }
     }
-    s_alerted[slot].seen_us = now;
+    mem[slot].seen_us = now;
+}
+
+// Hidden by the display filter: not one of the kinds chosen, or airborne
+// outside the altitude band. Unknown altitudes stay, as nothing says where.
+static bool filtered_out(const aircraft_t *a, const settings_t *set)
+{
+    if (!(a->kind & set->show_kinds)) return true;
+    if (a->on_ground || a->alt_ft == AC_ALT_UNKNOWN) return false;
+    return a->alt_ft < set->filter_min_ft ||
+           (set->filter_max_ft < FILTER_NO_CEILING && a->alt_ft > set->filter_max_ft);
 }
 
 // ---------------------------------------------------------------- layout
@@ -402,13 +423,59 @@ static bool clip_to_scope(float *ax, float *ay, float *bx, float *by)
     return true;
 }
 
+// One more segment, scope-relative, if any of it is inside the scope
+static bool add_seg(float ax, float ay, float bx, float by, uint8_t kind)
+{
+    if (!clip_to_scope(&ax, &ay, &bx, &by)) return true;
+    if (s_n_segs == s_cap_segs) {
+        int cap = s_cap_segs ? s_cap_segs * 2 : 1024;
+        aero_seg_t *grown = heap_caps_realloc(s_segs, cap * sizeof(*grown), MALLOC_CAP_SPIRAM);
+        if (!grown) return false;
+        s_segs = grown;
+        s_cap_segs = cap;
+    }
+    s_segs[s_n_segs++] = (aero_seg_t){
+        .x1 = (int16_t)lroundf(CX + ax), .y1 = (int16_t)lroundf(CY + ay),
+        .x2 = (int16_t)lroundf(CX + bx), .y2 = (int16_t)lroundf(CY + by),
+        .kind = kind,
+    };
+    return true;
+}
+
+// Dashed lines out along the main runway of each major airfield, both ways,
+// a dash a mile: where arrivals line up and departures climb out. OpenAIP
+// gives the runway's heading but not its thresholds, so they run through
+// the airfield's reference point, between any parallel runways.
+static void build_centrelines(float ppn)
+{
+    const int nm = RANGES[s_range_idx].nm;
+    for (int i = 0; i < s_aero->n_fields; i++) {
+        const aero_field_t *f = &s_aero->fields[i];
+        if (!f->major || f->runway_deg < 0) continue;
+        if (f->x * f->x + f->y * f->y > (float)(nm + CL_DASHES + 1) * (nm + CL_DASHES + 1)) continue;
+        const float fx = f->x * ppn, fy = -f->y * ppn;
+        const float ux = sinf(f->runway_deg * DEG2RAD) * ppn, uy = -cosf(f->runway_deg * DEG2RAD) * ppn;
+        for (int dir = -1; dir <= 1; dir += 2) {
+            for (int k = 1; k <= CL_DASHES; k++) {
+                const float d0 = dir * (float)k, d1 = dir * (k + 0.5f);
+                if (!add_seg(fx + ux * d0, fy + uy * d0, fx + ux * d1, fy + uy * d1, SEG_CENTRELINE)) return;
+            }
+        }
+    }
+}
+
 static void build_aero_segments(void)
 {
     s_n_segs = 0;
     s_segs_range = s_range_idx;
-    if (!s_aero || !settings()->show_airspace) return;
-
+    if (!s_aero) return;
+    const settings_t *set = settings();
     const float ppn = (float)R_SCOPE / RANGES[s_range_idx].nm;
+    if (set->show_airfields && set->show_centrelines && RANGES[s_range_idx].nm <= CL_MAX_RANGE) {
+        build_centrelines(ppn); // first, so the outlines draw over them
+    }
+    if (!set->show_airspace) return;
+
     for (int i = 0; i < s_aero->n_spaces; i++) {
         const aero_space_t *sp = &s_aero->spaces[i];
         const aero_pt_t *p = &s_aero->pts[sp->first];
@@ -419,22 +486,10 @@ static void build_aero_segments(void)
             const aero_pt_t *q = &p[k % sp->n];
             const float x = q->x * ppn, y = -q->y * ppn;
             if (k < sp->n && fabsf(x - lx) < AERO_DECIMATE_PX && fabsf(y - ly) < AERO_DECIMATE_PX) continue;
-            float ax = lx, ay = ly, bx = x, by = y;
+            const float ax = lx, ay = ly;
             lx = x;
             ly = y;
-            if (!clip_to_scope(&ax, &ay, &bx, &by)) continue;
-            if (s_n_segs == s_cap_segs) {
-                int cap = s_cap_segs ? s_cap_segs * 2 : 1024;
-                aero_seg_t *grown = heap_caps_realloc(s_segs, cap * sizeof(*grown), MALLOC_CAP_SPIRAM);
-                if (!grown) return;
-                s_segs = grown;
-                s_cap_segs = cap;
-            }
-            s_segs[s_n_segs++] = (aero_seg_t){
-                .x1 = (int16_t)lroundf(CX + ax), .y1 = (int16_t)lroundf(CY + ay),
-                .x2 = (int16_t)lroundf(CX + bx), .y2 = (int16_t)lroundf(CY + by),
-                .kind = sp->kind,
-            };
+            if (!add_seg(ax, ay, x, y, sp->kind)) return;
         }
     }
 }
@@ -480,8 +535,11 @@ static void layout(void)
     const settings_t *set = settings();
     s_order_n = 0;
     s_visible = 0;
+    s_in_range = 0;
     s_alert_n = 0;
     s_alert_best = -1;
+    s_emerg_n = 0;
+    s_emerg_best = -1;
     if (s_segs_range != s_range_idx) build_aero_segments();
 
     for (int i = 0; i < s_count; i++) {
@@ -509,6 +567,9 @@ static void layout(void)
         s->dist_nm = (float)hypot(dx, dy);
         s->brg_deg = (float)fmod(atan2(dx, dy) * 180.0 / M_PI + 360.0, 360.0);
         if (s->dist_nm > r->nm) continue;
+        s_in_range++;
+        // An emergency shows whatever the filter says
+        if (!a->emergency && filtered_out(a, set)) continue;
 
         s->x = (int16_t)lroundf(CX + dx * ppn);
         s->y = (int16_t)lroundf(CY - dy * ppn);
@@ -520,7 +581,12 @@ static void layout(void)
             s->alert = true;
             if (s_alert_best < 0 || s->dist_nm < s_scr[s_alert_best].dist_nm) s_alert_best = i;
             s_alert_n++;
-            note_alert(a, now);
+            note_alert(s_alerted, a, now);
+        }
+        if (a->emergency && set->emerg_alert) {
+            if (s_emerg_best < 0 || s->dist_nm < s_scr[s_emerg_best].dist_nm) s_emerg_best = i;
+            s_emerg_n++;
+            note_alert(s_emerg_alerted, a, now);
         }
 
         bool flagged = is_selected(a) || a->emergency || s->alert;
@@ -940,6 +1006,16 @@ static void set_text_if_changed(lv_obj_t *label, const char *text)
     if (strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
 }
 
+// "12 aircraft", or "12 of 30 aircraft" while the filter hides some
+static void format_count(char *buf, size_t n)
+{
+    if (s_visible < s_in_range) {
+        snprintf(buf, n, "%d of %d aircraft", s_visible, s_in_range);
+    } else {
+        snprintf(buf, n, "%d aircraft", s_visible);
+    }
+}
+
 static void update_status_label(void)
 {
     char text[96];
@@ -950,7 +1026,7 @@ static void update_status_label(void)
     // Count and feed in the bottom-right corner; under the scope only what
     // is going on (connecting, errors), and nothing once traffic flows
     if (s_last_update_us) {
-        snprintf(text, sizeof(text), "%d aircraft", s_visible);
+        format_count(text, sizeof(text));
         set_text_if_changed(s_count_lbl, text);
         snprintf(text, sizeof(text), "%s%s%s", s_feed, stale[0] ? "  " LV_SYMBOL_BULLET "  " : "", stale);
         set_text_if_changed(s_feed_lbl, text);
@@ -964,7 +1040,9 @@ static void update_status_label(void)
     } else if (!s_last_update_us) {
         strlcpy(text, "Waiting for data", sizeof(text));
     } else {
-        snprintf(text, sizeof(text), "%d aircraft  " LV_SYMBOL_BULLET "  %s%s%s", s_visible, s_feed,
+        char count[40];
+        format_count(count, sizeof(count));
+        snprintf(text, sizeof(text), "%s  " LV_SYMBOL_BULLET "  %s%s%s", count, s_feed,
                  stale[0] ? "  " LV_SYMBOL_BULLET "  " : "", stale);
     }
     set_text_if_changed(s_status_lbl, text);
@@ -1008,19 +1086,45 @@ static void update_clock(void)
     }
 }
 
-// The banner over the top of the scope while something is overhead
+static const char *emerg_name(uint8_t e)
+{
+    switch (e) {
+    case AC_EMERG_RADIO: return "RADIO FAILURE";
+    case AC_EMERG_HIJACK: return "HIJACK";
+    case AC_EMERG_MEDICAL: return "MEDICAL";
+    case AC_EMERG_FUEL: return "LOW FUEL";
+    case AC_EMERG_DOWNED: return "DOWNED";
+    default: return "EMERGENCY";
+    }
+}
+
+// The banner over the top of the scope: an emergency anywhere in range, in
+// red, before anything overhead, in amber
 static void update_alert(void)
 {
-    if (s_alert_best < 0) {
+    char more[16] = "", text[96];
+    if (s_emerg_best >= 0) {
+        const aircraft_t *a = &s_ac[s_emerg_best];
+        const bool code = strcmp(a->squawk, "7500") == 0 || strcmp(a->squawk, "7600") == 0 ||
+                          strcmp(a->squawk, "7700") == 0;
+        if (s_emerg_n > 1) snprintf(more, sizeof(more), "  +%d", s_emerg_n - 1);
+        snprintf(text, sizeof(text), LV_SYMBOL_WARNING "  %s%s%s  %s  %.1f NM%s", code ? a->squawk : "",
+                 code ? " " : "", emerg_name(a->emerg), ac_name(a), s_scr[s_emerg_best].dist_nm, more);
+        lv_obj_set_style_bg_color(s_alert_lbl, lv_color_hex(C_EMERG), 0);
+        lv_obj_set_style_text_color(s_alert_lbl, lv_color_hex(C_SELECT), 0);
+    } else if (s_alert_best >= 0) {
+        const aircraft_t *a = &s_ac[s_alert_best];
+        char alt[16];
+        fmt_thousands(alt, sizeof(alt), a->alt_ft);
+        if (s_alert_n > 1) snprintf(more, sizeof(more), "  +%d", s_alert_n - 1);
+        snprintf(text, sizeof(text), LV_SYMBOL_BELL "  %s  %s ft  %.1f NM%s", ac_name(a), alt,
+                 s_scr[s_alert_best].dist_nm, more);
+        lv_obj_set_style_bg_color(s_alert_lbl, lv_color_hex(C_WARN), 0);
+        lv_obj_set_style_text_color(s_alert_lbl, lv_color_hex(C_ALERT_INK), 0);
+    } else {
         lv_obj_set_hidden(s_alert_lbl, true);
         return;
     }
-    const aircraft_t *a = &s_ac[s_alert_best];
-    char alt[16], more[16] = "", text[80];
-    fmt_thousands(alt, sizeof(alt), a->alt_ft);
-    if (s_alert_n > 1) snprintf(more, sizeof(more), "  +%d", s_alert_n - 1);
-    snprintf(text, sizeof(text), LV_SYMBOL_BELL "  %s  %s ft  %.1f NM%s", ac_name(a), alt,
-             s_scr[s_alert_best].dist_nm, more);
     set_text_if_changed(s_alert_lbl, text);
     lv_obj_set_hidden(s_alert_lbl, false);
 }
@@ -1281,7 +1385,8 @@ static void on_card_click(lv_event_t *e)
 
 static void on_alert_click(lv_event_t *e)
 {
-    if (s_alert_best >= 0) select_aircraft(s_ac[s_alert_best].hex);
+    const int i = s_emerg_best >= 0 ? s_emerg_best : s_alert_best;
+    if (i >= 0) select_aircraft(s_ac[i].hex);
 }
 
 #ifdef HAS_LIST
@@ -1294,6 +1399,20 @@ static void on_row_click(lv_event_t *e)
 }
 #endif
 
+// The level for now, and the shield over the screen while it is off
+static void update_backlight(void)
+{
+    const bool asleep = backlight_update(s_alert_n > 0 || s_emerg_n > 0, lv_display_get_inactive_time(NULL));
+    lv_obj_set_hidden(s_sleep_shield, !asleep);
+}
+
+// A touch on the dark screen only wakes it: the shield takes it, so it
+// doesn't also pick an aircraft or change the range
+static void on_shield_pressed(lv_event_t *e)
+{
+    update_backlight(); // the touch has just reset the idle time: on at once
+}
+
 static void on_tick(lv_timer_t *t)
 {
     update_clock();
@@ -1302,7 +1421,7 @@ static void on_tick(lv_timer_t *t)
     }
     s_blink = !s_blink;
     refresh();
-    backlight_update(s_alert_n > 0);
+    update_backlight();
 }
 
 // Each segment is its own small line object so a frame only redraws the
@@ -1669,15 +1788,44 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     update_clock();
     update_range_label();
     refresh();
-    backlight_update(false);
+    s_sleep_shield = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_sleep_shield);
+    lv_obj_set_size(s_sleep_shield, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_clickable(s_sleep_shield, true);
+    lv_obj_add_event_cb(s_sleep_shield, on_shield_pressed, LV_EVENT_PRESSED, NULL);
+    lv_obj_set_hidden(s_sleep_shield, true);
+    update_backlight();
     lv_timer_create(on_tick, 1000, NULL);
     splash_show(); // last, over everything
 }
+
+#if CONFIG_LV_USE_SNAPSHOT
+static char s_fake_emerg[8]; // for development: this aircraft squawks 7700
+
+static void apply_fake_emergency(void)
+{
+    int i = s_fake_emerg[0] ? find_aircraft(s_fake_emerg) : -1;
+    if (i < 0) return;
+    s_ac[i].emergency = true;
+    s_ac[i].emerg = AC_EMERG_GENERAL;
+    strlcpy(s_ac[i].squawk, "7700", sizeof(s_ac[i].squawk));
+}
+
+void radar_ui_debug_emergency(const char *hex)
+{
+    strlcpy(s_fake_emerg, hex ? hex : "", sizeof(s_fake_emerg));
+    apply_fake_emergency();
+    refresh();
+}
+#endif
 
 void radar_ui_set_aircraft(const aircraft_t *list, int count, const char *feed)
 {
     if (count > AC_MAX) count = AC_MAX;
     memcpy(s_ac, list, count * sizeof(aircraft_t));
+#if CONFIG_LV_USE_SNAPSHOT
+    apply_fake_emergency();
+#endif
     if (s_trail_slot) trails_update(s_ac, count, s_trail_slot);
     s_count = count;
     s_last_update_us = esp_timer_get_time();
@@ -1704,7 +1852,8 @@ void radar_ui_apply_settings(const settings_t *old)
         update_range_label();
         if (s_on_range_change) s_on_range_change();
     }
-    if (s->show_airspace != old->show_airspace || s->show_airfields != old->show_airfields) {
+    if (s->show_airspace != old->show_airspace || s->show_airfields != old->show_airfields ||
+        s->show_centrelines != old->show_centrelines) {
         s_segs_range = -1;
         s_bg_range = -1;
     }

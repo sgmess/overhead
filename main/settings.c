@@ -3,6 +3,7 @@
 #include <math.h>
 #include <string.h>
 
+#include "aircraft.h"
 #include "board.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -65,6 +66,14 @@ void settings_defaults(settings_t *out)
         .alert_ft = 5000,
         .alert_sound = true,
         .show_vector = false,
+        .filter_min_ft = 0,
+        .filter_max_ft = FILTER_NO_CEILING,
+        .show_kinds = AC_KIND_ALL,
+        .emerg_alert = true,
+        .show_centrelines = true,
+        .sleep = false,
+        .sleep_from = 23 * 60,
+        .sleep_to = 7 * 60,
     };
 }
 
@@ -113,7 +122,11 @@ bool settings_valid(const settings_t *s)
            s->tag_fields >= 1 && s->tag_fields <= TAG_ALL &&
            s->trail_s >= 0 && s->trail_s <= 600 &&
            s->alert_nm10 >= 2 && s->alert_nm10 <= 100 &&
-           s->alert_ft >= 500 && s->alert_ft <= 20000;
+           s->alert_ft >= 500 && s->alert_ft <= 20000 &&
+           s->filter_min_ft >= 0 && s->filter_max_ft <= FILTER_NO_CEILING &&
+           s->filter_min_ft < s->filter_max_ft &&
+           s->show_kinds >= 1 && s->show_kinds <= AC_KIND_ALL &&
+           s->sleep_from >= 0 && s->sleep_from < 24 * 60 && s->sleep_to >= 0 && s->sleep_to < 24 * 60;
 }
 
 // Each getter leaves *v alone when the key is missing, so it keeps its default
@@ -186,6 +199,14 @@ void settings_load(void)
         get_int(h, "alert_ft", &s.alert_ft);
         get_bool(h, "alert_snd", &s.alert_sound);
         get_bool(h, "vector", &s.show_vector);
+        get_int(h, "flt_min", &s.filter_min_ft);
+        get_int(h, "flt_max", &s.filter_max_ft);
+        get_int(h, "kinds", &s.show_kinds);
+        get_bool(h, "emerg", &s.emerg_alert);
+        get_bool(h, "clines", &s.show_centrelines);
+        get_bool(h, "sleep", &s.sleep);
+        get_int(h, "sleep_from", &s.sleep_from);
+        get_int(h, "sleep_to", &s.sleep_to);
         nvs_close(h);
     }
 
@@ -245,6 +266,14 @@ static esp_err_t store(const settings_t *s)
     if (err == ESP_OK) err = nvs_set_i32(h, "alert_ft", s->alert_ft);
     if (err == ESP_OK) err = nvs_set_u8(h, "alert_snd", s->alert_sound);
     if (err == ESP_OK) err = nvs_set_u8(h, "vector", s->show_vector);
+    if (err == ESP_OK) err = nvs_set_i32(h, "flt_min", s->filter_min_ft);
+    if (err == ESP_OK) err = nvs_set_i32(h, "flt_max", s->filter_max_ft);
+    if (err == ESP_OK) err = nvs_set_i32(h, "kinds", s->show_kinds);
+    if (err == ESP_OK) err = nvs_set_u8(h, "emerg", s->emerg_alert);
+    if (err == ESP_OK) err = nvs_set_u8(h, "clines", s->show_centrelines);
+    if (err == ESP_OK) err = nvs_set_u8(h, "sleep", s->sleep);
+    if (err == ESP_OK) err = nvs_set_i32(h, "sleep_from", s->sleep_from);
+    if (err == ESP_OK) err = nvs_set_i32(h, "sleep_to", s->sleep_to);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     return err;

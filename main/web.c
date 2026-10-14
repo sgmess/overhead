@@ -17,6 +17,7 @@
 #include "openaip.h"
 #include "ota.h"
 #include "settings.h"
+#include "stats.h"
 #include "zones.h"
 
 static const char *TAG = "web";
@@ -144,6 +145,40 @@ static void take_bool(const cJSON *json, const char *key, bool *v)
     if (cJSON_IsBool(item)) *v = cJSON_IsTrue(item);
 }
 
+// "14:05" in local time
+static void add_time(cJSON *obj, const char *key, time_t t)
+{
+    struct tm tm;
+    localtime_r(&t, &tm);
+    char buf[8];
+    strftime(buf, sizeof(buf), "%H:%M", &tm);
+    cJSON_AddStringToObject(obj, key, buf);
+}
+
+static void add_record(cJSON *obj, const char *key, const stats_record_t *r)
+{
+    if (!r->value) return;
+    cJSON *rec = cJSON_AddObjectToObject(obj, key);
+    cJSON_AddStringToObject(rec, "name", r->name);
+    cJSON_AddNumberToObject(rec, "value", r->value);
+    add_time(rec, "at", r->at);
+}
+
+// Today's traffic; nothing until the clock is set
+static void add_stats(cJSON *json)
+{
+    stats_t st;
+    stats_get(&st);
+    if (!st.valid) return;
+    cJSON *o = cJSON_AddObjectToObject(json, "stats");
+    add_time(o, "since", st.since);
+    cJSON_AddNumberToObject(o, "seen", st.seen);
+    cJSON_AddNumberToObject(o, "military", st.military);
+    cJSON_AddItemToObject(o, "hours", cJSON_CreateIntArray(st.hours, 24));
+    add_record(o, "highest", &st.highest);
+    add_record(o, "fastest", &st.fastest);
+}
+
 // ---------------------------------------------------------------- pages
 
 static esp_err_t on_root(httpd_req_t *req)
@@ -192,6 +227,8 @@ static esp_err_t on_state(httpd_req_t *req)
     cJSON_AddBoolToObject(json, "can_rotate", BOARD_CAN_ROTATE);
     cJSON_AddBoolToObject(json, "has_speaker", BOARD_HAS_SPEAKER);
     cJSON_AddBoolToObject(json, "dimmed", backlight_night());
+    cJSON_AddBoolToObject(json, "asleep", backlight_asleep());
+    add_stats(json);
     cJSON_AddNumberToObject(json, "uptime_s", (double)(esp_timer_get_time() / 1000000));
     cJSON_AddNumberToObject(json, "heap_internal", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     cJSON_AddNumberToObject(json, "heap_psram", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
@@ -255,6 +292,14 @@ static esp_err_t on_state(httpd_req_t *req)
     cJSON_AddNumberToObject(set, "alert_ft", s->alert_ft);
     cJSON_AddBoolToObject(set, "alert_sound", s->alert_sound);
     cJSON_AddBoolToObject(set, "show_vector", s->show_vector);
+    cJSON_AddNumberToObject(set, "filter_min_ft", s->filter_min_ft);
+    cJSON_AddNumberToObject(set, "filter_max_ft", s->filter_max_ft);
+    cJSON_AddNumberToObject(set, "show_kinds", s->show_kinds);
+    cJSON_AddBoolToObject(set, "emerg_alert", s->emerg_alert);
+    cJSON_AddBoolToObject(set, "show_centrelines", s->show_centrelines);
+    cJSON_AddBoolToObject(set, "sleep", s->sleep);
+    cJSON_AddNumberToObject(set, "sleep_from", s->sleep_from);
+    cJSON_AddNumberToObject(set, "sleep_to", s->sleep_to);
 
     openaip_status_t oa;
     openaip_get_status(&oa);
@@ -348,6 +393,14 @@ static esp_err_t on_settings(httpd_req_t *req)
     take_int(json, "alert_ft", &s.alert_ft);
     take_bool(json, "alert_sound", &s.alert_sound);
     take_bool(json, "show_vector", &s.show_vector);
+    take_int(json, "filter_min_ft", &s.filter_min_ft);
+    take_int(json, "filter_max_ft", &s.filter_max_ft);
+    take_int(json, "show_kinds", &s.show_kinds);
+    take_bool(json, "emerg_alert", &s.emerg_alert);
+    take_bool(json, "show_centrelines", &s.show_centrelines);
+    take_bool(json, "sleep", &s.sleep);
+    take_int(json, "sleep_from", &s.sleep_from);
+    take_int(json, "sleep_to", &s.sleep_to);
     const cJSON *tz = cJSON_GetObjectItemCaseSensitive(json, "tz");
     if (cJSON_IsString(tz)) {
         if (strlen(tz->valuestring) >= sizeof(s.tz)) {
@@ -401,8 +454,9 @@ static esp_err_t on_settings(httpd_req_t *req)
 // For development, with LVGL's snapshot turned on in a local sdkconfig (it is
 // off in the defaults, so releases have none of this): the screen as raw
 // RGB565, X-Size giving width, height and stride, and the settings screen or
-// an aircraft's card (?hex=4010ee) opened without a finger. How the
-// invisible sliders were found.
+// an aircraft's card (?hex=4010ee) opened without a finger; &emerg=1 makes
+// that aircraft squawk 7700, &emerg=0 stops it. How the invisible sliders
+// were found.
 #include "lvgl.h"
 #include "radar_ui.h"
 #include "settings_ui.h"
@@ -429,11 +483,13 @@ static esp_err_t on_debug_settings(httpd_req_t *req)
 }
 static esp_err_t on_debug_select(httpd_req_t *req)
 {
-    char query[32], hex[8] = "";
+    char query[48], hex[8] = "", emerg[4] = "";
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
         httpd_query_key_value(query, "hex", hex, sizeof(hex));
+        httpd_query_key_value(query, "emerg", emerg, sizeof(emerg));
     }
     board_lock();
+    if (emerg[0]) radar_ui_debug_emergency(emerg[0] == '1' ? hex : NULL);
     radar_ui_select(hex[0] ? hex : NULL);
     board_unlock();
     return send_result(req, ESP_OK, NULL);

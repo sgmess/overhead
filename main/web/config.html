@@ -45,6 +45,10 @@ footer button{background:none;border:0;color:var(--dim);text-decoration:underlin
 .leaflet-container{background:#0b1a13}
 .pw{display:flex;gap:8px}
 a{color:var(--accent)}
+.bars{display:flex;align-items:flex-end;gap:2px;height:64px;margin-top:14px}
+.bars i{flex:1;min-height:1px;background:var(--accent);opacity:.75;border-radius:2px 2px 0 0}
+.bars i.now{opacity:1;box-shadow:0 0 6px rgba(70,255,168,.6)}
+.hours{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-top:4px}
 .legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:13px;color:var(--dim)}
 .legend span{display:inline-flex;align-items:center;gap:6px}
 .legend i{display:inline-block;width:18px;height:0;border-top:2px solid}
@@ -64,6 +68,15 @@ a{color:var(--accent)}
 <section class="card">
   <h2>Status</h2>
   <dl id="status"><dt>Loading</dt><dd>&hellip;</dd></dl>
+</section>
+
+<section class="card hidden" id="today-card">
+  <h2>Today</h2>
+  <dl id="today"></dl>
+  <div class="bars" id="hours" aria-label="Aircraft seen each hour"></div>
+  <div class="hours"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+  <p class="hint">Aircraft that came within the radar's range, each counted once; the bars are how many were seen in
+    each hour. Kept on the device until midnight, and started again by a restart or an update.</p>
 </section>
 
 <form id="form" novalidate>
@@ -115,8 +128,36 @@ a{color:var(--accent)}
   </section>
 
   <section class="card">
-    <h2>Overhead alert</h2>
-    <label class="check"><input type="checkbox" id="alert"> Alert when an aircraft is close and low</label>
+    <h2>Filter</h2>
+    <label>Show</label>
+    <div class="checks" id="show_kinds">
+      <label class="check"><input type="checkbox" value="1"> Airliners and other large aircraft</label>
+      <label class="check"><input type="checkbox" value="2"> Light aircraft, gliders and microlights</label>
+      <label class="check"><input type="checkbox" value="4"> Helicopters</label>
+      <label class="check"><input type="checkbox" value="8"> Other, or not saying</label>
+    </div>
+    <div class="row">
+      <div><label for="filter_min_ft">Hide below</label>
+        <select id="filter_min_ft">
+          <option value="0">Nothing</option><option value="1000">1,000 ft</option><option value="2000">2,000 ft</option>
+          <option value="3000">3,000 ft</option><option value="5000">5,000 ft</option><option value="10000">10,000 ft</option>
+          <option value="20000">20,000 ft</option>
+        </select></div>
+      <div><label for="filter_max_ft">Hide above</label>
+        <select id="filter_max_ft">
+          <option value="60000">Nothing</option><option value="3000">3,000 ft</option><option value="5000">5,000 ft</option>
+          <option value="10000">10,000 ft</option><option value="15000">15,000 ft</option><option value="20000">20,000 ft</option>
+          <option value="30000">30,000 ft</option>
+        </select></div>
+    </div>
+    <p class="hint">The kind of aircraft is what its transponder says it is; many military aircraft, and some others,
+      don't say. The altitude limits leave aircraft on the ground, and any without an altitude, alone.
+      An aircraft in an emergency always shows. While anything is hidden the count reads "12 of 30 aircraft".</p>
+  </section>
+
+  <section class="card">
+    <h2>Alerts</h2>
+    <label class="check"><input type="checkbox" id="alert"> Overhead: alert when an aircraft is close and low</label>
     <div class="row">
       <div><label for="alert_nm10">Within</label>
         <select id="alert_nm10">
@@ -130,9 +171,13 @@ a{color:var(--accent)}
           <option value="15000">15,000 ft</option><option value="20000">20,000 ft</option>
         </select></div>
     </div>
+    <p class="hint">The aircraft blinks amber and a banner names it; tap the banner for its card.
+      Altitude is pressure altitude, so near an airport set the ceiling with that in mind.</p>
+    <label class="check"><input type="checkbox" id="emerg_alert"> Emergency: alert when any aircraft in range is in an emergency</label>
+    <p class="hint">Squawk 7700 (emergency), 7600 (radio failure) or 7500 (hijack), or an emergency the aircraft reports
+      over ADS-B (medical, low fuel). A red banner gives the code and the aircraft, ahead of any overhead alert.</p>
     <label class="check hidden" id="alert-sound-row"><input type="checkbox" id="alert_sound"> Chime</label>
-    <p class="hint">The aircraft blinks amber and a banner names it; tap the banner for its card. The screen comes up to
-      full brightness at night while it lasts. Altitude is pressure altitude, so near an airport set the ceiling with that in mind.</p>
+    <p class="hint">Each aircraft chimes once. The screen comes up to full brightness at night while an alert lasts.</p>
   </section>
 
   <section class="card">
@@ -142,6 +187,8 @@ a{color:var(--accent)}
       created on openaip.net under your profile's API clients.</p>
     <label class="check"><input type="checkbox" id="show_airspace"> Airspace</label>
     <label class="check"><input type="checkbox" id="show_airfields"> Airfields</label>
+    <label class="check"><input type="checkbox" id="show_centrelines"> Runway centrelines: dashed lines out from the main runway of
+      each airport, a dash a mile to 9.5 NM, where arrivals line up and departures climb out</label>
     <label for="openaip_key">OpenAIP API key</label>
     <div class="pw">
       <input id="openaip_key" type="password" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false">
@@ -194,6 +241,13 @@ a{color:var(--accent)}
     </div>
     <p class="hint" id="dim-hint">Sunset and sunrise are worked out for the radar centre. Moving a slider shows that level on the
       screen for a few seconds.</p>
+    <label class="check"><input type="checkbox" id="sleep"> Screen off overnight</label>
+    <div class="row" id="sleep-times">
+      <div><label for="sleep_from">From</label><input type="time" id="sleep_from"></div>
+      <div><label for="sleep_to">Until</label><input type="time" id="sleep_to"></div>
+    </div>
+    <p class="hint" id="sleep-hint">The backlight goes off two minutes after the screen was last touched. A touch turns it back
+      on, and does nothing else. Alerts don't wake it or chime while it's off.</p>
 
     <label for="clock">Clock</label>
     <select id="clock">
@@ -265,9 +319,9 @@ a{color:var(--accent)}
 <script>
 const $ = id => document.getElementById(id);
 const FIELDS = ['range_idx', 'max_labels', 'feed', 'fetch_s', 'rotation', 'batt_shutdown_mv', 'dim_mode', 'clock',
-                'trail_s', 'alert_nm10', 'alert_ft'];
-const CHECKS = ['sweep', 'show_ground', 'batt_auto_off', 'show_airspace', 'show_airfields', 'show_military', 'show_route',
-                'alert', 'alert_sound', 'show_vector'];
+                'trail_s', 'alert_nm10', 'alert_ft', 'filter_min_ft', 'filter_max_ft'];
+const CHECKS = ['sleep', 'sweep', 'show_ground', 'batt_auto_off', 'show_airspace', 'show_airfields', 'show_military', 'show_route',
+                'alert', 'alert_sound', 'show_vector', 'emerg_alert', 'show_centrelines'];
 const SLIDERS = ['brightness', 'dim_brightness'];
 let map, pin, keyCleared = false;
 // The fields follow the device (a change on its own settings screen, say)
@@ -354,18 +408,49 @@ function showStatus(j) {
     : o.state === 'loading' ? 'Loading from OpenAIP'
     : o.state === 'error' ? 'Failed: ' + o.detail
     : o.detail || 'Off']);
-  const dl = $('status');
-  dl.textContent = '';
-  for (const [k, v] of rows) {
-    const dt = document.createElement('dt'), dd = document.createElement('dd');
-    dt.textContent = k;
-    dd.textContent = v; // the SSID is anyone's choice: never as HTML
-    dl.append(dt, dd);
-  }
+  rows.push(['Screen', j.asleep ? 'Off for the night; a touch wakes it' : j.dimmed ? 'Dimmed for the night' : 'On']);
+  fillList($('status'), rows);
+  showToday(j.stats);
   $('wifi').textContent = 'Connected to ' + j.settings.ssid + '.';
   $('fw').textContent = 'Firmware ' + j.firmware;
   $('fw-running').textContent = 'Running ' + j.firmware + ' (' + j.project + '). Updates come from the latest release of ' +
     j.update_repo + ' on GitHub.';
+}
+
+// Label and value pairs into a <dl>, as text: the SSID and callsigns are
+// anyone's choice, so never as HTML
+function fillList(dl, rows) {
+  dl.textContent = '';
+  for (const [k, v] of rows) {
+    const dt = document.createElement('dt'), dd = document.createElement('dd');
+    dt.textContent = k;
+    dd.textContent = v;
+    dl.append(dt, dd);
+  }
+}
+
+function showToday(st) {
+  $('today-card').classList.toggle('hidden', !st);
+  if (!st) return;
+  const n = v => v.toLocaleString('en-GB');
+  let busiest = 0;
+  for (let h = 1; h < 24; h++) if (st.hours[h] > st.hours[busiest]) busiest = h;
+  const hh = h => String(h).padStart(2, '0') + ':00';
+  const rows = [['Aircraft seen', n(st.seen) + (st.since !== '00:00' ? ' (since ' + st.since + ')' : '')],
+                ['Military', n(st.military)]];
+  if (st.hours[busiest]) rows.push(['Busiest hour', hh(busiest) + '–' + hh(busiest + 1) + ', ' + n(st.hours[busiest]) + ' aircraft']);
+  if (st.highest) rows.push(['Highest', st.highest.name + ', ' + n(st.highest.value) + ' ft at ' + st.highest.at]);
+  if (st.fastest) rows.push(['Fastest', st.fastest.name + ', ' + n(st.fastest.value) + ' kt at ' + st.fastest.at]);
+  fillList($('today'), rows);
+  const bars = $('hours'), top = Math.max(1, ...st.hours), now = new Date().getHours();
+  bars.textContent = '';
+  st.hours.forEach((v, h) => {
+    const i = document.createElement('i');
+    i.style.height = (100 * v / top) + '%';
+    i.title = hh(h) + ': ' + v;
+    if (h === now) i.className = 'now';
+    bars.append(i);
+  });
 }
 
 function ago(s) {
@@ -437,6 +522,11 @@ function showDim() {
   $('dim-level').classList.toggle('hidden', mode === 0);
 }
 
+function showSleep() {
+  $('sleep-times').classList.toggle('hidden', !$('sleep').checked);
+  $('sleep-hint').classList.toggle('hidden', !$('sleep').checked);
+}
+
 function showTz() {
   $('tz').classList.toggle('hidden', $('tz-select').value !== 'custom');
 }
@@ -483,8 +573,12 @@ function fillFields(j) {
   for (const c of CHECKS) $(c).checked = s[c];
   for (const id of SLIDERS) { $(id).value = s[id]; showSlider(id); }
   for (const box of $('tag_fields').querySelectorAll('input')) box.checked = (s.tag_fields & +box.value) !== 0;
+  for (const box of $('show_kinds').querySelectorAll('input')) box.checked = (s.show_kinds & +box.value) !== 0;
   $('dim_from').value = hhmm(s.dim_from);
   $('dim_to').value = hhmm(s.dim_to);
+  $('sleep_from').value = hhmm(s.sleep_from);
+  $('sleep_to').value = hhmm(s.sleep_to);
+  showSleep();
   showDim();
   loadTz(s.tz);
   $('batt_shutdown_mv').disabled = !s.batt_auto_off;
@@ -592,6 +686,7 @@ $('ota-install').onclick = async () => {
 
 $('batt_auto_off').onchange = e => { $('batt_shutdown_mv').disabled = !e.target.checked; };
 $('dim_mode').onchange = showDim;
+$('sleep').addEventListener('change', showSleep);
 $('tz-select').onchange = showTz;
 for (const id of SLIDERS) $(id).oninput = () => preview(id);
 $('lat').onchange = $('lon').onchange = placePin;
@@ -630,6 +725,16 @@ $('form').onsubmit = async e => {
     msg.textContent = 'Pick at least one thing for the data tags to show.';
     return;
   }
+  let kinds = 0;
+  for (const box of $('show_kinds').querySelectorAll('input')) if (box.checked) kinds |= +box.value;
+  if (!kinds) {
+    msg.textContent = 'Pick at least one kind of aircraft to show.';
+    return;
+  }
+  if (+$('filter_min_ft').value >= +$('filter_max_ft').value) {
+    msg.textContent = 'Hide below has to be lower than hide above.';
+    return;
+  }
   const tz = $('tz-select').value === 'custom' ? $('tz').value.trim() : $('tz-select').value;
   if (!/^[A-Za-z0-9<>+\-,:./]*$/.test(tz) || tz.length > 47) {
     msg.textContent = 'The timezone is a POSIX TZ string, e.g. GMT0BST,M3.5.0/1,M10.5.0.';
@@ -639,12 +744,18 @@ $('form').onsubmit = async e => {
     msg.textContent = 'Set both dimming times, please.';
     return;
   }
-  const body = {lat, lon, tag_fields: tags, tz};
+  if (!$('sleep_from').value || !$('sleep_to').value) {
+    msg.textContent = 'Set both screen-off times, please.';
+    return;
+  }
+  const body = {lat, lon, tag_fields: tags, show_kinds: kinds, tz};
   for (const f of FIELDS) body[f] = +$(f).value;
   for (const c of CHECKS) body[c] = $(c).checked;
   for (const id of SLIDERS) body[id] = +$(id).value;
   body.dim_from = minutes($('dim_from').value);
   body.dim_to = minutes($('dim_to').value);
+  body.sleep_from = minutes($('sleep_from').value);
+  body.sleep_to = minutes($('sleep_to').value);
   const key = $('openaip_key').value.trim();
   if (key || keyCleared) body.openaip_key = key; // otherwise the saved one stays
   body.openaip_countries = $('openaip_countries').value;
