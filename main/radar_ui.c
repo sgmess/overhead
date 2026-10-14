@@ -29,6 +29,8 @@
 #define SCR_W BSP_LCD_H_RES
 #define CX (SCR_W / 2)
 #define CY (SCR_W / 2)
+#define CARD_OFFSET (SCR_W * 18 / 100) // round boards: the card's centre from the scope's
+#define CARD_FLIP 16                   // and how far past the middle moves it
 #define DEG2RAD ((float)M_PI / 180.0f)
 
 // Sizes per board. They follow physical size, not resolution: pixel pitch is
@@ -274,7 +276,11 @@ enum { VIEW_RADAR, VIEW_BIG, VIEW_LIST };
 #define VIEW_COUNT 3
 #endif
 static int s_view = VIEW_RADAR;
-static char s_big_pick[8]; // picked from the round boards' list, for the big view only
+// One that has just started alerting, which the big view shows ahead of the
+// selection until it stops or a tap moves on
+static char s_big_auto[8];
+static bool s_big_auto_emerg;
+static char s_big_hex[8]; // the one it shows
 static int64_t s_last_update_us;
 static char s_feed[16];
 static char s_status[64];
@@ -400,8 +406,9 @@ static bool is_military(const aircraft_t *a)
 
 // Chime for an aircraft that has just started alerting, unless it was
 // alerting a moment ago (wandering in and out at the edge, say)
-static void note_alert(alert_memory_t *mem, const aircraft_t *a, int64_t now)
+static bool note_alert(alert_memory_t *mem, const aircraft_t *a, int64_t now)
 {
+    bool fresh = false;
     int slot = -1, oldest = 0;
     for (int k = 0; k < ALERT_MEMORY; k++) {
         if (strcmp(mem[k].hex, a->hex) == 0) {
@@ -411,6 +418,7 @@ static void note_alert(alert_memory_t *mem, const aircraft_t *a, int64_t now)
         if (mem[k].seen_us < mem[oldest].seen_us) oldest = k;
     }
     if (slot < 0 || now - mem[slot].seen_us > ALERT_REARM_S * 1000000LL) {
+        fresh = true;
         if (settings()->alert_sound && !backlight_asleep()) board_chime(); // no chimes in the night
         if (slot < 0) {
             slot = oldest;
@@ -418,6 +426,14 @@ static void note_alert(alert_memory_t *mem, const aircraft_t *a, int64_t now)
         }
     }
     mem[slot].seen_us = now;
+    return fresh;
+}
+
+// The big view moves to an aircraft that has just started alerting
+static void big_auto(const char *hex, bool emerg)
+{
+    strlcpy(s_big_auto, hex, sizeof(s_big_auto));
+    s_big_auto_emerg = emerg;
 }
 
 // Hidden by the display filter: not one of the kinds chosen, or airborne
@@ -620,12 +636,13 @@ static void layout(void)
             s->alert = true;
             if (s_alert_best < 0 || s->dist_nm < s_scr[s_alert_best].dist_nm) s_alert_best = i;
             s_alert_n++;
-            note_alert(s_alerted, a, now);
+            // A new emergency on the big view isn't pushed aside by traffic overhead
+            if (note_alert(s_alerted, a, now) && !(s_big_auto_emerg && s_big_auto[0])) big_auto(a->hex, false);
         }
         if (a->emergency && set->emerg_alert) {
             if (s_emerg_best < 0 || s->dist_nm < s_scr[s_emerg_best].dist_nm) s_emerg_best = i;
             s_emerg_n++;
-            note_alert(s_emerg_alerted, a, now);
+            if (note_alert(s_emerg_alerted, a, now)) big_auto(a->hex, true);
         }
 
         bool flagged = is_selected(a) || a->emergency || s->alert;
@@ -1291,13 +1308,11 @@ static void fmt_vs(const aircraft_t *a, char *out, size_t n)
 static void update_card(void)
 {
     int i = s_sel_hex[0] ? find_aircraft(s_sel_hex) : -1;
-#ifndef HAS_LIST
-    // On the round boards it lies over the scope: not over the other views
+    // Only with the scope: the other views show their own
     if (s_view != VIEW_RADAR) {
         lv_obj_set_hidden(s_card, true);
         return;
     }
-#endif
     if (i < 0) {
         s_sel_hex[0] = '\0';
         lv_obj_set_hidden(s_card, true);
@@ -1306,6 +1321,15 @@ static void update_card(void)
     const aircraft_t *a = &s_ac[i];
     const ac_screen_t *s = &s_scr[i];
     char alt[24], vs[24];
+#ifndef HAS_LIST
+    // Over the half of the scope the aircraft isn't in, so it stays in view;
+    // on the Tab5 the panel places it. A margin, so one crossing the middle
+    // doesn't flip it back and forth.
+    static bool top;
+    if (s->y > CY + CARD_FLIP) top = true;
+    if (s->y < CY - CARD_FLIP) top = false;
+    lv_obj_align(s_card, LV_ALIGN_CENTER, 0, top ? -CARD_OFFSET : CARD_OFFSET);
+#endif
 
     lv_label_set_text(s_card_title, ac_name(a));
     const country_t *country = country_for_hex(a->hex);
@@ -1363,21 +1387,37 @@ static void fmt_row(const aircraft_t *a, const ac_screen_t *s, char cells[6][16]
     snprintf(cells[5], sizeof(cells[5]), "%03.0f\xC2\xB0", s->brg_deg);
 }
 
-// The callsign's colour in a list: picked, military, or by altitude
-static lv_color_t row_color(const aircraft_t *a)
+// A list row's colours, set only when they change (shown keeps them): an
+// emergency red and anything overhead amber all the way across, or else the
+// callsign picked out, military, or by altitude
+static void color_row(lv_obj_t *const cells[6], lv_color_t shown[2], const aircraft_t *a, const ac_screen_t *s,
+                      bool sel)
 {
-    return is_selected(a) ? lv_color_hex(C_SELECT) : is_military(a) ? lv_color_hex(C_MIL) : alt_color(a);
+    lv_color_t c[2] = {sel ? lv_color_hex(C_SELECT) : is_military(a) ? lv_color_hex(C_MIL) : alt_color(a),
+                       lv_color_hex(C_TEXT)};
+    if (a->emergency || s->alert) c[0] = c[1] = lv_color_hex(a->emergency ? C_EMERG : C_WARN);
+    for (int p = 0; p < 2; p++) {
+        if (lv_color_eq(c[p], shown[p])) continue;
+        for (int k = p; k < (p ? 6 : 1); k++) lv_obj_set_style_text_color(cells[k], c[p], 0);
+        shown[p] = c[p];
+    }
 }
 
 static const char *const LIST_HEAD[6] = {"CALLSIGN", "TYPE", "ALT", "GS KT", "NM", "BRG"};
 
 #ifdef HAS_LIST
+// The row to mark: the selection, or with the big view up the one it shows
+static bool list_marked(const aircraft_t *a)
+{
+    return s_view == VIEW_BIG ? strcmp(a->hex, s_big_hex) == 0 : is_selected(a);
+}
+
 // At 1 Hz across a whole table, redrawing every label would be most of the
 // panel, so it only sets what changed.
 static void update_list(void)
 {
     static bool row_sel[LIST_ROWS_MAX];
-    static lv_color_t row_colors[LIST_ROWS_MAX];
+    static lv_color_t row_colors[LIST_ROWS_MAX][2];
     char cells[6][16];
 
     for (int r = 0; r < s_panel->list_rows; r++) {
@@ -1388,8 +1428,7 @@ static void update_list(void)
         }
         const aircraft_t *a = &s_ac[s_order[r]];
         const ac_screen_t *s = &s_scr[s_order[r]];
-        const bool sel = is_selected(a);
-        const lv_color_t color = row_color(a);
+        const bool sel = list_marked(a);
         strlcpy(s_row_hex[r], a->hex, sizeof(s_row_hex[r]));
         lv_obj_set_hidden(s_rows[r], false);
 
@@ -1397,10 +1436,7 @@ static void update_list(void)
             lv_obj_set_style_bg_opa(s_rows[r], sel ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
             row_sel[r] = sel;
         }
-        if (!lv_color_eq(color, row_colors[r])) {
-            lv_obj_set_style_text_color(s_cells[r][0], color, 0);
-            row_colors[r] = color;
-        }
+        color_row(s_cells[r], row_colors[r], a, s, sel);
         fmt_row(a, s, cells);
         for (int k = 0; k < 6; k++) set_text_if_changed(s_cells[r][k], cells[k]);
     }
@@ -1409,9 +1445,9 @@ static void update_list(void)
 
 // ---------------------------------------------------------------- big view
 //
-// One aircraft in large type, for across the room: an emergency, then
-// anything overhead, then one picked on the scope or the list, then the
-// nearest airborne (a tap steps to the next). A swipe swaps it with the
+// One aircraft in large type, for across the room: one that has just started
+// alerting (an emergency, or overhead), then the selection, then the nearest
+// airborne. A tap selects the next nearest, so it stays picked on the scope. A swipe swaps it with the
 // scope, in the same square; on the Tab5 the list stays beside it.
 
 #define BIG_STEPS 10        // a tap steps through the nearest this many
@@ -1420,8 +1456,6 @@ static void update_list(void)
 static lv_obj_t *s_big, *s_big_flag, *s_big_logo_box, *s_big_logo, *s_big_call, *s_big_airline;
 static lv_obj_t *s_big_alt, *s_big_vs, *s_big_pointer, *s_big_gs, *s_big_trk, *s_big_where;
 static lv_obj_t *s_big_route, *s_big_places, *s_big_sub, *s_big_foot, *s_big_body, *s_big_empty;
-static int s_big_step;      // 0 the nearest, 1 the next...
-static char s_big_hex[8];   // the one shown
 static char s_big_iso[3], s_big_icao[4] = "-";
 static float s_big_ptr_rad;
 static lv_color_t s_big_ptr_color;
@@ -1440,43 +1474,54 @@ static const char *ordinal(int k)
     return N[k < BIG_STEPS ? k : BIG_STEPS - 1];
 }
 
-// Which aircraft, and the footer that says why
-static int big_target(char *why, size_t n)
+// The airborne aircraft nearest first, as many as a tap steps through, and
+// how many there are in all
+static int big_near(int near[BIG_STEPS], int *n_airborne)
 {
-    if (s_emerg_best >= 0) {
-        strlcpy(why, "Emergency", n);
-        return s_emerg_best;
-    }
-    if (s_alert_best >= 0) {
-        strlcpy(why, "Overhead", n);
-        return s_alert_best;
-    }
-    for (int k = 0; k < 2; k++) {
-        const char *hex = k == 0 ? s_big_pick : s_sel_hex;
-        int i = hex[0] ? find_aircraft(hex) : -1;
-        if (i >= 0 && s_scr[i].visible) {
-            strlcpy(why, "Picked  " LV_SYMBOL_BULLET "  tap for the nearest", n);
-            return i;
-        }
-    }
-    // Airborne, nearest first: s_order is sorted by distance
-    int near[BIG_STEPS], n_near = 0, n_airborne = 0;
-    for (int k = 0; k < s_order_n; k++) {
+    int n_near = 0;
+    *n_airborne = 0;
+    for (int k = 0; k < s_order_n; k++) { // s_order is sorted by distance
         const int i = s_order[k];
         if (!airborne(&s_ac[i])) continue;
         if (n_near < BIG_STEPS) near[n_near++] = i;
-        n_airborne++;
+        (*n_airborne)++;
+    }
+    return n_near;
+}
+
+// Which aircraft, and the footer that says why
+static int big_target(char *why, size_t n)
+{
+    if (s_big_auto[0]) {
+        const int i = find_aircraft(s_big_auto);
+        if (i >= 0 && s_scr[i].visible && (s_big_auto_emerg ? s_ac[i].emergency : s_scr[i].alert)) {
+            snprintf(why, n, "%s  " LV_SYMBOL_BULLET "  tap for the next", s_big_auto_emerg ? "Emergency" : "Overhead");
+            return i;
+        }
+        s_big_auto[0] = '\0'; // it has passed
+    }
+    int near[BIG_STEPS], n_airborne;
+    const int n_near = big_near(near, &n_airborne);
+    const int sel = s_sel_hex[0] ? find_aircraft(s_sel_hex) : -1;
+    if (sel >= 0 && s_scr[sel].visible) {
+        int k = 0;
+        while (k < n_near && near[k] != sel) k++;
+        if (k < n_near) {
+            snprintf(why, n, "%s of %d  " LV_SYMBOL_BULLET "  tap for the next", ordinal(k), n_airborne);
+        } else {
+            strlcpy(why, "Selected  " LV_SYMBOL_BULLET "  tap for the nearest", n);
+        }
+        return sel;
     }
     if (!n_near) return -1;
-    const int step = s_big_step % n_near;
-    int i = near[step];
+    int i = near[0];
     // Two at about the same distance shouldn't make it flicker between them
     const int held = s_big_hex[0] ? find_aircraft(s_big_hex) : -1;
-    if (step == 0 && held >= 0 && held != i && s_scr[held].visible && airborne(&s_ac[held]) &&
+    if (held >= 0 && held != i && s_scr[held].visible && airborne(&s_ac[held]) &&
         s_scr[held].dist_nm <= s_scr[i].dist_nm + BIG_HOLD_NM) {
         i = held;
     }
-    snprintf(why, n, "%s of %d  " LV_SYMBOL_BULLET "  tap for the next", ordinal(step), n_airborne);
+    snprintf(why, n, "Nearest of %d  " LV_SYMBOL_BULLET "  tap for the next", n_airborne);
     return i;
 }
 
@@ -1579,7 +1624,7 @@ static char s_rl_hex[RL_ROWS][8];
 static void update_rlist(void)
 {
     if (s_view != VIEW_LIST) return;
-    static lv_color_t colors[RL_ROWS];
+    static lv_color_t colors[RL_ROWS][2];
     static bool sel_shown[RL_ROWS];
     char cells[6][16], title[48];
     format_count(title, sizeof(title));
@@ -1598,11 +1643,7 @@ static void update_rlist(void)
             lv_obj_set_style_bg_opa(s_rl_rows[r], sel ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
             sel_shown[r] = sel;
         }
-        const lv_color_t c = a->emergency ? lv_color_hex(C_EMERG) : row_color(a);
-        if (!lv_color_eq(c, colors[r])) {
-            lv_obj_set_style_text_color(s_rl_cells[r][0], c, 0);
-            colors[r] = c;
-        }
+        color_row(s_rl_cells[r], colors[r], a, &s_scr[s_order[r]], sel);
         fmt_row(a, &s_scr[s_order[r]], cells);
         for (int k = 0; k < 6; k++) set_text_if_changed(s_rl_cells[r][k], cells[k]);
     }
@@ -1614,12 +1655,12 @@ static void refresh(void)
     layout();
     if (s_bg_range != s_range_idx) render_background();
     update_card();
+    update_big(); // before the list, which marks the one it shows
 #ifdef HAS_LIST
     update_list();
 #endif
     update_status_label();
     update_alert();
-    update_big();
 #ifndef HAS_LIST
     update_rlist();
 #endif
@@ -1692,8 +1733,13 @@ static void show_sweep(bool on)
 static void show_view(int view)
 {
     s_view = view;
-    s_big_step = 0;
-    s_big_hex[0] = s_big_pick[0] = '\0';
+    s_big_hex[0] = s_big_auto[0] = '\0';
+    // Anything alerting is the first thing the big view shows
+    if (s_emerg_best >= 0) {
+        big_auto(s_ac[s_emerg_best].hex, true);
+    } else if (s_alert_best >= 0) {
+        big_auto(s_ac[s_alert_best].hex, false);
+    }
     lv_obj_set_hidden(s_big, view != VIEW_BIG);
     lv_obj_set_hidden(s_scope, view != VIEW_RADAR); // and its drawing, every second, with it
 #ifndef HAS_LIST
@@ -1737,18 +1783,28 @@ static void on_gesture(lv_event_t *e)
     if (d == LV_DIR_RIGHT) show_view((s_view + VIEW_COUNT - 1) % VIEW_COUNT);
 }
 
-// A tap steps to the next nearest; after one was picked, back to the nearest
+// Open the big view on hex, selected, ahead of anything alerting
+static void open_big(const char *hex)
+{
+    char copy[sizeof(s_sel_hex)]; // hex may be s_sel_hex itself
+    strlcpy(copy, hex, sizeof(copy));
+    if (s_view != VIEW_BIG) show_view(VIEW_BIG);
+    s_big_auto[0] = '\0';
+    select_aircraft(copy);
+}
+
+// A tap selects the next nearest after the one shown, back round to the nearest
 static void on_big_click(lv_event_t *e)
 {
     if (swiped()) return;
-    if (s_big_pick[0] || s_sel_hex[0]) {
-        s_big_pick[0] = s_sel_hex[0] = '\0';
-        s_big_step = 0;
-    } else {
-        s_big_step = (s_big_step + 1) % BIG_STEPS;
+    int near[BIG_STEPS], n_airborne;
+    const int n_near = big_near(near, &n_airborne);
+    if (!n_near) return;
+    int next = 0;
+    for (int k = 0; k < n_near; k++) {
+        if (strcmp(s_ac[near[k]].hex, s_big_hex) == 0) next = (k + 1) % n_near;
     }
-    s_big_hex[0] = '\0';
-    refresh();
+    open_big(s_ac[near[next]].hex);
 }
 
 static void on_big_pointer_draw(lv_event_t *e)
@@ -1864,9 +1920,7 @@ static void on_rl_row_click(lv_event_t *e)
     if (swiped()) return;
     const int r = (int)(intptr_t)lv_event_get_user_data(e);
     if (!s_rl_hex[r][0]) return;
-    show_view(VIEW_BIG);
-    strlcpy(s_big_pick, s_rl_hex[r], sizeof(s_big_pick)); // not a selection: no card back on the scope
-    refresh();
+    open_big(s_rl_hex[r]);
 }
 
 static void create_rlist(lv_obj_t *scr)
@@ -1924,9 +1978,10 @@ static void start_trails(void)
     if (!s_trail_xy) s_trail_xy = heap_caps_calloc(AC_MAX, sizeof(*s_trail_xy), MALLOC_CAP_SPIRAM);
 }
 
+// The card opens its aircraft in the big view
 static void on_card_click(lv_event_t *e)
 {
-    select_aircraft(NULL);
+    if (s_sel_hex[0]) open_big(s_sel_hex);
 }
 
 static void on_alert_click(lv_event_t *e)
@@ -1941,6 +1996,7 @@ static void on_row_click(lv_event_t *e)
 {
     int r = (int)(intptr_t)lv_event_get_user_data(e);
     if (!s_row_hex[r][0]) return;
+    if (s_view == VIEW_BIG) s_big_auto[0] = '\0'; // what was tapped, ahead of an alert
     select_aircraft(strcmp(s_row_hex[r], s_sel_hex) == 0 ? NULL : s_row_hex[r]);
 }
 #endif
@@ -2002,10 +2058,6 @@ static void create_card(lv_obj_t *parent)
 {
     s_card = lv_obj_create(parent);
     lv_obj_set_size(s_card, CARD_W, CARD_H + CARD_LINE);
-#ifndef HAS_LIST
-    // Over the lower half of the scope; on the Tab5 the panel places it
-    lv_obj_align(s_card, LV_ALIGN_CENTER, 0, SCR_W * 18 / 100);
-#endif
     lv_obj_set_style_bg_color(s_card, lv_color_hex(0x0a1813), 0);
     lv_obj_set_style_bg_opa(s_card, LV_OPA_90, 0);
     lv_obj_set_style_border_color(s_card, lv_color_hex(C_TICK), 0);
@@ -2336,7 +2388,9 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     // Hidden until the first reading, so it never shows on a board without one.
     create_battery(s_scope);
 #else
-    create_card(scr);
+    // On the scope, so the alert banner can stay in front of it
+    create_card(s_scope);
+    lv_obj_move_to_index(s_card, lv_obj_get_index(s_alert_lbl));
 #endif
     create_setup(s_scope);
 

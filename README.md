@@ -63,24 +63,27 @@ gives way at once to the WiFi setup portal.
 | --- | --- |
 | An aircraft | Opens its card: flag, flight number, airline and logo, registration, type, route, altitude, V/S, speed, track, squawk, range and bearing |
 | The alert banner | Opens the card of the nearest aircraft that set it off |
+| The card | Opens that aircraft in the big view |
 | Empty scope, card open | Closes the card |
 | Empty scope | Next range: 5, 10, 25, 50, 100 NM |
-| A list row (Tab5) | Selects that aircraft; tap it again to clear |
+| A list row (Tab5) | Selects that aircraft (in the big view too, with the big view up); tap it again to clear |
 | Long press on the scope | Opens the settings screen |
 | Swipe left or right | The next view, or the one before: scope, big view, and on the round boards a list |
-| The big view | The next nearest aircraft; after one was picked, the nearest again |
-| A row of the round boards' list | That aircraft in the big view |
+| The big view | Selects the next nearest aircraft, back round to the nearest |
+| A row of the round boards' list | Selects that aircraft and opens it in the big view |
 
 The big view shows one aircraft in large type, for across the room: flag and
 logo, callsign, flight number and airline, altitude in its scope colour with
 which way it is going, speed with an arrow along its track (north up, as on
 the scope), then distance, bearing and squawk, the route with the airports'
-towns ("SDF > CGN", "Louisville > Cologne"), registration and type. A row
-picked from the round boards' list shows there without opening the card. It picks
-an aircraft in an emergency first, then one overhead, then one picked on the
-scope or the list, then the nearest airborne (not counting aircraft sitting
-on the ground without saying so: no altitude and under 50 kt). One stays shown until another
-is half a mile nearer, so a near tie doesn't flicker. On the Tab5 it fills
+towns ("SDF > CGN", "Louisville > Cologne"), registration and type. The card
+only shows with the scope, and whatever the big view or a list picks stays
+selected there when you swipe back. An aircraft that has just started an
+emergency or come overhead takes the big view over until it stops or a tap
+moves on; otherwise it shows the selection, or with none the nearest airborne
+(not counting aircraft sitting on the ground without saying so: no altitude
+and under 50 kt). The nearest stays shown until another is half a mile
+nearer, so a near tie doesn't flicker. On the Tab5 it fills
 the scope's square and the list stays beside it. Its route is looked up as
 the card's is, once per callsign.
 
