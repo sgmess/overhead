@@ -23,3 +23,10 @@ CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 CONFIG_ESP_HOSTED_SDIO_OPTIMIZATION_RX_STREAMING_MODE=y
 CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=12
 CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=12
+
+# Code and rodata run from PSRAM, so IDF keeps the cache on through flash
+# reads, writes and erases (SPI_FLASH_CACHE_NO_DISABLE), as on the Tab5.
+# Without it the panel, which streams from PSRAM, flashed through updates
+# and settings saves, and a task with its stack in PSRAM can't touch flash:
+# the OpenAIP map cache boot-looped here (October 2026).
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y

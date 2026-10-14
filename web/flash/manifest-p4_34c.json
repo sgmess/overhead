@@ -1,0 +1,12 @@
+{
+  "name": "Overhead radar for the Waveshare ESP32-P4-WIFI6-Touch-LCD-3.4C",
+  "version": "__VERSION__",
+  "new_install_prompt_erase": true,
+  "new_install_improv_wait_time": 20,
+  "builds": [
+    {
+      "chipFamily": "ESP32-P4",
+      "parts": [{ "path": "overhead-p4_34c-full.bin", "offset": 0 }]
+    }
+  ]
+}

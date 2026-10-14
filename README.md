@@ -24,7 +24,7 @@ point on a radar scope.
   the flight number, the airline's name and logo, and the flag of the
   country the aircraft is registered in, all worked out on the device.
 - An overhead alert: an aircraft within a set distance and below a set
-  altitude blinks amber, a banner names it, and the Tab5 chimes.
+  altitude blinks amber, a banner names it, and the Tab5 or 3.4C chimes.
 - Brightness, with dimming from sunset to sunrise at the radar centre or
   between set times.
 - Positions are moved forward between polls using ground speed and track, so
@@ -98,7 +98,7 @@ That makes a GitHub release holding, for each board,
 to GitHub Pages at https://sgmess.github.io/overhead/, serving that release.
 Release builds start from the `sdkconfig.defaults*` files, never a local
 `sdkconfig`, so they contain no WiFi network and open the setup portal on
-first boot. Only the Tab5 is built while the other boards are parked.
+first boot. The Tab5 and the 3.4C are built; the S3 2.8C is parked.
 
 The device also checks by itself, a minute after joining WiFi and then
 daily, and shows the result first in the status on the configuration page
@@ -199,8 +199,9 @@ dimming either follows the sun's elevation at the radar centre (below
 Moving a brightness slider on the page shows that level for 8 seconds without
 saving. While an overhead alert is active the screen comes back to full
 brightness. Each aircraft chimes once and again only after it has been out of
-the alert for two minutes. The chime is the Tab5's ES8388 and speaker, opened
-for each chime so the amplifier is off between them.
+the alert for two minutes. The chime is the Tab5's ES8388 and speaker, or
+the 3.4C's ES8311 and a speaker on its header, opened for each chime so the
+amplifier is off between them.
 
 Routes are looked up only for the aircraft whose card is open, one request
 per callsign per session, and sent with its position so adsb.im can say
@@ -286,7 +287,9 @@ screen open or not.
 it must on the P4. Otherwise IDF disables the cache for every flash write and
 erase, both cores lose PSRAM and the frame buffer with it, and the panel
 flashed through an update and at every settings save. It costs about 10 KB
-of static internal RAM.
+of static internal RAM. Both P4 boards have it; the 3.4C got it in October
+2026, after reading the saved OpenAIP map from a task with its stack in
+PSRAM boot-looped it.
 
 Updates over WiFi write each 4 KB chunk to flash from an internal buffer.
 From PSRAM, IDF copies it 32 bytes at a time with the caches paused for each,

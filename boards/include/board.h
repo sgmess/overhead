@@ -16,7 +16,7 @@
 #elif defined(OVERHEAD_BOARD_P4_34C)
 #define BOARD_NAME "Waveshare ESP32-P4-WIFI6-Touch-LCD-3.4C"
 #define BOARD_CAN_ROTATE 0
-#define BOARD_HAS_SPEAKER 0
+#define BOARD_HAS_SPEAKER 1 // ES8311, on the speaker header
 #else
 #define BOARD_NAME "Waveshare ESP32-S3-Touch-LCD-2.8C"
 #define BOARD_CAN_ROTATE 0
@@ -32,7 +32,7 @@ void board_display_start(int rotation_deg);
 void board_set_brightness(int percent);
 
 // Play a short two-tone chime without blocking, on boards with a speaker
-// (only the Tab5 so far); does nothing on the others.
+// (the Tab5 and the 3.4C); does nothing on the others.
 void board_chime(void);
 
 // Power the WiFi radio. Call before esp_wifi_init().

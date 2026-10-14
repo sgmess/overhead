@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Overhead web flasher</title>
-<meta name="description" content="Install the Overhead ADS-B radar on an M5Stack Tab5 from the browser.">
+<meta name="description" content="Install the Overhead ADS-B radar on an M5Stack Tab5 or a Waveshare ESP32-P4 3.4C from the browser.">
 <script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
 <style>
 :root{--bg:#030806;--card:#06120d;--line:#1c4535;--text:#cfe9dc;--dim:#7fa996;--accent:#46ffa8;--ink:#02140b;--warn:#ffb020}
@@ -43,7 +43,13 @@ footer{margin-top:24px;text-align:center;font-size:13px;color:var(--dim)}
   <h2>Install</h2>
   <div class="board"><b>M5Stack Tab5</b><span class="dim">ESP32-P4, 720&times;1280</span></div>
   <esp-web-install-button manifest="manifest-tab5.json">
-    <button slot="activate" class="install">Connect and install</button>
+    <button slot="activate" class="install">Install on a Tab5</button>
+    <p slot="unsupported" class="notice">This browser can't flash boards. Use Chrome or Edge on a computer: Web Serial isn't in Safari, Firefox or on phones.</p>
+    <p slot="not-allowed" class="notice">Flashing needs the page over HTTPS.</p>
+  </esp-web-install-button>
+  <div class="board" style="margin-top:18px"><b>Waveshare ESP32-P4-WIFI6-Touch-LCD-3.4C</b><span class="dim">ESP32-P4, 800&times;800 round</span></div>
+  <esp-web-install-button manifest="manifest-p4_34c.json">
+    <button slot="activate" class="install">Install on a 3.4C</button>
     <p slot="unsupported" class="notice">This browser can't flash boards. Use Chrome or Edge on a computer: Web Serial isn't in Safari, Firefox or on phones.</p>
     <p slot="not-allowed" class="notice">Flashing needs the page over HTTPS.</p>
   </esp-web-install-button>
@@ -54,25 +60,25 @@ footer{margin-top:24px;text-align:center;font-size:13px;color:var(--dim)}
 <section class="card">
   <h2>Before you start</h2>
   <ol>
-    <li>Connect the Tab5's USB-C port to the computer with a data cable, and switch it on.</li>
-    <li>Press <b>Connect and install</b> and pick the port named <i>USB JTAG/serial debug unit</i>.
+    <li>Connect the board's USB-C port to the computer with a data cable, and switch it on.</li>
+    <li>Press the install button for your board and pick the port named <i>USB JTAG/serial debug unit</i>.
       If none appears, try another cable or port.</li>
   </ol>
-  <p class="notice">The Tab5's WiFi runs on its ESP32-C6 co-processor, and this firmware expects
-    <b>esp_hosted 2.12</b> on it. With older C6 firmware the radar restarts when WiFi starts;
+  <p class="notice">Both boards' WiFi runs on an ESP32-C6 co-processor, and this firmware expects
+    <b>esp_hosted 2.x</b> on it. With older C6 firmware the radar restarts when WiFi starts;
     update the C6 first.</p>
 </section>
 
 <section class="card">
   <h2>After installing</h2>
   <ol>
-    <li>Keep this page open: once the Tab5 has restarted, the installer offers <b>Connect to Wi-Fi</b>.
+    <li>Keep this page open: once the board has restarted, the installer offers <b>Connect to Wi-Fi</b>.
       Pick your network, enter its password, and it joins straight away.</li>
     <li>Then <b>Visit device</b> opens its settings, where you set the radar's centre and the rest.
       Later they're at <code>http://overhead.local</code>, and updates install from there too, under
       <b>Firmware</b>, with no cable.</li>
   </ol>
-  <p class="dim">Skipped that step, or the Tab5 is away from the computer? It opens its own WiFi network,
+  <p class="dim">Skipped that step, or the board is away from the computer? It opens its own WiFi network,
     <code>Overhead-XXXX</code>, with a QR code on screen that joins it; the setup page then opens on your
     phone by itself (or browse to <code>192.168.4.1</code>).</p>
 </section>
