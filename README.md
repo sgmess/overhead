@@ -67,6 +67,26 @@ gives way at once to the WiFi setup portal.
 | Empty scope | Next range: 5, 10, 25, 50, 100 NM |
 | A list row (Tab5) | Selects that aircraft; tap it again to clear |
 | Long press on the scope | Opens the settings screen |
+| Swipe left or right | The next view, or the one before: scope, big view, and on the round boards a list |
+| The big view | The next nearest aircraft; after one was picked, the nearest again |
+| A row of the round boards' list | That aircraft in the big view |
+
+The big view shows one aircraft in large type, for across the room: flag and
+logo, callsign, flight number and airline, altitude in its scope colour with
+which way it is going, speed with an arrow along its track (north up, as on
+the scope), then distance, bearing and squawk, the route with the airports'
+towns ("SDF > CGN", "Louisville > Cologne"), registration and type. A row
+picked from the round boards' list shows there without opening the card. It picks
+an aircraft in an emergency first, then one overhead, then one picked on the
+scope or the list, then the nearest airborne (not counting aircraft sitting
+on the ground without saying so: no altitude and under 50 kt). One stays shown until another
+is half a mile nearer, so a near tie doesn't flicker. On the Tab5 it fills
+the scope's square and the list stays beside it. Its route is looked up as
+the card's is, once per callsign.
+
+The round boards have no room for the Tab5's list beside the scope, so
+they get it as a third view: the nearest 10 (8 on the 2.8C) in the middle of
+the circle, with the same columns, colours and count.
 
 ## Build and flash
 

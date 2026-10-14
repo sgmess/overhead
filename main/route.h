@@ -8,9 +8,11 @@
 
 void route_start(void);
 
+#define ROUTE_PLACES_MAX 64
+
 // The route for callsign as "LHR-JFK" into out, " ?" added when it doesn't
-// fit the position, or "" while it is being
-// looked up or when nobody knows it. A miss queues a lookup; (lat, lon) is
-// where the aircraft is, which lets the service say whether the route fits.
-// Safe from any task.
-void route_get(const char *callsign, double lat, double lon, char *out, size_t n);
+// fit the position, and where those airports are as "London|New York" into
+// places; each "" while it is being looked up or when nobody knows it. A miss
+// queues a lookup; (lat, lon) is where the aircraft is, which lets the
+// service say whether the route fits. Safe from any task.
+void route_get(const char *callsign, double lat, double lon, char *out, size_t n, char *places, size_t pn);

@@ -24,6 +24,7 @@ static const char *TAG = "route";
 typedef struct {
     char callsign[10];
     char route[ROUTE_MAX]; // "" when unknown
+    char places[ROUTE_PLACES_MAX]; // "London|New York"; "" when unknown
     bool done;             // looked up, successfully or not
     int64_t failed_us;     // when the request itself last failed; 0 if not
     uint32_t used;         // for evicting the least recently used
@@ -95,7 +96,26 @@ static void format_route(const cJSON *item, char *out, size_t n)
     if (cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(item, "plausible"))) strlcat(out, " ?", n);
 }
 
-static bool lookup(const char *callsign, double lat, double lon, char *route, size_t n)
+// "London|New York": each airport's town, or its name when it has none,
+// "|" between them since a town's name can have a hyphen in it
+static void format_places(const cJSON *item, char *out, size_t n)
+{
+    out[0] = '\0';
+    const cJSON *ap;
+    cJSON_ArrayForEach(ap, cJSON_GetObjectItemCaseSensitive(item, "_airports"))
+    {
+        const cJSON *where = cJSON_GetObjectItemCaseSensitive(ap, "location");
+        if (!cJSON_IsString(where) || !where->valuestring[0]) where = cJSON_GetObjectItemCaseSensitive(ap, "name");
+        if (!cJSON_IsString(where) || !where->valuestring[0]) {
+            out[0] = '\0'; // one unknown would leave the rest out of step
+            return;
+        }
+        if (out[0]) strlcat(out, "|", n);
+        strlcat(out, where->valuestring, n);
+    }
+}
+
+static bool lookup(const char *callsign, double lat, double lon, char *route, size_t n, char *places, size_t pn)
 {
     static resp_t *resp_buf; // one task, so one buffer
     if (!resp_buf) resp_buf = heap_caps_calloc(1, sizeof(*resp_buf), MALLOC_CAP_SPIRAM);
@@ -131,7 +151,10 @@ static bool lookup(const char *callsign, double lat, double lon, char *route, si
     cJSON *root = cJSON_ParseWithLength(r->data, r->len);
     const cJSON *first = cJSON_IsArray(root) ? cJSON_GetArrayItem(root, 0) : NULL;
     bool ok = cJSON_IsObject(first);
-    if (ok) format_route(first, route, n);
+    if (ok) {
+        format_route(first, route, n);
+        format_places(first, places, pn);
+    }
     cJSON_Delete(root);
     if (ok) ESP_LOGI(TAG, "%s: %s", callsign, route[0] ? route : "unknown");
     return ok;
@@ -151,14 +174,15 @@ static void route_task(void *arg)
         xSemaphoreGive(s_lock);
         if (!callsign[0]) continue;
 
-        char route[ROUTE_MAX] = "";
-        bool ok = lookup(callsign, lat, lon, route, sizeof(route));
+        char route[ROUTE_MAX] = "", places[ROUTE_PLACES_MAX] = "";
+        bool ok = lookup(callsign, lat, lon, route, sizeof(route), places, sizeof(places));
 
         xSemaphoreTake(s_lock, portMAX_DELAY);
         entry_t *e = find_or_add(callsign);
         e->used = ++s_clock;
         if (ok) {
             strlcpy(e->route, route, sizeof(e->route));
+            strlcpy(e->places, places, sizeof(e->places));
             e->done = true;
             e->failed_us = 0;
         } else {
@@ -180,9 +204,9 @@ void route_start(void)
     }
 }
 
-void route_get(const char *callsign, double lat, double lon, char *out, size_t n)
+void route_get(const char *callsign, double lat, double lon, char *out, size_t n, char *places, size_t pn)
 {
-    out[0] = '\0';
+    out[0] = places[0] = '\0';
     if (!s_lock || !callsign[0]) return;
     // It goes into the request's JSON as it is
     for (const char *c = callsign; *c; c++) {
@@ -194,6 +218,7 @@ void route_get(const char *callsign, double lat, double lon, char *out, size_t n
     if (e) e->used = ++s_clock;
     if (e && e->done) {
         strlcpy(out, e->route, n);
+        strlcpy(places, e->places, pn);
     } else if ((!e || !e->failed_us || esp_timer_get_time() - e->failed_us > RETRY_US) &&
                strcmp(s_want, callsign) != 0) {
         strlcpy(s_want, callsign, sizeof(s_want));

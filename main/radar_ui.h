@@ -45,6 +45,10 @@ void radar_ui_select(const char *hex);
 // For development: the aircraft with this address squawks 7700 until
 // called again; NULL or "" ends it. With the display lock held.
 void radar_ui_debug_emergency(const char *hex);
+
+// For development: 0 the scope, 1 the big view, 2 the list (round boards),
+// as swipes would.
+void radar_ui_debug_view(int view);
 #endif
 
 // Current range in NM. Safe to call without the lock.

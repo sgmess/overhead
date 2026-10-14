@@ -51,6 +51,8 @@ CONFIG_LV_FONT_MONTSERRAT_14=y
 CONFIG_LV_FONT_MONTSERRAT_16=y
 CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
+# The big view's callsign, altitude and distance
+CONFIG_LV_FONT_MONTSERRAT_48=y
 # The setup screen's join-the-network QR code
 CONFIG_LV_USE_QRCODE=y
 

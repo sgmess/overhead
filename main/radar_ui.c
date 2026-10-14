@@ -61,6 +61,12 @@
 #define CARD_LINE 28 // the airline line, which pushes the rest down
 #define FLAG_SCALE 256 // 36x26
 #define HAS_LOGO 1 // the airline's logo on a badge at the card's right
+#define F_BIG lv_font_montserrat_48 // the big view: callsign, altitude, distance
+#define F_BIG_MID lv_font_montserrat_32
+#define F_BIG_TEXT lv_font_montserrat_24
+#define BIG_POINTER 2.6f // the bearing arrow, times the aircraft arrow
+#define BIG_PAD_TOP 56
+#define BIG_PAD_SIDE 40
 #define F_CARDINAL lv_font_montserrat_24
 #define F_ROSE lv_font_montserrat_16
 #define F_RING lv_font_montserrat_14
@@ -105,6 +111,18 @@
 #define CARD_LINE 26
 #define FLAG_SCALE 256
 #define HAS_LOGO 1
+#define F_BIG lv_font_montserrat_48
+#define F_BIG_MID lv_font_montserrat_28
+#define F_BIG_TEXT lv_font_montserrat_20
+#define BIG_POINTER 2.4f
+#define BIG_PAD_TOP 110 // round: kept to where the circle is wide
+#define BIG_PAD_SIDE 110
+#define RL_ROWS 10 // the list view, for want of the Tab5's list
+#define RL_ROW_H 42
+#define RL_W 530
+#define RL_COLS {0, 130, 220, 320, 390, 460}
+#define F_RL lv_font_montserrat_20
+#define F_RL_HEAD lv_font_montserrat_14
 #define CARD_COLS {0, 48, 210, 256}
 #define F_CARDINAL lv_font_montserrat_20
 #define F_ROSE lv_font_montserrat_14
@@ -141,6 +159,18 @@
 #define CARD_LINE_SPACE 4
 #define CARD_LINE 20
 #define FLAG_SCALE 180 // 25x18 beside the smaller title
+#define F_BIG lv_font_montserrat_28
+#define F_BIG_MID lv_font_montserrat_20
+#define F_BIG_TEXT lv_font_montserrat_14
+#define BIG_POINTER 1.6f
+#define BIG_PAD_TOP 66
+#define BIG_PAD_SIDE 66
+#define RL_ROWS 8
+#define RL_ROW_H 30
+#define RL_W 330
+#define RL_COLS {0, 84, 136, 200, 248, 290}
+#define F_RL lv_font_montserrat_14
+#define F_RL_HEAD lv_font_montserrat_12
 #define CARD_COLS {0, 38, 148, 184}
 #define F_CARDINAL lv_font_montserrat_16
 #define F_ROSE lv_font_montserrat_12
@@ -236,6 +266,15 @@ static int s_order_n;
 static double s_lat0, s_lon0, s_coslat0;
 static volatile int s_range_idx;
 static char s_sel_hex[8];
+// What fills the scope's square. A swipe left goes to the next, right back.
+enum { VIEW_RADAR, VIEW_BIG, VIEW_LIST };
+#ifdef HAS_LIST
+#define VIEW_COUNT 2 // the Tab5's list is beside the scope already
+#else
+#define VIEW_COUNT 3
+#endif
+static int s_view = VIEW_RADAR;
+static char s_big_pick[8]; // picked from the round boards' list, for the big view only
 static int64_t s_last_update_us;
 static char s_feed[16];
 static char s_status[64];
@@ -688,13 +727,13 @@ static void draw_text(lv_layer_t *layer, int x, int y, int w, const char *text,
 }
 
 // Arrowhead pointing along the track: two triangles sharing a notched tail.
-static void draw_arrow(lv_layer_t *layer, int x, int y, float track_rad, lv_color_t color)
+static void draw_arrow_scaled(lv_layer_t *layer, int x, int y, float track_rad, lv_color_t color, float scale)
 {
     static const float shape[4][2] = {{0, 11}, {-7, -7}, {0, -3}, {7, -7}}; // {right, forward}
     const float fs = sinf(track_rad), fc = cosf(track_rad);
     lv_point_precise_t p[4];
     for (int k = 0; k < 4; k++) {
-        float rt = shape[k][0] * ARROW_SCALE, fw = shape[k][1] * ARROW_SCALE;
+        float rt = shape[k][0] * scale, fw = shape[k][1] * scale;
         p[k].x = (lv_value_precise_t)lroundf(x + fw * fs + rt * fc);
         p[k].y = (lv_value_precise_t)lroundf(y - fw * fc + rt * fs);
     }
@@ -709,6 +748,11 @@ static void draw_arrow(lv_layer_t *layer, int x, int y, float track_rad, lv_colo
     d.p[1] = p[2];
     d.p[2] = p[3];
     lv_draw_triangle(layer, &d);
+}
+
+static void draw_arrow(lv_layer_t *layer, int x, int y, float track_rad, lv_color_t color)
+{
+    draw_arrow_scaled(layer, x, y, track_rad, color, ARROW_SCALE);
 }
 
 // Rotorcraft: a body, a rotor crossed at 45 degrees to the track and a tail
@@ -1134,7 +1178,7 @@ static void update_card_flag(const char *iso)
 {
     if (strcmp(iso, s_card_iso) == 0) return;
     strlcpy(s_card_iso, iso, sizeof(s_card_iso));
-    const lv_image_dsc_t *img = iso[0] ? flag_image(iso) : NULL;
+    const lv_image_dsc_t *img = iso[0] ? flag_image(iso, 0) : NULL;
     lv_obj_set_hidden(s_card_flag, !img);
     if (!img) {
         lv_obj_set_pos(s_card_title, 0, 0);
@@ -1151,15 +1195,109 @@ static void update_card_logo(const char *icao)
 {
     if (strcmp(icao, s_card_logo_icao) == 0) return;
     strlcpy(s_card_logo_icao, icao, sizeof(s_card_logo_icao));
-    const lv_image_dsc_t *img = icao[0] ? logo_image(icao) : NULL;
+    const lv_image_dsc_t *img = icao[0] ? logo_image(icao, 0) : NULL;
     if (img) lv_image_set_src(s_card_logo, img);
     lv_obj_set_hidden(s_card_logo_box, !img);
 }
 #endif
 
+// raw with each sep as an arrow: "LHR-JFK" as "LHR > JFK"
+static void arrows(const char *raw, char sep, char *out, size_t size)
+{
+    size_t n = 0;
+    out[0] = '\0';
+    for (const char *c = raw; *c && n + 6 < size; c++) {
+        if (*c == sep) {
+            n += snprintf(out + n, size - n, " " LV_SYMBOL_RIGHT " ");
+        } else {
+            out[n++] = *c;
+            out[n] = '\0';
+        }
+    }
+}
+
+// "LHR > JFK" for a's callsign, and in places (if not NULL) where those are,
+// "London > New York"; "" while it is looked up, when nobody knows, or with
+// routes off
+static void fmt_route(const aircraft_t *a, char *route, size_t size, char *places, size_t places_size)
+{
+    route[0] = '\0';
+    if (places) places[0] = '\0';
+    if (!settings()->show_route) return;
+    char raw[40], raw_places[ROUTE_PLACES_MAX];
+    route_get(a->callsign, a->lat, a->lon, raw, sizeof(raw), raw_places, sizeof(raw_places));
+    arrows(raw, '-', route, size);
+    if (places) arrows(raw_places, '|', places, places_size);
+}
+
+// "BA117  •  British Airways", or the country for anything not an airline's;
+// returns the airline, if any
+static const airline_t *fmt_airline(const aircraft_t *a, const country_t *country, char *out, size_t n)
+{
+    out[0] = '\0';
+    const airline_t *al = airline_for_callsign(a->callsign);
+    airline_flight_number(a->callsign, out, n);
+    if (al) {
+        if (out[0]) strlcat(out, "  " LV_SYMBOL_BULLET "  ", n);
+        strlcat(out, al->name, n);
+    } else if (country) {
+        strlcpy(out, country->name, n);
+    }
+    return al;
+}
+
+// "G-STBC  •  B77W", the address when there is nothing else, and "Military"
+static void fmt_sub(const aircraft_t *a, bool hex, char *sub, size_t n)
+{
+    sub[0] = '\0';
+    if (a->reg[0] && strcmp(a->reg, ac_name(a)) != 0) strlcat(sub, a->reg, n);
+    if (a->type[0]) {
+        if (sub[0]) strlcat(sub, "  " LV_SYMBOL_BULLET "  ", n);
+        strlcat(sub, a->type, n);
+    }
+    if (hex || !sub[0]) {
+        if (sub[0]) strlcat(sub, "  " LV_SYMBOL_BULLET "  ", n);
+        strlcat(sub, a->hex, n);
+    }
+    if (is_military(a)) strlcat(sub, "  " LV_SYMBOL_BULLET "  Military", n);
+}
+
+// "3,450 ft", "Ground" or "-"
+static void fmt_alt(const aircraft_t *a, char *out, size_t n)
+{
+    if (a->on_ground) {
+        strlcpy(out, "Ground", n);
+    } else if (a->alt_ft == AC_ALT_UNKNOWN) {
+        strlcpy(out, "-", n);
+    } else {
+        char num[16];
+        fmt_thousands(num, sizeof(num), a->alt_ft);
+        snprintf(out, n, "%s ft", num);
+    }
+}
+
+// "+1,200 fpm" or "Level"
+static void fmt_vs(const aircraft_t *a, char *out, size_t n)
+{
+    if (a->vs_fpm == 0 || a->on_ground) {
+        strlcpy(out, "Level", n);
+    } else {
+        char num[16];
+        fmt_thousands(num, sizeof(num), a->vs_fpm);
+        snprintf(out, n, "%s%s fpm", a->vs_fpm > 0 ? "+" : "", num);
+    }
+}
+
 static void update_card(void)
 {
     int i = s_sel_hex[0] ? find_aircraft(s_sel_hex) : -1;
+#ifndef HAS_LIST
+    // On the round boards it lies over the scope: not over the other views
+    if (s_view != VIEW_RADAR) {
+        lv_obj_set_hidden(s_card, true);
+        return;
+    }
+#endif
     if (i < 0) {
         s_sel_hex[0] = '\0';
         lv_obj_set_hidden(s_card, true);
@@ -1167,70 +1305,30 @@ static void update_card(void)
     }
     const aircraft_t *a = &s_ac[i];
     const ac_screen_t *s = &s_scr[i];
-    char alt[24], vs[24], num[16];
+    char alt[24], vs[24];
 
     lv_label_set_text(s_card_title, ac_name(a));
     const country_t *country = country_for_hex(a->hex);
     update_card_flag(country ? country->iso : "");
 
-    char route[48] = "";
-    if (settings()->show_route) {
-        char raw[40];
-        route_get(a->callsign, a->lat, a->lon, raw, sizeof(raw));
-        // "LHR-JFK" as "LHR > JFK"
-        size_t n = 0;
-        for (const char *c = raw; *c && n + 6 < sizeof(route); c++) {
-            if (*c == '-') {
-                n += snprintf(route + n, sizeof(route) - n, " " LV_SYMBOL_RIGHT " ");
-            } else {
-                route[n++] = *c;
-                route[n] = '\0';
-            }
-        }
-    }
+    char route[48];
+    fmt_route(a, route, sizeof(route), NULL, 0);
     set_text_if_changed(s_card_route, route);
     lv_obj_set_hidden(s_card_route, !route[0]);
 
-    // "BA117  •  British Airways"
-    char airline[64] = "";
-    const airline_t *al = airline_for_callsign(a->callsign);
-    airline_flight_number(a->callsign, airline, sizeof(airline));
-    if (al) {
-        if (airline[0]) strlcat(airline, "  " LV_SYMBOL_BULLET "  ", sizeof(airline));
-        strlcat(airline, al->name, sizeof(airline));
-    } else if (country) {
-        strlcpy(airline, country->name, sizeof(airline));
-    }
+    char airline[64];
+    const airline_t *al = fmt_airline(a, country, airline, sizeof(airline));
     set_text_if_changed(s_card_airline, airline);
 #ifdef HAS_LOGO
     update_card_logo(al ? al->icao : "");
 #endif
 
-    char sub[64] = "";
-    if (a->reg[0] && strcmp(a->reg, ac_name(a)) != 0) strlcat(sub, a->reg, sizeof(sub));
-    if (a->type[0]) {
-        if (sub[0]) strlcat(sub, "  " LV_SYMBOL_BULLET "  ", sizeof(sub));
-        strlcat(sub, a->type, sizeof(sub));
-    }
-    if (sub[0]) strlcat(sub, "  " LV_SYMBOL_BULLET "  ", sizeof(sub));
-    strlcat(sub, a->hex, sizeof(sub));
-    if (is_military(a)) strlcat(sub, "  " LV_SYMBOL_BULLET "  Military", sizeof(sub));
+    char sub[64];
+    fmt_sub(a, true, sub, sizeof(sub));
     lv_label_set_text(s_card_sub, sub);
 
-    if (a->on_ground) {
-        strlcpy(alt, "Ground", sizeof(alt));
-    } else if (a->alt_ft == AC_ALT_UNKNOWN) {
-        strlcpy(alt, "-", sizeof(alt));
-    } else {
-        fmt_thousands(num, sizeof(num), a->alt_ft);
-        snprintf(alt, sizeof(alt), "%s ft", num);
-    }
-    if (a->vs_fpm == 0 || a->on_ground) {
-        strlcpy(vs, "Level", sizeof(vs));
-    } else {
-        fmt_thousands(num, sizeof(num), a->vs_fpm);
-        snprintf(vs, sizeof(vs), "%s%s fpm", a->vs_fpm > 0 ? "+" : "", num);
-    }
+    fmt_alt(a, alt, sizeof(alt));
+    fmt_vs(a, vs, sizeof(vs));
 
     char gs[16] = "-", trk[16] = "-";
     if (a->gs_kt >= 0) snprintf(gs, sizeof(gs), "%.0f kt", a->gs_kt);
@@ -1242,14 +1340,45 @@ static void update_card(void)
     lv_obj_set_hidden(s_card, false);
 }
 
+// A list row's cells: callsign, type, altitude in hundreds of feet with
+// which way it is going, ground speed, distance and bearing
+static void fmt_row(const aircraft_t *a, const ac_screen_t *s, char cells[6][16])
+{
+    strlcpy(cells[0], ac_name(a), sizeof(cells[0]));
+    strlcpy(cells[1], a->type[0] ? a->type : "-", sizeof(cells[1]));
+    if (a->on_ground) {
+        strlcpy(cells[2], "GND", sizeof(cells[2]));
+    } else if (a->alt_ft == AC_ALT_UNKNOWN) {
+        strlcpy(cells[2], "---", sizeof(cells[2]));
+    } else {
+        const char *trend = a->vs_fpm > 300 ? " " LV_SYMBOL_UP : a->vs_fpm < -300 ? " " LV_SYMBOL_DOWN : "";
+        snprintf(cells[2], sizeof(cells[2]), "%03d%s", (int)(a->alt_ft + 50) / 100, trend);
+    }
+    if (a->gs_kt >= 0) {
+        snprintf(cells[3], sizeof(cells[3]), "%.0f", a->gs_kt);
+    } else {
+        strlcpy(cells[3], "-", sizeof(cells[3]));
+    }
+    snprintf(cells[4], sizeof(cells[4]), "%.1f", s->dist_nm);
+    snprintf(cells[5], sizeof(cells[5]), "%03.0f\xC2\xB0", s->brg_deg);
+}
+
+// The callsign's colour in a list: picked, military, or by altitude
+static lv_color_t row_color(const aircraft_t *a)
+{
+    return is_selected(a) ? lv_color_hex(C_SELECT) : is_military(a) ? lv_color_hex(C_MIL) : alt_color(a);
+}
+
+static const char *const LIST_HEAD[6] = {"CALLSIGN", "TYPE", "ALT", "GS KT", "NM", "BRG"};
+
 #ifdef HAS_LIST
 // At 1 Hz across a whole table, redrawing every label would be most of the
 // panel, so it only sets what changed.
 static void update_list(void)
 {
     static bool row_sel[LIST_ROWS_MAX];
-    static lv_color_t row_color[LIST_ROWS_MAX];
-    char buf[24];
+    static lv_color_t row_colors[LIST_ROWS_MAX];
+    char cells[6][16];
 
     for (int r = 0; r < s_panel->list_rows; r++) {
         if (r >= s_order_n) {
@@ -1260,7 +1389,7 @@ static void update_list(void)
         const aircraft_t *a = &s_ac[s_order[r]];
         const ac_screen_t *s = &s_scr[s_order[r]];
         const bool sel = is_selected(a);
-        const lv_color_t color = sel ? lv_color_hex(C_SELECT) : is_military(a) ? lv_color_hex(C_MIL) : alt_color(a);
+        const lv_color_t color = row_color(a);
         strlcpy(s_row_hex[r], a->hex, sizeof(s_row_hex[r]));
         lv_obj_set_hidden(s_rows[r], false);
 
@@ -1268,32 +1397,214 @@ static void update_list(void)
             lv_obj_set_style_bg_opa(s_rows[r], sel ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
             row_sel[r] = sel;
         }
-        if (!lv_color_eq(color, row_color[r])) {
+        if (!lv_color_eq(color, row_colors[r])) {
             lv_obj_set_style_text_color(s_cells[r][0], color, 0);
-            row_color[r] = color;
+            row_colors[r] = color;
         }
+        fmt_row(a, s, cells);
+        for (int k = 0; k < 6; k++) set_text_if_changed(s_cells[r][k], cells[k]);
+    }
+}
+#endif
 
-        set_text_if_changed(s_cells[r][0], ac_name(a));
-        set_text_if_changed(s_cells[r][1], a->type[0] ? a->type : "-");
-        if (a->on_ground) {
-            strlcpy(buf, "GND", sizeof(buf));
-        } else if (a->alt_ft == AC_ALT_UNKNOWN) {
-            strlcpy(buf, "---", sizeof(buf));
-        } else {
-            const char *trend = a->vs_fpm > 300 ? " " LV_SYMBOL_UP : a->vs_fpm < -300 ? " " LV_SYMBOL_DOWN : "";
-            snprintf(buf, sizeof(buf), "%03d%s", (int)(a->alt_ft + 50) / 100, trend);
+// ---------------------------------------------------------------- big view
+//
+// One aircraft in large type, for across the room: an emergency, then
+// anything overhead, then one picked on the scope or the list, then the
+// nearest airborne (a tap steps to the next). A swipe swaps it with the
+// scope, in the same square; on the Tab5 the list stays beside it.
+
+#define BIG_STEPS 10        // a tap steps through the nearest this many
+#define BIG_HOLD_NM 0.5f    // the one shown stays until another is this much nearer
+
+static lv_obj_t *s_big, *s_big_flag, *s_big_logo_box, *s_big_logo, *s_big_call, *s_big_airline;
+static lv_obj_t *s_big_alt, *s_big_vs, *s_big_pointer, *s_big_gs, *s_big_trk, *s_big_where;
+static lv_obj_t *s_big_route, *s_big_places, *s_big_sub, *s_big_foot, *s_big_body, *s_big_empty;
+static int s_big_step;      // 0 the nearest, 1 the next...
+static char s_big_hex[8];   // the one shown
+static char s_big_iso[3], s_big_icao[4] = "-";
+static float s_big_ptr_rad;
+static lv_color_t s_big_ptr_color;
+
+// In the air: not flagged on the ground, and not sitting at a gate with no
+// altitude (some transponders on the ground never say they are)
+static bool airborne(const aircraft_t *a)
+{
+    return !a->on_ground && !(a->alt_ft == AC_ALT_UNKNOWN && a->gs_kt < 50);
+}
+
+static const char *ordinal(int k)
+{
+    static const char *const N[] = {"Nearest", "2nd nearest", "3rd nearest", "4th nearest", "5th nearest",
+                                    "6th nearest", "7th nearest", "8th nearest", "9th nearest", "10th nearest"};
+    return N[k < BIG_STEPS ? k : BIG_STEPS - 1];
+}
+
+// Which aircraft, and the footer that says why
+static int big_target(char *why, size_t n)
+{
+    if (s_emerg_best >= 0) {
+        strlcpy(why, "Emergency", n);
+        return s_emerg_best;
+    }
+    if (s_alert_best >= 0) {
+        strlcpy(why, "Overhead", n);
+        return s_alert_best;
+    }
+    for (int k = 0; k < 2; k++) {
+        const char *hex = k == 0 ? s_big_pick : s_sel_hex;
+        int i = hex[0] ? find_aircraft(hex) : -1;
+        if (i >= 0 && s_scr[i].visible) {
+            strlcpy(why, "Picked  " LV_SYMBOL_BULLET "  tap for the nearest", n);
+            return i;
         }
-        set_text_if_changed(s_cells[r][2], buf);
-        if (a->gs_kt >= 0) {
-            snprintf(buf, sizeof(buf), "%.0f", a->gs_kt);
-        } else {
-            strlcpy(buf, "-", sizeof(buf));
+    }
+    // Airborne, nearest first: s_order is sorted by distance
+    int near[BIG_STEPS], n_near = 0, n_airborne = 0;
+    for (int k = 0; k < s_order_n; k++) {
+        const int i = s_order[k];
+        if (!airborne(&s_ac[i])) continue;
+        if (n_near < BIG_STEPS) near[n_near++] = i;
+        n_airborne++;
+    }
+    if (!n_near) return -1;
+    const int step = s_big_step % n_near;
+    int i = near[step];
+    // Two at about the same distance shouldn't make it flicker between them
+    const int held = s_big_hex[0] ? find_aircraft(s_big_hex) : -1;
+    if (step == 0 && held >= 0 && held != i && s_scr[held].visible && airborne(&s_ac[held]) &&
+        s_scr[held].dist_nm <= s_scr[i].dist_nm + BIG_HOLD_NM) {
+        i = held;
+    }
+    snprintf(why, n, "%s of %d  " LV_SYMBOL_BULLET "  tap for the next", ordinal(step), n_airborne);
+    return i;
+}
+
+static void update_big(void)
+{
+    if (s_view != VIEW_BIG) return;
+    char why[64], text[64], num[32];
+    const int i = big_target(why, sizeof(why));
+    lv_obj_set_hidden(s_big_body, i < 0);
+    lv_obj_set_hidden(s_big_empty, i >= 0);
+    if (i < 0) {
+        s_big_hex[0] = '\0';
+        return;
+    }
+    const aircraft_t *a = &s_ac[i];
+    const ac_screen_t *s = &s_scr[i];
+    strlcpy(s_big_hex, a->hex, sizeof(s_big_hex));
+
+    const country_t *country = country_for_hex(a->hex);
+    const char *iso = country ? country->iso : "";
+    if (strcmp(iso, s_big_iso) != 0) {
+        strlcpy(s_big_iso, iso, sizeof(s_big_iso));
+        const lv_image_dsc_t *img = iso[0] ? flag_image(iso, 1) : NULL;
+        if (img) lv_image_set_src(s_big_flag, img);
+        lv_obj_set_hidden(s_big_flag, !img);
+    }
+    set_text_if_changed(s_big_call, ac_name(a));
+    char airline[64];
+    const airline_t *al = fmt_airline(a, country, airline, sizeof(airline));
+    set_text_if_changed(s_big_airline, airline);
+    lv_obj_set_hidden(s_big_airline, !airline[0]);
+#ifdef HAS_LOGO
+    const char *icao = al ? al->icao : "";
+    if (strcmp(icao, s_big_icao) != 0) {
+        strlcpy(s_big_icao, icao, sizeof(s_big_icao));
+        const lv_image_dsc_t *img = icao[0] ? logo_image(icao, 1) : NULL;
+        if (img) lv_image_set_src(s_big_logo, img);
+        lv_obj_set_hidden(s_big_logo_box, !img);
+    }
+#else
+    (void)al;
+#endif
+
+    // Altitude in its scope colour, with which way it is going
+    char alt[24];
+    fmt_alt(a, alt, sizeof(alt));
+    const char *trend = a->on_ground ? "" : a->vs_fpm > 250 ? " " LV_SYMBOL_UP : a->vs_fpm < -250 ? " " LV_SYMBOL_DOWN : "";
+    snprintf(text, sizeof(text), "%s%s", alt, trend);
+    set_text_if_changed(s_big_alt, text);
+    lv_obj_set_style_text_color(s_big_alt, alt_color(a), 0);
+    fmt_vs(a, text, sizeof(text));
+    set_text_if_changed(s_big_vs, a->alt_ft == AC_ALT_UNKNOWN ? "" : text);
+
+    // Speed, with the arrow along the track: which way it is going, north up
+    // as on the scope
+    if (a->gs_kt >= 0) {
+        snprintf(text, sizeof(text), "%.0f kt", a->gs_kt);
+    } else {
+        strlcpy(text, "-", sizeof(text));
+    }
+    set_text_if_changed(s_big_gs, text);
+    text[0] = '\0';
+    if (a->track_deg >= 0) snprintf(text, sizeof(text), "track %03.0f\xC2\xB0", a->track_deg);
+    set_text_if_changed(s_big_trk, text);
+    lv_obj_set_hidden(s_big_pointer, a->track_deg < 0);
+    s_big_ptr_rad = a->track_deg * DEG2RAD;
+    s_big_ptr_color = alt_color(a);
+    lv_obj_invalidate(s_big_pointer);
+
+    // Where it is from here, and its squawk
+    snprintf(text, sizeof(text), "%.1f NM  " LV_SYMBOL_BULLET "  bearing %03.0f\xC2\xB0", s->dist_nm, s->brg_deg);
+    if (a->squawk[0]) {
+        snprintf(num, sizeof(num), "  " LV_SYMBOL_BULLET "  squawk %s", a->squawk);
+        strlcat(text, num, sizeof(text));
+    }
+    set_text_if_changed(s_big_where, text);
+    lv_obj_set_style_text_color(s_big_where, lv_color_hex(a->emergency ? C_EMERG : C_TEXT), 0);
+
+    char route[48], places[ROUTE_PLACES_MAX + 16];
+    fmt_route(a, route, sizeof(route), places, sizeof(places));
+    set_text_if_changed(s_big_route, route);
+    lv_obj_set_hidden(s_big_route, !route[0]);
+    set_text_if_changed(s_big_places, places);
+    lv_obj_set_hidden(s_big_places, !places[0]);
+    char sub[64];
+    fmt_sub(a, false, sub, sizeof(sub));
+    set_text_if_changed(s_big_sub, sub);
+    set_text_if_changed(s_big_foot, why);
+}
+
+#ifndef HAS_LIST
+// ---------------------------------------------------------------- list view
+//
+// The round boards have no list beside the scope; this is it, a swipe away.
+// Within the middle of the circle, where it is widest.
+
+static lv_obj_t *s_rlist, *s_rl_title, *s_rl_rows[RL_ROWS], *s_rl_cells[RL_ROWS][6];
+static char s_rl_hex[RL_ROWS][8];
+
+static void update_rlist(void)
+{
+    if (s_view != VIEW_LIST) return;
+    static lv_color_t colors[RL_ROWS];
+    static bool sel_shown[RL_ROWS];
+    char cells[6][16], title[48];
+    format_count(title, sizeof(title));
+    set_text_if_changed(s_rl_title, s_last_update_us ? title : "Waiting for data");
+    for (int r = 0; r < RL_ROWS; r++) {
+        if (r >= s_order_n) {
+            s_rl_hex[r][0] = '\0';
+            lv_obj_set_hidden(s_rl_rows[r], true);
+            continue;
         }
-        set_text_if_changed(s_cells[r][3], buf);
-        snprintf(buf, sizeof(buf), "%.1f", s->dist_nm);
-        set_text_if_changed(s_cells[r][4], buf);
-        snprintf(buf, sizeof(buf), "%03.0f\xC2\xB0", s->brg_deg);
-        set_text_if_changed(s_cells[r][5], buf);
+        const aircraft_t *a = &s_ac[s_order[r]];
+        strlcpy(s_rl_hex[r], a->hex, sizeof(s_rl_hex[r]));
+        lv_obj_set_hidden(s_rl_rows[r], false);
+        const bool sel = is_selected(a);
+        if (sel != sel_shown[r]) {
+            lv_obj_set_style_bg_opa(s_rl_rows[r], sel ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+            sel_shown[r] = sel;
+        }
+        const lv_color_t c = a->emergency ? lv_color_hex(C_EMERG) : row_color(a);
+        if (!lv_color_eq(c, colors[r])) {
+            lv_obj_set_style_text_color(s_rl_cells[r][0], c, 0);
+            colors[r] = c;
+        }
+        fmt_row(a, &s_scr[s_order[r]], cells);
+        for (int k = 0; k < 6; k++) set_text_if_changed(s_rl_cells[r][k], cells[k]);
     }
 }
 #endif
@@ -1308,7 +1619,11 @@ static void refresh(void)
 #endif
     update_status_label();
     update_alert();
-    lv_obj_invalidate(s_scope);
+    update_big();
+#ifndef HAS_LIST
+    update_rlist();
+#endif
+    if (s_view == VIEW_RADAR) lv_obj_invalidate(s_scope);
 }
 
 static void select_aircraft(const char *hex)
@@ -1326,8 +1641,11 @@ void radar_ui_select(const char *hex)
     select_aircraft(hex);
 }
 
+static bool swiped(void);
+
 static void on_scope_click(lv_event_t *e)
 {
+    if (swiped()) return; // the end of a swipe, not a tap
     lv_point_t p;
     lv_indev_get_point(lv_indev_active(), &p);
 
@@ -1369,6 +1687,234 @@ static void show_sweep(bool on)
         lv_timer_pause(s_sweep_timer);
     }
 }
+
+// The scope, the big view or (on the round boards) the list, in the square
+static void show_view(int view)
+{
+    s_view = view;
+    s_big_step = 0;
+    s_big_hex[0] = s_big_pick[0] = '\0';
+    lv_obj_set_hidden(s_big, view != VIEW_BIG);
+    lv_obj_set_hidden(s_scope, view != VIEW_RADAR); // and its drawing, every second, with it
+#ifndef HAS_LIST
+    lv_obj_set_hidden(s_rlist, view != VIEW_LIST);
+#endif
+    show_sweep(view == VIEW_RADAR && settings()->sweep);
+    // The alert banner goes with whichever is showing: over the top of the
+    // scope, or as the first line of the other views' columns
+    lv_obj_t *parent = s_scope;
+    if (view == VIEW_BIG) parent = s_big;
+#ifndef HAS_LIST
+    if (view == VIEW_LIST) parent = s_rlist;
+#endif
+    lv_obj_set_parent(s_alert_lbl, parent);
+    if (view != VIEW_RADAR) {
+        lv_obj_remove_flag(s_alert_lbl, LV_OBJ_FLAG_FLOATING);
+        lv_obj_move_to_index(s_alert_lbl, 0);
+    } else {
+        lv_obj_add_flag(s_alert_lbl, LV_OBJ_FLAG_FLOATING);
+    }
+    refresh();
+}
+
+#if CONFIG_LV_USE_SNAPSHOT
+void radar_ui_debug_view(int view)
+{
+    if (view >= 0 && view < VIEW_COUNT && view != s_view) show_view(view);
+}
+#endif
+
+// A swipe also ends in a release, which mustn't count as a tap as well
+static bool swiped(void)
+{
+    return lv_indev_get_gesture_dir(lv_indev_active()) != LV_DIR_NONE;
+}
+
+static void on_gesture(lv_event_t *e)
+{
+    const lv_dir_t d = lv_indev_get_gesture_dir(lv_indev_active());
+    if (d == LV_DIR_LEFT) show_view((s_view + 1) % VIEW_COUNT);
+    if (d == LV_DIR_RIGHT) show_view((s_view + VIEW_COUNT - 1) % VIEW_COUNT);
+}
+
+// A tap steps to the next nearest; after one was picked, back to the nearest
+static void on_big_click(lv_event_t *e)
+{
+    if (swiped()) return;
+    if (s_big_pick[0] || s_sel_hex[0]) {
+        s_big_pick[0] = s_sel_hex[0] = '\0';
+        s_big_step = 0;
+    } else {
+        s_big_step = (s_big_step + 1) % BIG_STEPS;
+    }
+    s_big_hex[0] = '\0';
+    refresh();
+}
+
+static void on_big_pointer_draw(lv_event_t *e)
+{
+    lv_obj_t *obj = lv_event_get_target(e);
+    lv_area_t a;
+    lv_obj_get_coords(obj, &a);
+    draw_arrow_scaled(lv_event_get_layer(e), (a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2, s_big_ptr_rad, s_big_ptr_color,
+                      BIG_POINTER);
+}
+
+static lv_obj_t *big_box(lv_obj_t *parent, lv_flex_flow_t flow)
+{
+    lv_obj_t *o = lv_obj_create(parent);
+    lv_obj_remove_style_all(o);
+    lv_obj_set_size(o, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(o, flow);
+    lv_obj_set_flex_align(o, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_scrollable(o, false);
+    lv_obj_set_clickable(o, false);
+    return o;
+}
+
+static lv_obj_t *make_label(lv_obj_t *parent, const lv_font_t *font, uint32_t color);
+
+static lv_obj_t *big_label(lv_obj_t *parent, const lv_font_t *font, uint32_t color)
+{
+    lv_obj_t *l = make_label(parent, font, color);
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    return l;
+}
+
+static void create_big(lv_obj_t *scr)
+{
+    s_big = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_big);
+    lv_obj_set_size(s_big, SCR_W, SCR_W);
+    lv_obj_set_style_bg_color(s_big, lv_color_hex(C_BG), 0);
+    lv_obj_set_style_bg_opa(s_big, LV_OPA_COVER, 0);
+    // Centred both ways: on the round panels that is where the circle is widest
+    lv_obj_set_style_pad_ver(s_big, BIG_PAD_TOP, 0);
+    lv_obj_set_style_pad_hor(s_big, BIG_PAD_SIDE, 0);
+    lv_obj_set_flex_flow(s_big, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_big, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_scrollable(s_big, false);
+    lv_obj_set_clickable(s_big, true);
+    lv_obj_add_event_cb(s_big, on_big_click, LV_EVENT_SHORT_CLICKED, NULL);
+    lv_obj_add_event_cb(s_big, on_scope_long_press, LV_EVENT_LONG_PRESSED, NULL);
+    lv_obj_remove_flag(s_big, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_event_cb(s_big, on_gesture, LV_EVENT_GESTURE, NULL);
+    lv_obj_set_hidden(s_big, true);
+
+    s_big_body = big_box(s_big, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_width(s_big_body, LV_PCT(100));
+    lv_obj_set_style_pad_row(s_big_body, CARD_PAD / 2, 0);
+
+    lv_obj_t *head = big_box(s_big_body, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(head, CARD_PAD, 0);
+    s_big_flag = lv_image_create(head);
+    lv_obj_set_hidden(s_big_flag, true);
+#ifdef HAS_LOGO
+    s_big_logo_box = big_box(head, LV_FLEX_FLOW_ROW);
+    lv_obj_set_size(s_big_logo_box, LOGO_MAX_W + 12, LOGO_MAX_H + 10);
+    lv_obj_set_style_bg_color(s_big_logo_box, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(s_big_logo_box, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_big_logo_box, 8, 0);
+    s_big_logo = lv_image_create(s_big_logo_box);
+    lv_obj_set_hidden(s_big_logo_box, true);
+#endif
+
+    s_big_call = big_label(s_big_body, &F_BIG, C_SELECT);
+    s_big_airline = big_label(s_big_body, &F_BIG_TEXT, C_TEXT);
+
+    // Altitude and speed side by side, the largest things on the screen
+    lv_obj_t *nums = big_box(s_big_body, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(nums, CARD_PAD * 3, 0);
+    lv_obj_set_style_pad_ver(nums, CARD_PAD / 2, 0);
+    lv_obj_t *left = big_box(nums, LV_FLEX_FLOW_COLUMN);
+    s_big_alt = big_label(left, &F_BIG, C_TEXT);
+    s_big_vs = big_label(left, &F_BIG_TEXT, C_DIM);
+    lv_obj_t *right = big_box(nums, LV_FLEX_FLOW_COLUMN);
+    lv_obj_t *speed = big_box(right, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(speed, CARD_PAD / 2, 0);
+    s_big_pointer = lv_obj_create(speed);
+    lv_obj_remove_style_all(s_big_pointer);
+    const int ptr = (int)(26 * BIG_POINTER);
+    lv_obj_set_size(s_big_pointer, ptr, ptr);
+    lv_obj_set_clickable(s_big_pointer, false);
+    lv_obj_add_event_cb(s_big_pointer, on_big_pointer_draw, LV_EVENT_DRAW_MAIN, NULL);
+    s_big_gs = big_label(speed, &F_BIG, C_TEXT);
+    s_big_trk = big_label(right, &F_BIG_TEXT, C_DIM);
+
+    s_big_where = big_label(s_big_body, &F_BIG_TEXT, C_TEXT);
+    s_big_route = big_label(s_big_body, &F_BIG_MID, C_TEXT);
+    s_big_places = big_label(s_big_body, &F_BIG_TEXT, C_TEXT);
+    lv_obj_set_width(s_big_places, LV_PCT(100));
+    lv_label_set_long_mode(s_big_places, LV_LABEL_LONG_WRAP); // a multi-leg route can be long
+    s_big_sub = big_label(s_big_body, &F_BIG_TEXT, C_DIM);
+    s_big_foot = big_label(s_big_body, &F_STATUS, C_DIM);
+    lv_obj_set_style_pad_top(s_big_foot, CARD_PAD, 0);
+
+    s_big_empty = big_label(s_big, &F_BIG_TEXT, C_DIM);
+    lv_label_set_text(s_big_empty, "No aircraft in range\n\nSwipe for the radar");
+    lv_obj_set_hidden(s_big_empty, true);
+}
+
+#ifndef HAS_LIST
+static void show_view(int view);
+
+// A row opens its aircraft in the big view
+static void on_rl_row_click(lv_event_t *e)
+{
+    if (swiped()) return;
+    const int r = (int)(intptr_t)lv_event_get_user_data(e);
+    if (!s_rl_hex[r][0]) return;
+    show_view(VIEW_BIG);
+    strlcpy(s_big_pick, s_rl_hex[r], sizeof(s_big_pick)); // not a selection: no card back on the scope
+    refresh();
+}
+
+static void create_rlist(lv_obj_t *scr)
+{
+    static const int xs[6] = RL_COLS;
+    s_rlist = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_rlist);
+    lv_obj_set_size(s_rlist, SCR_W, SCR_W);
+    lv_obj_set_style_bg_color(s_rlist, lv_color_hex(C_BG), 0);
+    lv_obj_set_style_bg_opa(s_rlist, LV_OPA_COVER, 0);
+    lv_obj_set_flex_flow(s_rlist, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_rlist, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_scrollable(s_rlist, false);
+    lv_obj_set_clickable(s_rlist, true);
+    lv_obj_remove_flag(s_rlist, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_event_cb(s_rlist, on_gesture, LV_EVENT_GESTURE, NULL);
+    lv_obj_add_event_cb(s_rlist, on_scope_long_press, LV_EVENT_LONG_PRESSED, NULL);
+    lv_obj_set_hidden(s_rlist, true);
+
+    s_rl_title = big_label(s_rlist, &F_CLOCK, C_TEXT);
+    lv_obj_set_style_margin_bottom(s_rl_title, CARD_PAD / 2, 0);
+    lv_obj_t *head = lv_obj_create(s_rlist);
+    lv_obj_remove_style_all(head);
+    lv_obj_set_size(head, RL_W, lv_font_get_line_height(&F_RL_HEAD) + 6);
+    lv_obj_set_clickable(head, false);
+    for (int k = 0; k < 6; k++) {
+        lv_obj_t *h = make_label(head, &F_RL_HEAD, C_DIM);
+        lv_label_set_text(h, LIST_HEAD[k]);
+        lv_obj_set_pos(h, xs[k] + 8, 0);
+    }
+    for (int r = 0; r < RL_ROWS; r++) {
+        lv_obj_t *row = lv_obj_create(s_rlist);
+        lv_obj_remove_style_all(row);
+        lv_obj_set_size(row, RL_W, RL_ROW_H);
+        lv_obj_set_scrollable(row, false);
+        lv_obj_set_style_radius(row, 8, 0);
+        lv_obj_set_style_bg_color(row, lv_color_hex(0x0e2a20), 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_add_event_cb(row, on_rl_row_click, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)r);
+        for (int k = 0; k < 6; k++) {
+            s_rl_cells[r][k] = make_label(row, &F_RL, k == 0 ? C_SELECT : C_TEXT);
+            lv_obj_align(s_rl_cells[r][k], LV_ALIGN_LEFT_MID, xs[k] + 8, 0);
+        }
+        lv_obj_set_hidden(row, true);
+        s_rl_rows[r] = row;
+    }
+}
+#endif
 
 // The history and its screen points, once trails are on
 static void start_trails(void)
@@ -1554,11 +2100,10 @@ static void create_panel(lv_obj_t *scr)
     lv_obj_set_width(list, LV_PCT(100));
     lv_obj_set_flex_grow(list, 1);
 
-    static const char *const HEAD[] = {"CALLSIGN", "TYPE", "ALT", "GS KT", "NM", "BRG"};
     const int *xs = s_panel->list_cols;
     for (int k = 0; k < 6; k++) {
         lv_obj_t *h = make_label(list, &F_LIST_HEAD, C_DIM);
-        lv_label_set_text(h, HEAD[k]);
+        lv_label_set_text(h, LIST_HEAD[k]);
         lv_obj_set_pos(h, xs[k] + 8, 0);
     }
 
@@ -1772,7 +2317,17 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     lv_obj_set_style_pad_ver(s_alert_lbl, CARD_PAD / 3, 0);
     lv_obj_set_clickable(s_alert_lbl, true);
     lv_obj_add_event_cb(s_alert_lbl, on_alert_click, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(s_alert_lbl, LV_OBJ_FLAG_FLOATING); // aligned to the scope, not laid out
+    lv_obj_set_style_margin_bottom(s_alert_lbl, CARD_PAD, 0); // from the flag, in the big view
     lv_obj_set_hidden(s_alert_lbl, true);
+    // LVGL sends a swipe to the first object up from the touched one that
+    // doesn't pass it to its parent, and objects pass it on by default
+    lv_obj_remove_flag(s_scope, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_add_event_cb(s_scope, on_gesture, LV_EVENT_GESTURE, NULL);
+    create_big(scr);
+#ifndef HAS_LIST
+    create_rlist(scr);
+#endif
 
 #ifdef HAS_LIST
     create_panel(scr);
@@ -1844,7 +2399,7 @@ void radar_ui_set_status(const char *text)
 void radar_ui_apply_settings(const settings_t *old)
 {
     const settings_t *s = settings();
-    if (s->sweep != old->sweep) show_sweep(s->sweep);
+    if (s->sweep != old->sweep) show_sweep(s->sweep && s_view == VIEW_RADAR);
     if (s->trail_s != old->trail_s) start_trails();
     // The starting range, chosen again: go to it now
     if (s->range_idx != old->range_idx && s->range_idx != s_range_idx) {

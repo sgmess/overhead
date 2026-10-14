@@ -455,8 +455,8 @@ static esp_err_t on_settings(httpd_req_t *req)
 // off in the defaults, so releases have none of this): the screen as raw
 // RGB565, X-Size giving width, height and stride, and the settings screen or
 // an aircraft's card (?hex=4010ee) opened without a finger; &emerg=1 makes
-// that aircraft squawk 7700, &emerg=0 stops it. How the invisible sliders
-// were found.
+// that aircraft squawk 7700, &emerg=0 stops it, and &view=radar, big or
+// list swipes. How the invisible sliders were found.
 #include "lvgl.h"
 #include "radar_ui.h"
 #include "settings_ui.h"
@@ -483,13 +483,15 @@ static esp_err_t on_debug_settings(httpd_req_t *req)
 }
 static esp_err_t on_debug_select(httpd_req_t *req)
 {
-    char query[48], hex[8] = "", emerg[4] = "";
+    char query[64], hex[8] = "", emerg[4] = "", view[8] = "";
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
         httpd_query_key_value(query, "hex", hex, sizeof(hex));
         httpd_query_key_value(query, "emerg", emerg, sizeof(emerg));
+        httpd_query_key_value(query, "view", view, sizeof(view));
     }
     board_lock();
     if (emerg[0]) radar_ui_debug_emergency(emerg[0] == '1' ? hex : NULL);
+    if (view[0]) radar_ui_debug_view(strcmp(view, "big") == 0 ? 1 : strcmp(view, "list") == 0 ? 2 : 0);
     radar_ui_select(hex[0] ? hex : NULL);
     board_unlock();
     return send_result(req, ESP_OK, NULL);
