@@ -281,7 +281,7 @@ static void update_ota(void)
     if (checking) {
         snprintf(buf, sizeof(buf), "Checking GitHub...");
     } else if (installing) {
-        snprintf(buf, sizeof(buf), "Installing %s: %d%%. Keep it powered; it restarts when done.", o.latest,
+        snprintf(buf, sizeof(buf), "Installing %s: %d%%. Keep it powered; it restarts automatically.", o.latest,
                  o.progress);
         lv_bar_set_value(s_ota_bar, o.progress, LV_ANIM_OFF);
     } else if (strcmp(o.state, "error") == 0) {

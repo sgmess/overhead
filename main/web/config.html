@@ -666,7 +666,7 @@ function showOta(o) {
   if (o.state === 'checking') {
     st.textContent = 'Checking GitHub…';
   } else if (o.state === 'installing') {
-    st.textContent = 'Downloading and installing ' + o.latest + ': ' + o.progress + '%. Keep the Tab5 powered.';
+    st.textContent = 'Downloading and installing ' + o.latest + ': ' + o.progress + '%. Keep it powered; it restarts automatically.';
     $('ota-fill').style.width = o.progress + '%';
   } else if (o.state === 'error') {
     st.textContent = o.detail + '.';
