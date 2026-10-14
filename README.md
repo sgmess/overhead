@@ -22,7 +22,10 @@ point on a radar scope.
 - Origin and destination in the aircraft card, from
   [adsb.im](https://adsb.im)'s route database (the one tar1090 uses), with
   the flight number, the airline's name and logo, and the flag of the
-  country the aircraft is registered in, all worked out on the device.
+  country the aircraft is registered in, all worked out on the device; how
+  far along its route it is ("LHR > JFK • 23%"); its registered owner,
+  when that isn't the airline, and for US registrations the year it was
+  built; and in the big view a photo from [planespotters.net](https://www.planespotters.net).
 - An overhead alert: an aircraft within a set distance and below a set
   altitude blinks amber, a banner names it, and the Tab5 or 3.4C chimes.
 - An emergency alert: any aircraft in range squawking 7700, 7600 or 7500, or
@@ -34,8 +37,10 @@ point on a radar scope.
 - Brightness, with dimming from sunset to sunrise at the radar centre or
   between set times, and the screen fully off overnight if wanted: a touch
   wakes it (and does nothing else), and it goes off again two minutes later.
-- Today's traffic on the configuration page: aircraft seen, military, the
-  busiest hour, the highest and fastest, and a bar chart by hour.
+- Traffic stats on the configuration page: today's aircraft seen, military,
+  the busiest hour, the highest and fastest, the top airlines and a bar chart
+  by hour; and over the days, the average day of the last week, the most in
+  a day and the running total, kept through restarts.
 - Positions are moved forward between polls using ground speed and track, so
   traffic moves smoothly instead of jumping every few seconds.
 - Emergency squawks (7500/7600/7700) are drawn red and circled.
@@ -76,7 +81,8 @@ The big view shows one aircraft in large type, for across the room: flag and
 logo, callsign, flight number and airline, altitude in its scope colour with
 which way it is going, speed with an arrow along its track (north up, as on
 the scope), then distance, bearing and squawk, the route with the airports'
-towns ("SDF > CGN", "Louisville > Cologne"), registration and type. The card
+towns ("SDF > CGN", "Louisville > Cologne") and how far along it is,
+registration and type, the owner and age, and a photo. The card
 only shows with the scope, and whatever the big view or a list picks stays
 selected there when you swipe back. An aircraft that has just started an
 emergency or come overhead takes the big view over until it stops or a tap
@@ -249,14 +255,38 @@ it nor chime meanwhile. The configuration page's sliders still preview.
 The day's counts (`main/stats.c`) take each aircraft once by ICAO address,
 in a table in PSRAM, if it comes within the radar's range; an hour's bar is
 the aircraft seen in that hour. Altitudes over 60,000 ft and speeds over
-750 kt are taken as glitches. They start again at local midnight, and at a
-restart, as they are kept only in RAM. The chime is the Tab5's ES8388 and speaker, or
+750 kt are taken as glitches. An airline's count is its aircraft, by the
+three letters their callsigns start with, once each when the callsign first
+shows; airlines that fly as two codes (BAW and SHT) are added together on
+the page. At local midnight the day goes into a history of the last 30, from
+which the page shows the average of the last week's whole days (counted from
+midnight to midnight, so a day the device was off for part of doesn't pull
+it down), the most in a day and the running total. Every 10 minutes while
+they change, at least hourly, and as the device restarts, the counts and the
+history are saved to a `stats` partition (eight 32 KB slots written in turn,
+to spread the wear), so a restart or an update carries on with the day; a
+day that ended while the device was off is added to the history at the next
+start. A device that has only ever been updated over WiFi has no such
+partition and starts again at each restart. The chime is the Tab5's ES8388 and speaker, or
 the 3.4C's ES8311 and a speaker on its header, opened for each chime so the
 amplifier is off between them.
 
 Routes are looked up only for the aircraft whose card is open, one request
 per callsign per session, and sent with its position so adsb.im can say
-whether the route fits (a "?" after it when not).
+whether the route fits (a "?" after it when not). How far along it is
+comes from the airports' positions in the same answer: the share of the leg
+it is on that it has flown, great circle, and in the big view the miles to
+go.
+
+The owner is the feed's `ownOp`, which only US registrations have (from the
+FAA's register, with the `year` it was built), or else
+[adsbdb.com](https://www.adsbdb.com)'s registered owner, looked up by ICAO
+address for the aircraft on show. The photo in the big view is the first
+of planespotters.net's photos of the registration, credited to its
+photographer as their terms ask, fetched once and scaled to 150 pixels high.
+planespotters.net serves progressive JPEGs, which neither the P4's hardware
+decoder nor LVGL's TJPGD can read, so `main/third_party/stb_image.h` decodes
+them. Both are looked up one aircraft at a time and the last 16 are kept.
 
 The flight number is shown only for a callsign of an airline's code and
 digits, BAW189 as BA189, which is usually the flight number; alphanumeric
@@ -403,7 +433,8 @@ nobody has measured, so it reports none.
 | `main/backlight.c` | Brightness, night dimming by sun elevation or clock, sleep, the page's preview |
 | `main/stats.c` | Today's counts for the configuration page |
 | `main/trails.c` | Position history per aircraft for the trails |
-| `main/route.c` | Origin and destination by callsign from adsb.im, cached |
+| `main/route.c` | Origin and destination by callsign from adsb.im, cached, and how far along it is |
+| `main/details.c` | The registered owner from adsbdb.com and a photo from planespotters.net, by ICAO address |
 | `main/airlines.c`, `main/countries.c`, `main/flags.c`, `main/logos.c` | Airline, flight number and logo by callsign; country by ICAO address, and its flag |
 | `tools/` | `make_flags.py` and `make_logos.py`, which build `main/flags.bin` and `main/logos.bin` |
 | `main/settings_ui.c` | The on-device settings screen |
@@ -423,12 +454,14 @@ each fetched only for its own board.
 ## Licence
 
 Apache License 2.0; see [LICENSE](LICENSE). The vendored 2.8C BSP keeps its
-own Apache-2.0 terms. The flag images in `main/flags.bin` are from
+own Apache-2.0 terms. `main/third_party/stb_image.h` is Sean Barrett's,
+public domain or MIT. The flag images in `main/flags.bin` are from
 [Twemoji](https://github.com/jdecked/twemoji), Copyright 2019 Twitter, Inc
 and other contributors, licensed under
 [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/); they were scaled
 down for the screen. The airline logos in `main/logos.bin` are trademarks of
 their airlines and are not covered by this licence. The licence covers this code only: aircraft data from
-adsb.fi and adsb.lol, routes from adsb.im, airspace from OpenAIP and the
+adsb.fi and adsb.lol, routes from adsb.im, owners from adsbdb.com, photos
+from planespotters.net (each its photographer's), airspace from OpenAIP and the
 IP-location answers from ipinfo.io and ipwho.is are under those services'
 own terms.

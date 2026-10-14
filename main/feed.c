@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "cJSON.h"
@@ -138,6 +139,10 @@ static bool parse_aircraft(const cJSON *j, int64_t now_us, aircraft_t *a)
     copy_str(a->reg, sizeof(a->reg), cJSON_GetObjectItemCaseSensitive(j, "r"));
     copy_str(a->type, sizeof(a->type), cJSON_GetObjectItemCaseSensitive(j, "t"));
     copy_str(a->squawk, sizeof(a->squawk), cJSON_GetObjectItemCaseSensitive(j, "squawk"));
+    copy_str(a->owner, sizeof(a->owner), cJSON_GetObjectItemCaseSensitive(j, "ownOp"));
+    // A string, "2001"
+    const cJSON *year = cJSON_GetObjectItemCaseSensitive(j, "year");
+    if (cJSON_IsString(year)) a->year = (uint16_t)atoi(year->valuestring);
 
     // alt_baro is a number, or the string "ground"
     const cJSON *alt = cJSON_GetObjectItemCaseSensitive(j, "alt_baro");

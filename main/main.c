@@ -19,6 +19,7 @@
 #include "openaip.h"
 #include "ota.h"
 #include "radar_ui.h"
+#include "details.h"
 #include "route.h"
 #include "settings.h"
 #include "stats.h"
@@ -215,6 +216,7 @@ void app_main(void)
     feed_init();
     net_start();
     route_start();
+    details_start();
     ota_start_auto_check();
     // TLS and JSON parsing buffers are in PSRAM; this is just call depth.
     xTaskCreate(fetch_task, "fetch", FETCH_STACK, NULL, 5, &s_fetch_task);

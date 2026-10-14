@@ -31,6 +31,8 @@ typedef struct {
     char reg[12];
     char type[6];
     char squawk[6];
+    char owner[40];      // registered owner, from the feed's database: US registrations only
+    uint16_t year;       // built, likewise; 0 when unknown
     double lat, lon;
     int32_t alt_ft;      // AC_ALT_UNKNOWN when missing
     int32_t vs_fpm;      // 0 when missing

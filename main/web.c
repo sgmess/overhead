@@ -1,11 +1,14 @@
 #include "web.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "backlight.h"
 #include "board.h"
 #include "battery.h"
+#include "airlines.h"
 #include "cJSON.h"
 #include "esp_app_desc.h"
 #include "esp_heap_caps.h"
@@ -155,6 +158,17 @@ static void add_time(cJSON *obj, const char *key, time_t t)
     cJSON_AddStringToObject(obj, key, buf);
 }
 
+// "Mon 13 Oct"
+static void fmt_day(time_t t, char *out, size_t n)
+{
+    struct tm tm;
+    localtime_r(&t, &tm);
+    char wday[8], mon[8];
+    strftime(wday, sizeof(wday), "%a", &tm);
+    strftime(mon, sizeof(mon), "%b", &tm);
+    snprintf(out, n, "%s %d %s", wday, tm.tm_mday, mon);
+}
+
 static void add_record(cJSON *obj, const char *key, const stats_record_t *r)
 {
     if (!r->value) return;
@@ -177,6 +191,52 @@ static void add_stats(cJSON *json)
     cJSON_AddItemToObject(o, "hours", cJSON_CreateIntArray(st.hours, 24));
     add_record(o, "highest", &st.highest);
     add_record(o, "fastest", &st.fastest);
+
+    // The top five, as one where an airline flies as two codes (BAW and
+    // SHT, British Airways' Shuttle), most first
+    struct {
+        const char *name; // the code when it isn't a known airline
+        int count;
+    } top[STATS_TOP_AIRLINES];
+    int n_top = 0;
+    for (int k = 0; k < STATS_TOP_AIRLINES && st.airlines[k].count; k++) {
+        const airline_t *known = airline_find(st.airlines[k].icao);
+        const char *name = known ? known->name : st.airlines[k].icao;
+        int j = 0;
+        while (j < n_top && strcmp(top[j].name, name) != 0) j++;
+        if (j == n_top) top[n_top++] = (typeof(top[0])){name, 0};
+        top[j].count += st.airlines[k].count;
+        while (j > 0 && top[j].count > top[j - 1].count) { // back into order
+            const typeof(top[0]) t = top[j];
+            top[j] = top[j - 1];
+            top[--j] = t;
+        }
+    }
+    cJSON *airlines = cJSON_AddArrayToObject(o, "airlines");
+    for (int k = 0; k < n_top && k < 5; k++) {
+        cJSON *al = cJSON_CreateObject();
+        cJSON_AddStringToObject(al, "name", top[k].name);
+        cJSON_AddNumberToObject(al, "count", top[k].count);
+        cJSON_AddItemToArray(airlines, al);
+    }
+
+    // The days before
+    if (st.week_days) {
+        cJSON_AddNumberToObject(o, "week_avg", st.week_avg);
+        cJSON_AddNumberToObject(o, "week_days", st.week_days);
+    }
+    char day[32];
+    if (st.best_seen) {
+        cJSON *best = cJSON_AddObjectToObject(o, "best");
+        fmt_day(st.best_day, day, sizeof(day));
+        cJSON_AddStringToObject(best, "day", day);
+        cJSON_AddNumberToObject(best, "seen", st.best_seen);
+    }
+    cJSON *total = cJSON_AddObjectToObject(o, "total");
+    cJSON_AddNumberToObject(total, "seen", (double)st.total_seen);
+    cJSON_AddNumberToObject(total, "days", st.total_days);
+    fmt_day(st.total_since, day, sizeof(day));
+    cJSON_AddStringToObject(total, "since", day);
 }
 
 // ---------------------------------------------------------------- pages

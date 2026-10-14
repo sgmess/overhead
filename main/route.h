@@ -9,10 +9,23 @@
 void route_start(void);
 
 #define ROUTE_PLACES_MAX 64
+#define ROUTE_STOPS_MAX 4
 
-// The route for callsign as "LHR-JFK" into out, " ?" added when it doesn't
-// fit the position, and where those airports are as "London|New York" into
-// places; each "" while it is being looked up or when nobody knows it. A miss
-// queues a lookup; (lat, lon) is where the aircraft is, which lets the
-// service say whether the route fits. Safe from any task.
-void route_get(const char *callsign, double lat, double lon, char *out, size_t n, char *places, size_t pn);
+typedef struct {
+    char codes[40];                // "LHR-JFK", " ?" added when it doesn't fit the position
+    char places[ROUTE_PLACES_MAX]; // where those airports are, "London|New York"
+    bool plausible;                // the service thinks it fits the position
+    int stops;                     // airports with a position: 0 unless all have one
+    float lat[ROUTE_STOPS_MAX], lon[ROUTE_STOPS_MAX];
+} route_t;
+
+// The route for callsign into out, false (and out empty) while it is being
+// looked up or when nobody knows it. A miss queues a lookup; (lat, lon) is
+// where the aircraft is, which lets the service say whether the route fits.
+// Safe from any task.
+bool route_get(const char *callsign, double lat, double lon, route_t *out);
+
+// How far an aircraft at (lat, lon) is along r: the share of its leg flown,
+// in percent, and the nautical miles to that leg's end. False when r has no
+// positions or doesn't fit.
+bool route_progress(const route_t *r, double lat, double lon, int *percent, int *to_go_nm);

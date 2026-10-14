@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 
 #include "backlight.h"
@@ -12,10 +13,12 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "lvgl.h"
+#include "misc/cache/lv_cache.h" // lv_image_cache_drop(), not in lvgl.h
 #include "openaip.h"
 #include "route.h"
 #include "airlines.h"
 #include "countries.h"
+#include "details.h"
 #include "flags.h"
 #include "logos.h"
 #include "settings.h"
@@ -315,7 +318,7 @@ static void (*s_on_range_change)(void);
 
 static lv_obj_t *s_scope, *s_clock, *s_clock2, *s_range_lbl, *s_status_lbl, *s_alert_lbl;
 static lv_obj_t *s_card, *s_card_flag, *s_card_title, *s_card_route, *s_card_airline, *s_card_sub;
-static lv_obj_t *s_card_k1, *s_card_v1, *s_card_k2, *s_card_v2;
+static lv_obj_t *s_card_k1, *s_card_v1, *s_card_k2, *s_card_v2, *s_card_info;
 static char s_card_iso[3]; // the flag showing; "" for none
 #ifdef HAS_LOGO
 static lv_obj_t *s_card_logo_box, *s_card_logo;
@@ -1241,10 +1244,80 @@ static void fmt_route(const aircraft_t *a, char *route, size_t size, char *place
     route[0] = '\0';
     if (places) places[0] = '\0';
     if (!settings()->show_route) return;
-    char raw[40], raw_places[ROUTE_PLACES_MAX];
-    route_get(a->callsign, a->lat, a->lon, raw, sizeof(raw), raw_places, sizeof(raw_places));
-    arrows(raw, '-', route, size);
-    if (places) arrows(raw_places, '|', places, places_size);
+    route_t r;
+    route_get(a->callsign, a->lat, a->lon, &r);
+    arrows(r.codes, '-', route, size);
+    if (places) arrows(r.places, '|', places, places_size);
+}
+
+// How far along its route a is: "23%", or in full "23% of the way  •
+// 2,610 NM to go"; "" when there is no route or it doesn't fit
+static void fmt_progress(const aircraft_t *a, bool full, char *out, size_t n)
+{
+    out[0] = '\0';
+    if (!settings()->show_route) return;
+    route_t r;
+    int pct, to_go;
+    if (!route_get(a->callsign, a->lat, a->lon, &r) || !route_progress(&r, a->lat, a->lon, &pct, &to_go)) return;
+    if (!full) {
+        snprintf(out, n, "%d%%", pct);
+        return;
+    }
+    char num[16];
+    fmt_thousands(num, sizeof(num), to_go);
+    snprintf(out, n, "%d%% of the way  " LV_SYMBOL_BULLET "  %s NM to go", pct, num);
+}
+
+// An owner's name as the FAA's register has it, "UNITED AIRLINES INC", as
+// "United Airlines Inc"; words without a vowel, "LLC", stay as they are
+static void tidy_name(char *s)
+{
+    for (const char *c = s; *c; c++) {
+        if (*c >= 'a' && *c <= 'z') return; // someone has cased it already
+    }
+    for (char *w = s; *w;) {
+        char *end = w;
+        bool vowel = false;
+        while (*end && *end != ' ') {
+            if (strchr("AEIOUY", *end)) vowel = true;
+            end++;
+        }
+        if (vowel) {
+            for (char *c = w + 1; c < end; c++) {
+                if (*c >= 'A' && *c <= 'Z') *c += 'a' - 'A';
+            }
+        }
+        w = *end ? end + 1 : end;
+    }
+}
+
+// "Wells Fargo Trust Co  •  built 2001, 25 years old": the registered owner,
+// unless it is the airline the callsign already names, and when it was built
+// (which only the feed knows, and only for US registrations)
+static void fmt_info(const aircraft_t *a, const airline_t *al, char *out, size_t n)
+{
+    out[0] = '\0';
+    char owner[48];
+    if (a->owner[0]) {
+        strlcpy(owner, a->owner, sizeof(owner));
+    } else {
+        details_owner(a->hex, owner, sizeof(owner));
+    }
+    tidy_name(owner);
+    if (owner[0] && !(al && strncasecmp(owner, al->name, strlen(al->name)) == 0)) strlcpy(out, owner, n);
+    if (!a->year) return;
+    const time_t now = time(NULL);
+    struct tm tm;
+    localtime_r(&now, &tm);
+    const int age = tm.tm_year + 1900 - a->year;
+    char built[40];
+    if (tm.tm_year >= 120 && age >= 2) {
+        snprintf(built, sizeof(built), "built %d, %d years old", a->year, age);
+    } else {
+        snprintf(built, sizeof(built), "built %d", a->year);
+    }
+    if (out[0]) strlcat(out, "  " LV_SYMBOL_BULLET "  ", n);
+    strlcat(out, built, n);
 }
 
 // "BA117  •  British Airways", or the country for anything not an airline's;
@@ -1335,8 +1408,13 @@ static void update_card(void)
     const country_t *country = country_for_hex(a->hex);
     update_card_flag(country ? country->iso : "");
 
-    char route[48];
+    char route[64], progress[16];
     fmt_route(a, route, sizeof(route), NULL, 0);
+    fmt_progress(a, false, progress, sizeof(progress));
+    if (route[0] && progress[0]) {
+        strlcat(route, "  " LV_SYMBOL_BULLET "  ", sizeof(route));
+        strlcat(route, progress, sizeof(route));
+    }
     set_text_if_changed(s_card_route, route);
     lv_obj_set_hidden(s_card_route, !route[0]);
 
@@ -1350,6 +1428,17 @@ static void update_card(void)
     char sub[64];
     fmt_sub(a, true, sub, sizeof(sub));
     lv_label_set_text(s_card_sub, sub);
+
+    // The owner and age, when known, on a line of their own that moves the
+    // figures down
+    char info[96];
+    fmt_info(a, al, info, sizeof(info));
+    set_text_if_changed(s_card_info, info);
+    lv_obj_set_hidden(s_card_info, !info[0]);
+    const int extra = info[0] ? CARD_LINE : 0;
+    lv_obj_t *cols[] = {s_card_k1, s_card_v1, s_card_k2, s_card_v2};
+    for (int k = 0; k < 4; k++) lv_obj_set_y(cols[k], CARD_ROWS_Y + CARD_LINE + extra);
+    lv_obj_set_height(s_card, CARD_H + CARD_LINE + extra);
 
     fmt_alt(a, alt, sizeof(alt));
     fmt_vs(a, vs, sizeof(vs));
@@ -1455,7 +1544,10 @@ static void update_list(void)
 
 static lv_obj_t *s_big, *s_big_flag, *s_big_logo_box, *s_big_logo, *s_big_call, *s_big_airline;
 static lv_obj_t *s_big_alt, *s_big_vs, *s_big_pointer, *s_big_gs, *s_big_trk, *s_big_where;
-static lv_obj_t *s_big_route, *s_big_places, *s_big_sub, *s_big_foot, *s_big_body, *s_big_empty;
+static lv_obj_t *s_big_pic, *s_big_photo, *s_big_credit; // the photo and who took it, in s_big_pic
+static lv_image_dsc_t s_photo_dsc;
+static char s_photo_hex[8]; // whose photo is in s_photo_dsc; "" for none
+static lv_obj_t *s_big_route, *s_big_places, *s_big_progress, *s_big_info, *s_big_sub, *s_big_foot, *s_big_body, *s_big_empty;
 static char s_big_iso[3], s_big_icao[4] = "-";
 static float s_big_ptr_rad;
 static lv_color_t s_big_ptr_color;
@@ -1523,6 +1615,34 @@ static int big_target(char *why, size_t n)
     }
     snprintf(why, n, "Nearest of %d  " LV_SYMBOL_BULLET "  tap for the next", n_airborne);
     return i;
+}
+
+// The photo, once it has come
+static void update_big_photo(const aircraft_t *a)
+{
+    if (strcmp(s_photo_hex, a->hex) != 0) {
+        s_photo_hex[0] = '\0';
+        int w, h;
+        char credit[48];
+        if (s_photo_dsc.data &&
+            details_photo(a->hex, a->reg, (uint16_t *)s_photo_dsc.data, &w, &h, credit, sizeof(credit))) {
+            strlcpy(s_photo_hex, a->hex, sizeof(s_photo_hex));
+            s_photo_dsc.header.w = w;
+            s_photo_dsc.header.h = h;
+            s_photo_dsc.header.stride = w * 2;
+            s_photo_dsc.data_size = w * h * 2;
+            lv_image_cache_drop(&s_photo_dsc); // the same buffer, a new picture
+            lv_image_set_src(s_big_photo, &s_photo_dsc);
+            lv_obj_invalidate(s_big_photo);
+            // planespotters.net asks that the photographer is named
+#ifdef HAS_LIST
+            lv_label_set_text_fmt(s_big_credit, "Photo %s\nplanespotters.net", credit); // under the photo
+#else
+            lv_label_set_text_fmt(s_big_credit, "Photo %s  " LV_SYMBOL_BULLET "  planespotters.net", credit);
+#endif
+        }
+    }
+    lv_obj_set_hidden(s_big_pic, !s_photo_hex[0]);
 }
 
 static void update_big(void)
@@ -1606,9 +1726,18 @@ static void update_big(void)
     lv_obj_set_hidden(s_big_route, !route[0]);
     set_text_if_changed(s_big_places, places);
     lv_obj_set_hidden(s_big_places, !places[0]);
+    char progress[64];
+    fmt_progress(a, true, progress, sizeof(progress));
+    set_text_if_changed(s_big_progress, progress);
+    lv_obj_set_hidden(s_big_progress, !progress[0]);
     char sub[64];
     fmt_sub(a, false, sub, sizeof(sub));
     set_text_if_changed(s_big_sub, sub);
+    char info[96];
+    fmt_info(a, airline_for_callsign(a->callsign), info, sizeof(info));
+    set_text_if_changed(s_big_info, info);
+    lv_obj_set_hidden(s_big_info, !info[0]);
+    update_big_photo(a);
     set_text_if_changed(s_big_foot, why);
 }
 
@@ -1861,7 +1990,17 @@ static void create_big(lv_obj_t *scr)
     lv_obj_set_width(s_big_body, LV_PCT(100));
     lv_obj_set_style_pad_row(s_big_body, CARD_PAD / 2, 0);
 
-    lv_obj_t *head = big_box(s_big_body, LV_FLEX_FLOW_ROW);
+#ifdef HAS_LIST
+    // The Tab5's square is wide enough for the photo beside who it is
+    lv_obj_t *top = big_box(s_big_body, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(top, CARD_PAD * 2, 0);
+    lv_obj_t *who = big_box(top, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(who, CARD_PAD / 2, 0);
+    s_big_pic = big_box(top, LV_FLEX_FLOW_COLUMN);
+#else
+    lv_obj_t *who = s_big_body;
+#endif
+    lv_obj_t *head = big_box(who, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_column(head, CARD_PAD, 0);
     s_big_flag = lv_image_create(head);
     lv_obj_set_hidden(s_big_flag, true);
@@ -1875,8 +2014,8 @@ static void create_big(lv_obj_t *scr)
     lv_obj_set_hidden(s_big_logo_box, true);
 #endif
 
-    s_big_call = big_label(s_big_body, &F_BIG, C_SELECT);
-    s_big_airline = big_label(s_big_body, &F_BIG_TEXT, C_TEXT);
+    s_big_call = big_label(who, &F_BIG, C_SELECT);
+    s_big_airline = big_label(who, &F_BIG_TEXT, C_TEXT);
 
     // Altitude and speed side by side, the largest things on the screen
     lv_obj_t *nums = big_box(s_big_body, LV_FLEX_FLOW_ROW);
@@ -1902,7 +2041,24 @@ static void create_big(lv_obj_t *scr)
     s_big_places = big_label(s_big_body, &F_BIG_TEXT, C_TEXT);
     lv_obj_set_width(s_big_places, LV_PCT(100));
     lv_label_set_long_mode(s_big_places, LV_LABEL_LONG_WRAP); // a multi-leg route can be long
+    s_big_progress = big_label(s_big_body, &F_BIG_TEXT, C_TEXT);
     s_big_sub = big_label(s_big_body, &F_BIG_TEXT, C_DIM);
+    s_big_info = big_label(s_big_body, &F_BIG_TEXT, C_DIM);
+    lv_obj_set_width(s_big_info, LV_PCT(100));
+    lv_label_set_long_mode(s_big_info, LV_LABEL_LONG_WRAP);
+    // A photo of it, once it has come, and who took it: on the round boards
+    // at the foot, where there is room
+#ifndef HAS_LIST
+    s_big_pic = big_box(s_big_body, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_top(s_big_pic, CARD_PAD / 2, 0);
+#endif
+    lv_obj_set_style_pad_row(s_big_pic, 4, 0);
+    lv_obj_set_hidden(s_big_pic, true);
+    s_big_photo = lv_image_create(s_big_pic);
+    s_big_credit = big_label(s_big_pic, &F_STATUS, C_DIM);
+    s_photo_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+    s_photo_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+    s_photo_dsc.data = heap_caps_malloc(DETAILS_PHOTO_W_MAX * DETAILS_PHOTO_H * 2, MALLOC_CAP_SPIRAM);
     s_big_foot = big_label(s_big_body, &F_STATUS, C_DIM);
     lv_obj_set_style_pad_top(s_big_foot, CARD_PAD, 0);
 
@@ -2083,6 +2239,12 @@ static void create_card(lv_obj_t *parent)
     lv_obj_set_pos(s_card_airline, 0, CARD_SUB_Y);
     s_card_sub = make_label(s_card, &F_CARD, C_TEXT);
     lv_obj_set_pos(s_card_sub, 0, CARD_SUB_Y + CARD_LINE);
+    // The owner and age; long owners' names end in "..."
+    s_card_info = make_label(s_card, &F_CARD, C_DIM);
+    lv_obj_set_pos(s_card_info, 0, CARD_SUB_Y + 2 * CARD_LINE);
+    lv_obj_set_width(s_card_info, CARD_W - 2 * CARD_PAD);
+    lv_label_set_long_mode(s_card_info, LV_LABEL_LONG_DOT);
+    lv_obj_set_hidden(s_card_info, true);
 #ifdef HAS_LOGO
     // Beside those two lines: logos are made for white, and many vanish on
     // the card's dark green

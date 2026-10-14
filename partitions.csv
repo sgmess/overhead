@@ -10,3 +10,7 @@ ota_1,    app,  ota_1,   ,        7M,
 # 12 October 2026 in flash the app slots leave free; a device updated only
 # over WiFi doesn't have it and fetches at every boot instead.
 aipcache, data, 0x40,    ,        1M,
+# Today's stats, so a restart doesn't start the day again (main/stats.c):
+# eight slots written in turn, to spread the wear. Added 14 October 2026,
+# likewise only on devices flashed over USB or from the web flasher since.
+stats,    data, 0x41,    ,        256K,

@@ -48,6 +48,7 @@ a{color:var(--accent)}
 .bars{display:flex;align-items:flex-end;gap:2px;height:64px;margin-top:14px}
 .bars i{flex:1;min-height:1px;background:var(--accent);opacity:.75;border-radius:2px 2px 0 0}
 .bars i.now{opacity:1;box-shadow:0 0 6px rgba(70,255,168,.6)}
+h3{margin:18px 0 0;font-size:11px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim)}
 .hours{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-top:4px}
 .legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:13px;color:var(--dim)}
 .legend span{display:inline-flex;align-items:center;gap:6px}
@@ -60,11 +61,21 @@ a{color:var(--accent)}
 .slider output{min-width:3.5em;text-align:right;color:var(--text)}
 .checks{display:flex;flex-wrap:wrap;gap:4px 18px}
 .checks .check{margin-top:8px}
+/* Wide screens: status, stats, WiFi and firmware down the left, the settings
+   down the right. A grid of the same elements, so a phone's order is as before. */
+@media (min-width:1000px){
+  body{max-width:1180px}
+  .cols{display:grid;grid-template-columns:minmax(360px,440px) 1fr;grid-template-rows:auto auto auto auto 1fr;
+        column-gap:18px;align-items:start}
+  .cols>*{grid-column:1}
+  .cols>form{grid-column:2;grid-row:1/-1}
+}
 </style>
 </head>
 <body>
 <header><div class="scope" aria-hidden="true"></div><div><h1>Overhead</h1><p id="sub">Live ADS-B radar &middot; settings</p></div></header>
 
+<main class="cols">
 <section class="card">
   <h2>Status</h2>
   <dl id="status"><dt>Loading</dt><dd>&hellip;</dd></dl>
@@ -75,8 +86,15 @@ a{color:var(--accent)}
   <dl id="today"></dl>
   <div class="bars" id="hours" aria-label="Aircraft seen each hour"></div>
   <div class="hours"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
-  <p class="hint">Aircraft that came within the radar's range, each counted once; the bars are how many were seen in
-    each hour. Kept on the device until midnight, and started again by a restart or an update.</p>
+  <div id="airlines-box" class="hidden">
+    <h3>Top airlines</h3>
+    <dl id="airlines"></dl>
+  </div>
+  <h3>All days</h3>
+  <dl id="history"></dl>
+  <p class="hint">Aircraft that came within the radar's range, each counted once a day; the bars are how many were
+    seen in each hour, and an airline's count is its aircraft. Kept on the device through restarts and updates. The
+    average is of the last week's whole days, those counted from midnight to midnight.</p>
 </section>
 
 <form id="form" novalidate>
@@ -306,6 +324,7 @@ a{color:var(--accent)}
   <p class="hint" id="ota-state" role="status"></p>
   <div class="bar hidden" id="ota-bar"><i id="ota-fill"></i></div>
 </section>
+</main>
 
 <footer>
   <span id="fw"></span><br>
@@ -442,6 +461,17 @@ function showToday(st) {
   if (st.highest) rows.push(['Highest', st.highest.name + ', ' + n(st.highest.value) + ' ft at ' + st.highest.at]);
   if (st.fastest) rows.push(['Fastest', st.fastest.name + ', ' + n(st.fastest.value) + ' kt at ' + st.fastest.at]);
   fillList($('today'), rows);
+
+  const al = st.airlines || [];
+  $('airlines-box').classList.toggle('hidden', !al.length);
+  fillList($('airlines'), al.map(a => [a.name, n(a.count)]));
+
+  const days = d => d === 1 ? '1 day' : d + ' days';
+  const hist = [];
+  if (st.week_avg) hist.push(['Average day', n(st.week_avg) + ' aircraft (' + days(st.week_days) + ')']);
+  if (st.best) hist.push(['Most in a day', n(st.best.seen) + ' on ' + st.best.day]);
+  if (st.total) hist.push(['Total', n(st.total.seen) + ' over ' + days(st.total.days) + ' since ' + st.total.since]);
+  fillList($('history'), hist);
   const bars = $('hours'), top = Math.max(1, ...st.hours), now = new Date().getHours();
   bars.textContent = '';
   st.hours.forEach((v, h) => {
