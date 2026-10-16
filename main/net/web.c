@@ -541,6 +541,34 @@ static esp_err_t on_debug_settings(httpd_req_t *req)
     board_unlock();
     return send_result(req, ESP_OK, NULL);
 }
+// Scrolls the settings screen for ?ms= (5 s), then how smoothly: frames a
+// second, and the average and longest time to draw one
+static esp_err_t on_debug_bench(httpd_req_t *req)
+{
+    char query[32], ms_s[8] = "5000";
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        httpd_query_key_value(query, "ms", ms_s, sizeof(ms_s));
+    }
+    const int ms = atoi(ms_s) > 0 ? atoi(ms_s) : 5000;
+    board_lock();
+    settings_ui_open();
+    board_unlock();
+    vTaskDelay(pdMS_TO_TICKS(500)); // drawn once first
+    board_lock();
+    settings_ui_debug_scroll_start();
+    board_unlock();
+    vTaskDelay(pdMS_TO_TICKS(ms));
+    settings_ui_bench_t b;
+    board_lock();
+    settings_ui_debug_scroll_stop(&b);
+    board_unlock();
+    cJSON *reply = cJSON_CreateObject();
+    cJSON_AddNumberToObject(reply, "frames", b.frames);
+    cJSON_AddNumberToObject(reply, "fps", b.frames * 1000.0 / ms);
+    cJSON_AddNumberToObject(reply, "avg_ms", b.avg_us / 1000.0);
+    cJSON_AddNumberToObject(reply, "max_ms", b.max_us / 1000.0);
+    return send_json(req, reply);
+}
 static esp_err_t on_debug_select(httpd_req_t *req)
 {
     char query[64], hex[8] = "", emerg[4] = "", view[8] = "";
@@ -639,7 +667,7 @@ void web_start(void)
 #if CONFIG_SPIRAM && CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
     cfg.task_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT; // see commit_and_restart()
 #endif
-    cfg.max_uri_handlers = 16;
+    cfg.max_uri_handlers = 20;
     cfg.max_open_sockets = 5;
     // A phone opens several connections at once and leaves them open
     cfg.lru_purge_enable = true;
@@ -664,6 +692,7 @@ void web_start(void)
         {.uri = "/api/debug/screen", .method = HTTP_GET, .handler = on_debug_screen},
         {.uri = "/api/debug/settings", .method = HTTP_POST, .handler = on_debug_settings},
         {.uri = "/api/debug/select", .method = HTTP_POST, .handler = on_debug_select},
+        {.uri = "/api/debug/bench", .method = HTTP_POST, .handler = on_debug_bench},
 #endif
         {.uri = "/api/defaults", .method = HTTP_POST, .handler = on_defaults},
         {.uri = "/api/ota", .method = HTTP_GET, .handler = on_ota_status},
