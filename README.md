@@ -187,7 +187,7 @@ everything that needs no typing (so not the centre, the WiFi password, the
 OpenAIP key or a typed-in timezone, which the screen sends you to the page
 for). Each change applies as it is made, and the screen closes after a minute
 untouched. Both save through one task (`settings_change()` in
-`main/settings.c`) with its stack in internal RAM, which stores the change in
+`main/device/settings.c`) with its stack in internal RAM, which stores the change in
 NVS, makes it the running settings under the display lock, then applies what
 isn't read afresh: the timezone, the centre (the radar re-projects and the
 airspace is fetched again), the sweep, trails, starting range, feed and the
@@ -252,7 +252,7 @@ While it is off, a transparent layer over everything takes the waking touch,
 so it can't also select an aircraft or step the range. Alerts neither wake
 it nor chime meanwhile. The configuration page's sliders still preview.
 
-The day's counts (`main/stats.c`) take each aircraft once by ICAO address,
+The day's counts (`main/core/stats.c`) take each aircraft once by ICAO address,
 in a table in PSRAM, if it comes within the radar's range; an hour's bar is
 the aircraft seen in that hour. Altitudes over 60,000 ft and speeds over
 750 kt are taken as glitches. An airline's count is its aircraft, by the
@@ -291,20 +291,20 @@ them. Both are looked up one aircraft at a time and the last 16 are kept.
 The flight number is shown only for a callsign of an airline's code and
 digits, BAW189 as BA189, which is usually the flight number; alphanumeric
 callsigns (BAW22B, EZY45GT) are assigned to avoid confusion on the radio and
-aren't, so they get none. The airline comes from the callsign's first three letters (`main/airlines.c`, the
+aren't, so they get none. The airline comes from the callsign's first three letters (`main/core/airlines.c`, the
 carriers most often seen over Europe and the large ones elsewhere), and the
 country from the block of ICAO addresses each state is allocated
-(`main/countries.c`); an aircraft that isn't an airliner gets its country's
+(`main/core/countries.c`); an aircraft that isn't an airliner gets its country's
 name in place of the airline. The flags are Twemoji's, halved to 36x26 and
-kept in `main/flags.bin`, which `tools/make_flags.py` rebuilds after a
+kept in `main/ui/flags.bin`, which `tools/make_flags.py` rebuilds after a
 country is added. The airline logos are pics.avs.io's, drawn on white,
 trimmed and fitted to 138x40, and shown on a white badge because many are
 dark and would vanish on the card; `tools/make_logos.py` rebuilds
-`main/logos.bin` after an airline is added (about 1 MB for 133). The 2.8C's
+`main/ui/logos.bin` after an airline is added (about 1 MB for 133). The 2.8C's
 card has no room for one.
 
 Settings are kept in NVS (namespace `overhead`). Until something is saved
-the firmware's defaults apply (`settings_defaults()` in `main/settings.c`):
+the firmware's defaults apply (`settings_defaults()` in `main/device/settings.c`):
 no network, so the setup portal opens, and the centre on Heathrow. Once
 connected, a device whose centre has never been set asks where its internet
 connection is (ipinfo.io, then ipwho.is) and centres there, usually within a
@@ -356,7 +356,7 @@ PSRAM, and the workflow fails a Tab5 build whose static D/IRAM passes
 esp_hosted's buffers can't go to PSRAM (`ESP_HOSTED_MEMPOOL_PREFER_SPIRAM`):
 the first small transmit after joining failed every boot and restarted it.
 
-LVGL's heap is in PSRAM too (`main/lvgl_mem.c`, `LV_USE_CUSTOM_MALLOC`).
+LVGL's heap is in PSRAM too (`main/ui/lvgl_mem.c`, `LV_USE_CUSTOM_MALLOC`).
 With the C library's malloc, everything LVGL allocates of 1 KB or less went
 to internal RAM: the radar's objects took about 48 KB of it, and opening the
 settings screen another 36 KB in small pieces, after which esp_hosted
@@ -421,29 +421,42 @@ nobody has measured, so it reports none.
 
 ## Layout
 
+`main/` is split by what each part does; headers are included by name alone,
+so a file can move between folders without its users changing.
+
 | File | Purpose |
 | --- | --- |
 | `main/main.c` | Starts the display, WiFi and the fetch task |
-| `main/settings.c` | Settings in NVS over the firmware defaults |
-| `main/net.c` | WiFi (via the ESP32-C6 on the P4 boards, native on the S3), setup portal, mDNS, SNTP |
-| `main/dns_server.c` | The portal's DNS: every name answers with the device |
-| `main/web.c`, `main/web/` | Web server, JSON API, and the setup and configuration pages |
-| `main/feed.c` | HTTPS poll and readsb JSON parsing (buffers in PSRAM) |
-| `main/battery.c` | Battery state, charge estimate, time left, low-voltage power-off |
-| `main/backlight.c` | Brightness, night dimming by sun elevation or clock, sleep, the page's preview |
-| `main/stats.c` | Today's counts for the configuration page |
-| `main/trails.c` | Position history per aircraft for the trails |
-| `main/route.c` | Origin and destination by callsign from adsb.im, cached, and how far along it is |
-| `main/details.c` | The registered owner from adsbdb.com and a photo from planespotters.net, by ICAO address |
-| `main/airlines.c`, `main/countries.c`, `main/flags.c`, `main/logos.c` | Airline, flight number and logo by callsign; country by ICAO address, and its flag |
-| `tools/` | `make_flags.py` and `make_logos.py`, which build `main/flags.bin` and `main/logos.bin` |
-| `main/settings_ui.c` | The on-device settings screen |
-| `main/splash.c` | The start-up screen |
-| `main/zones.c` | Timezones and their POSIX rules, for the page and the screen |
-| `main/ota.c` | Updates from GitHub releases, image check, rollback confirmation |
+| `main/aircraft.h` | An aircraft as the feed gives it |
+| **`main/core/`** | **The logic, without the network or the screen** |
+| `stats.c` | Today's counts and the days before, for the configuration page, saved to flash |
+| `trails.c` | Position history per aircraft for the trails |
+| `airlines.c`, `countries.c` | Airline and flight number by callsign; country by ICAO address |
+| **`main/sources/`** | **What is fetched** |
+| `feed.c` | HTTPS poll and readsb JSON parsing (buffers in PSRAM) |
+| `route.c` | Origin and destination by callsign from adsb.im, cached, and how far along it is |
+| `details.c` | The registered owner from adsbdb.com and a photo from planespotters.net, by ICAO address |
+| `openaip.c` | OpenAIP airspace and airfields: fetch by country, trim to range, project to NM |
+| `geoloc.c` | A new device's centre from its IP address |
+| `zones.c` | Timezones and their POSIX rules, for the page and the screen |
+| **`main/net/`** | **WiFi, the web pages, updates** |
+| `net.c` | WiFi (via the ESP32-C6 on the P4 boards, native on the S3), setup portal, mDNS, SNTP |
+| `dns_server.c`, `improv.c` | The portal's DNS, where every name answers with the device; WiFi setup from the web flasher |
+| `web.c`, `web/` | Web server, JSON API, and the setup and configuration pages |
+| `ota.c` | Updates from GitHub releases, image check, rollback confirmation |
+| **`main/ui/`** | **The screen** |
+| `radar_ui.c` | LVGL scope, aircraft rendering, touch, card, big view and lists; per-board sizes at the top |
+| `settings_ui.c` | The on-device settings screen |
+| `splash.c` | The start-up screen |
+| `backlight.c` | Brightness, night dimming by sun elevation or clock, sleep, the page's preview |
+| `flags.c`, `logos.c`, `flags.bin`, `logos.bin` | Country flags and airline logos, built by `tools/` |
+| `lvgl_mem.c` | LVGL's heap, in PSRAM |
+| **`main/device/`** | **The device itself** |
+| `settings.c` | Settings in NVS over the firmware defaults |
+| `battery.c` | Battery state, charge estimate, time left, low-voltage power-off |
+| `main/third_party/` | stb_image, the JPEG decoder for the photos |
+| `tools/` | `make_flags.py` and `make_logos.py`, which build `main/ui/flags.bin` and `main/ui/logos.bin` |
 | `web/flash/`, `.github/workflows/` | Web flasher page and the build, release and Pages workflow |
-| `main/openaip.c` | OpenAIP airspace and airfields: fetch by country, trim to range, project to NM |
-| `main/radar_ui.c` | LVGL scope, aircraft rendering, touch, detail card, Tab5 list; per-board sizes at the top |
 | `boards/<board>/board/` | Per-board bring-up: display start, WiFi power, LVGL lock; the BSP is its dependency |
 | `boards/s3_28c/waveshare__esp32_s3_touch_lcd_28c` | 2.8C BSP, vendored from traffic-display (Apache-2.0) |
 
@@ -455,11 +468,11 @@ each fetched only for its own board.
 
 Apache License 2.0; see [LICENSE](LICENSE). The vendored 2.8C BSP keeps its
 own Apache-2.0 terms. `main/third_party/stb_image.h` is Sean Barrett's,
-public domain or MIT. The flag images in `main/flags.bin` are from
+public domain or MIT. The flag images in `main/ui/flags.bin` are from
 [Twemoji](https://github.com/jdecked/twemoji), Copyright 2019 Twitter, Inc
 and other contributors, licensed under
 [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/); they were scaled
-down for the screen. The airline logos in `main/logos.bin` are trademarks of
+down for the screen. The airline logos in `main/ui/logos.bin` are trademarks of
 their airlines and are not covered by this licence. The licence covers this code only: aircraft data from
 adsb.fi and adsb.lol, routes from adsb.im, owners from adsbdb.com, photos
 from planespotters.net (each its photographer's), airspace from OpenAIP and the

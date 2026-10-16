@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Build main/logos.bin, the airline logos shown in the aircraft card, from
+"""Build main/ui/logos.bin, the airline logos shown in the aircraft card, from
 pics.avs.io's 240x80 logos (by IATA code) for each airline in
-main/airlines.c. The logos are their owners' trademarks.
+main/core/airlines.c. The logos are their owners' trademarks.
 
     python3 tools/make_logos.py DOWNLOAD_DIR
 
@@ -30,7 +30,7 @@ SAME_LOGO = {'SHT': 'BA'}
 
 
 def airlines():
-    text = open(os.path.join(ROOT, 'main', 'airlines.c')).read()
+    text = open(os.path.join(ROOT, 'main', 'core', 'airlines.c')).read()
     return re.findall(r'\{"([A-Z]{3})", "([A-Z0-9]{0,2})"', text)
 
 
@@ -104,7 +104,7 @@ def main():
         offset += len(data)
     blob += [e[3] for e in entries]
     blob = b''.join(blob)
-    out = os.path.join(ROOT, 'main', 'logos.bin')
+    out = os.path.join(ROOT, 'main', 'ui', 'logos.bin')
     open(out, 'wb').write(blob)
     print('%d logos, %d bytes, %s' % (len(entries), len(blob), os.path.normpath(out)))
 

@@ -45,5 +45,5 @@ if(OVERHEAD_BOARD STREQUAL "p4_34c")
 endif()
 
 # The board is in the name, so the app image says which board it is for and an
-# over-the-air update for another board is refused (see main/ota.c)
+# over-the-air update for another board is refused (see main/net/ota.c)
 project(overhead-${OVERHEAD_BOARD})

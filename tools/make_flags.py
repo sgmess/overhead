@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Build main/flags.bin, the registration-country flags shown in the
+"""Build main/ui/flags.bin, the registration-country flags shown in the
 aircraft card, from Twemoji's 72x72 flag PNGs (graphics CC-BY 4.0,
 https://github.com/jdecked/twemoji).
 
     python3 tools/make_flags.py DOWNLOAD_DIR
 
-Fetches any PNG not already in DOWNLOAD_DIR, then writes main/flags.bin for
-every country in main/countries.c. Each flag's 72x52 area is halved to
+Fetches any PNG not already in DOWNLOAD_DIR, then writes main/ui/flags.bin for
+every country in main/core/countries.c. Each flag's 72x52 area is halved to
 36x26 and stored as LVGL RGB565A8: the RGB565 plane, then the alpha plane.
 
 Layout: "FLG1", u16 count, u8 width, u8 height, count two-letter codes,
@@ -28,7 +28,7 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 
 
 def codes():
-    text = open(os.path.join(ROOT, 'main', 'countries.c')).read()
+    text = open(os.path.join(ROOT, 'main', 'core', 'countries.c')).read()
     return re.findall(r'\{0x[0-9A-F]+, 0x[0-9A-F]+, "([A-Z]{2})"', text)
 
 
@@ -72,7 +72,7 @@ def main():
         alpha = bytes(p[3] for line in img for p in line)
         images.append(color + alpha)
     blob = b'FLG1' + struct.pack('<HBB', len(isos), W, H) + ''.join(isos).encode() + b''.join(images)
-    out = os.path.join(ROOT, 'main', 'flags.bin')
+    out = os.path.join(ROOT, 'main', 'ui', 'flags.bin')
     open(out, 'wb').write(blob)
     print('%d flags, %d bytes, %s' % (len(isos), len(blob), os.path.normpath(out)))
 

@@ -188,7 +188,7 @@ static uint32_t save_crc(const save_hdr_t *h, const uint32_t *packed)
 // What was last saved: today's counts back into the table, and the days
 // before; a saved day that has passed goes into the history. With the lock
 // held. Flash reads and writes need XIP, as for the OpenAIP cache
-// (main/openaip.c).
+// (main/sources/openaip.c).
 static void load(const struct tm *tm)
 {
 #if CONFIG_SPIRAM_XIP_FROM_PSRAM
