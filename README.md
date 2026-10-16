@@ -445,7 +445,11 @@ so a file can move between folders without its users changing.
 | `web.c`, `web/` | Web server, JSON API, and the setup and configuration pages |
 | `ota.c` | Updates from GitHub releases, image check, rollback confirmation |
 | **`main/ui/`** | **The screen** |
-| `radar_ui.c` | LVGL scope, aircraft rendering, touch, card, big view and lists; per-board sizes at the top |
+| `radar_ui.c` | The radar screen's shared state, overlay (clock, status, alert banner), views and touch, and its API |
+| `radar_priv.h` | What the radar screen's parts share: per-board sizes, colours, state and functions |
+| `scope.c` | Aircraft projected onto the scope, airspace and airfields, trails, the drawing and the sweep |
+| `card.c`, `big_view.c`, `lists.c` | The card, the big view, and the Tab5's list and the round boards' list view |
+| `describe.c` | Text about an aircraft for all of those: route, airline, owner and age, altitude |
 | `settings_ui.c` | The on-device settings screen |
 | `splash.c` | The start-up screen |
 | `backlight.c` | Brightness, night dimming by sun elevation or clock, sleep, the page's preview |
