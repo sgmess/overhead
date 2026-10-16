@@ -34,6 +34,8 @@
 #define CY (SCR_W / 2)
 #define CARD_OFFSET (SCR_W * 18 / 100) // round boards: the card's centre from the scope's
 #define CARD_FLIP 16                   // and how far past the middle moves it
+#define LONG_PRESS_MS 800              // held this long, still, for the settings
+#define PRESS_SLOP 24                  // and moving no further than this
 #define DEG2RAD ((float)M_PI / 180.0f)
 
 // Sizes per board. They follow physical size, not resolution: pixel pitch is
@@ -1849,8 +1851,21 @@ static void step_range(int by)
     if (s_on_range_change) s_on_range_change();
 }
 
+// Where the finger went down, so a long press that has moved, the start of
+// a slow swipe, doesn't open the settings
+static lv_point_t s_press_pt;
+
+static void on_press(lv_event_t *e)
+{
+    lv_indev_get_point(lv_indev_active(), &s_press_pt);
+}
+
 static void on_scope_long_press(lv_event_t *e)
 {
+    lv_point_t p;
+    lv_indev_get_point(lv_indev_active(), &p);
+    const int dx = p.x - s_press_pt.x, dy = p.y - s_press_pt.y;
+    if (swiped() || dx * dx + dy * dy > PRESS_SLOP * PRESS_SLOP) return;
     settings_ui_open();
 }
 
@@ -1991,6 +2006,7 @@ static void create_big(lv_obj_t *scr)
     lv_obj_set_clickable(s_big, true);
     lv_obj_add_event_cb(s_big, on_big_click, LV_EVENT_SHORT_CLICKED, NULL);
     lv_obj_add_event_cb(s_big, on_scope_long_press, LV_EVENT_LONG_PRESSED, NULL);
+    lv_obj_add_event_cb(s_big, on_press, LV_EVENT_PRESSED, NULL);
     lv_obj_remove_flag(s_big, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_event_cb(s_big, on_gesture, LV_EVENT_GESTURE, NULL);
     lv_obj_set_hidden(s_big, true);
@@ -2103,6 +2119,7 @@ static void create_rlist(lv_obj_t *scr)
     lv_obj_remove_flag(s_rlist, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_event_cb(s_rlist, on_gesture, LV_EVENT_GESTURE, NULL);
     lv_obj_add_event_cb(s_rlist, on_scope_long_press, LV_EVENT_LONG_PRESSED, NULL);
+    lv_obj_add_event_cb(s_rlist, on_press, LV_EVENT_PRESSED, NULL);
     lv_obj_set_hidden(s_rlist, true);
 
     s_rl_title = big_label(s_rlist, &F_CLOCK, C_TEXT);
@@ -2458,6 +2475,11 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     s_order = heap_caps_calloc(AC_MAX, sizeof(int), MALLOC_CAP_SPIRAM);
     s_scr = heap_caps_calloc(AC_MAX, sizeof(ac_screen_t), MALLOC_CAP_SPIRAM);
     s_trail_slot = heap_caps_calloc(AC_MAX, sizeof(int16_t), MALLOC_CAP_SPIRAM);
+
+    // A hold of LONG_PRESS_MS for the settings: LVGL's 400 ms caught slow swipes
+    for (lv_indev_t *in = lv_indev_get_next(NULL); in; in = lv_indev_get_next(in)) {
+        if (lv_indev_get_type(in) == LV_INDEV_TYPE_POINTER) lv_indev_set_long_press_time(in, LONG_PRESS_MS);
+    }
     start_trails();
     s_lat0 = center_lat;
     s_lon0 = center_lon;
@@ -2486,6 +2508,7 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     // Short: a long press opens the settings, and its release isn't a tap
     lv_obj_add_event_cb(s_scope, on_scope_click, LV_EVENT_SHORT_CLICKED, NULL);
     lv_obj_add_event_cb(s_scope, on_scope_long_press, LV_EVENT_LONG_PRESSED, NULL);
+    lv_obj_add_event_cb(s_scope, on_press, LV_EVENT_PRESSED, NULL);
 
     // Made whether it is on or not, so turning it on later keeps it under
     // the card and the panel

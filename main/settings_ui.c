@@ -862,15 +862,15 @@ void settings_ui_open(void)
     lv_obj_set_style_pad_row(s_col, GAP, 0);
     lv_obj_set_scrollable(s_col, false);
 
+    // The title, and Done beside it: on the round boards both in the middle
     lv_obj_t *head = box(s_col, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(head, ROUND ? LV_FLEX_ALIGN_CENTER : LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(head, GAP * 2, 0);
     label(head, "Settings", &F_TITLE, C_ACCENT);
-#if !ROUND
     lv_obj_t *done = lv_button_create(head);
     lv_obj_add_event_cb(done, on_done, LV_EVENT_CLICKED, NULL);
     label(done, "Done", &F_ROW, C_BG);
-#endif
     label(s_col, "Changes apply as you make them.", &F_HEAD, C_DIM);
 
     build();
