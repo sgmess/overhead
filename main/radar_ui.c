@@ -1835,12 +1835,18 @@ static void on_scope_click(lv_event_t *e)
         select_aircraft(s_ac[best].hex);
     } else if (s_sel_hex[0]) {
         select_aircraft(NULL);
-    } else {
-        s_range_idx = (s_range_idx + 1) % RANGE_COUNT;
-        update_range_label();
-        refresh();
-        if (s_on_range_change) s_on_range_change();
     }
+}
+
+// Up or down a range, stopping at either end
+static void step_range(int by)
+{
+    const int idx = s_range_idx + by;
+    if (idx < 0 || idx >= RANGE_COUNT) return;
+    s_range_idx = idx;
+    update_range_label();
+    refresh();
+    if (s_on_range_change) s_on_range_change();
 }
 
 static void on_scope_long_press(lv_event_t *e)
@@ -1910,6 +1916,9 @@ static void on_gesture(lv_event_t *e)
     const lv_dir_t d = lv_indev_get_gesture_dir(lv_indev_active());
     if (d == LV_DIR_LEFT) show_view((s_view + 1) % VIEW_COUNT);
     if (d == LV_DIR_RIGHT) show_view((s_view + VIEW_COUNT - 1) % VIEW_COUNT);
+    // On the scope, up and down change the range: up to see further
+    if (s_view == VIEW_RADAR && d == LV_DIR_TOP) step_range(1);
+    if (s_view == VIEW_RADAR && d == LV_DIR_BOTTOM) step_range(-1);
 }
 
 // Open the big view on hex, selected, ahead of anything alerting

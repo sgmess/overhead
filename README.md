@@ -70,7 +70,7 @@ gives way at once to the WiFi setup portal.
 | The alert banner | Opens the card of the nearest aircraft that set it off |
 | The card | Opens that aircraft in the big view |
 | Empty scope, card open | Closes the card |
-| Empty scope | Next range: 5, 10, 25, 50, 100 NM |
+| Swipe up or down on the scope | Up or down a range: 5, 10, 25, 50, 100 NM |
 | A list row (Tab5) | Selects that aircraft (in the big view too, with the big view up); tap it again to clear |
 | Long press on the scope | Opens the settings screen |
 | Swipe left or right | The next view, or the one before: scope, big view, and on the round boards a list |
