@@ -4,8 +4,11 @@
 #include <math.h>
 
 #include "bsp/esp-bsp.h"
+#include "bsp/touch.h"
 #include "driver/i2c_master.h"
 #include "esp_codec_dev.h"
+#include "esp_lcd_touch.h"
+#include "esp_lv_adapter.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -41,48 +44,91 @@ static void wait_for_touch_controller(void)
     ESP_LOGE(TAG, "no touch controller after %d ms; the BSP's detection will fail", TOUCH_WAIT_MS);
 }
 
+// The panel and touch from the BSP, but drawn through esp_lvgl_adapter (as
+// on the 3.4C), not the BSP's esp_lvgl_port. In landscape, the default,
+// esp_lvgl_port rendered 24-line strips and had the PPA rotate each into a
+// buffer and copy it into the frame buffer in turn: 12 fps scrolling the
+// settings (/api/debug/bench, October 2026). The adapter renders into one
+// internal buffer and rotates it straight into one of three PSRAM frame
+// buffers (CONFIG_BSP_LCD_DPI_BUFFER_NUMS=3): 16.7 fps, and 40 KB more
+// internal RAM free. Portrait goes from 27 fps to 20.5.
+#define DRAW_BUF_LINES 40 // of the panel's native 720-pixel width: 57 KB internal
+
+#define ST7121_LANE_MBPS 965 // the BSP's, private to it, for revision 3's panel
+
+static esp_lcd_panel_handle_t s_panel;
+static esp_lcd_panel_io_handle_t s_panel_io;
+static esp_lcd_touch_handle_t s_touch;
+
+// Revision 3 (ST7121 panel) as the BSP tells it, privately: its ST712x touch
+// controller reports firmware 1, revision 2's reports 3
+static bool panel_is_st7121(void)
+{
+    const i2c_device_config_t cfg = {.device_address = TOUCH_ADDR_ST712X, .scl_speed_hz = 100000};
+    i2c_master_dev_handle_t dev;
+    if (i2c_master_bus_add_device(bsp_i2c_get_handle(), &cfg, &dev) != ESP_OK) return false;
+    const uint8_t reg[2] = {0, 0};
+    uint8_t fw = 0;
+    const esp_err_t err = i2c_master_transmit_receive(dev, reg, sizeof(reg), &fw, 1, 100);
+    i2c_master_bus_rm_device(dev);
+    return err == ESP_OK && fw == 1;
+}
+
 void board_display_start(int rotation_deg)
 {
     bsp_i2c_init();
     wait_for_touch_controller();
 
-    // Not bsp_display_start(): its defaults turn on rotation with 50-line
-    // buffers, and the rotation buffer then doesn't fit in internal DMA RAM.
-    // LVGL renders changed areas into two internal buffers and DMA2D copies
-    // them into the panel's (portrait) frame buffer.
-    if (rotation_deg == 0) {
-        bsp_display_cfg_t cfg = {
-            .lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG(),
-            .buffer_size = BSP_LCD_H_RES * CONFIG_BSP_LCD_DRAW_BUF_HEIGHT,
-            .double_buffer = true,
-            .flags = {
-                .buff_dma = true,
-                .buff_spiram = false,
-                .sw_rotate = false,
-            },
-        };
-        bsp_display_start_with_config(&cfg);
-    } else {
-        // Landscape: LVGL renders 1280x720 and the P4's PPA rotates each strip
-        // into the portrait frame buffer (CONFIG_LVGL_PORT_ENABLE_PPA), so the CPU
-        // never touches the rotation. The PPA's output buffer is the same size as
-        // a draw buffer, so the strips are 24 lines (in panel terms) instead of
-        // 50: three 34.5 KB internal buffers, less than portrait's two of 72 KB.
-        bsp_display_cfg_t cfg = {
-            .lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG(),
-            .buffer_size = BSP_LCD_H_RES * 24,
-            .double_buffer = true,
-            .flags = {
-                .buff_dma = true,
-                .buff_spiram = false,
-                .sw_rotate = true,
-            },
-        };
-        lv_display_t *disp = bsp_display_start_with_config(&cfg);
-        bsp_display_lock(0);
-        bsp_display_rotate(disp, rotation_deg == 270 ? LV_DISPLAY_ROTATION_270 : LV_DISPLAY_ROTATION_90);
-        bsp_display_unlock();
+    // esp_lvgl_port's 90 degrees, which the setting meant before, is the
+    // adapter's 270, and 270 its 90: the same way up as ever
+    const esp_lv_adapter_rotation_t rotation = rotation_deg == 90    ? ESP_LV_ADAPTER_ROTATE_270
+                                               : rotation_deg == 270 ? ESP_LV_ADAPTER_ROTATE_90
+                                                                     : ESP_LV_ADAPTER_ROTATE_0;
+    esp_lv_adapter_config_t adapter_cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG();
+    ESP_ERROR_CHECK(esp_lv_adapter_init(&adapter_cfg));
+    // As bsp_display_start() would; unlike the 3.4C's BSP it needs one
+    bsp_display_config_t panel_cfg = {
+        .dsi_bus = {
+            .phy_clk_src = 0, // the driver's default
+            .lane_bit_rate_mbps = BSP_LCD_MIPI_DSI_LANE_BITRATE_MBPS,
+        },
+    };
+    if (panel_is_st7121()) panel_cfg.dsi_bus.lane_bit_rate_mbps = ST7121_LANE_MBPS;
+    ESP_ERROR_CHECK(bsp_display_new(&panel_cfg, &s_panel, &s_panel_io));
+    esp_lcd_panel_disp_on_off(s_panel, true);
+    esp_lv_adapter_display_config_t disp_cfg = {
+        .panel = s_panel,
+        .panel_io = s_panel_io,
+        .profile = {
+            .interface = ESP_LV_ADAPTER_PANEL_IF_MIPI_DSI,
+            .rotation = rotation,
+            .hor_res = BSP_LCD_H_RES,
+            .ver_res = BSP_LCD_V_RES,
+            .buffer_height = DRAW_BUF_LINES,
+            .use_psram = false,
+            .enable_ppa_accel = false,
+            .require_double_buffer = false,
+        },
+        .tear_avoid_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_TRIPLE_PARTIAL,
+    };
+    lv_display_t *disp = esp_lv_adapter_register_display(&disp_cfg);
+    assert(disp);
+
+    // The adapter draws rotated but reports touches as the panel gives them,
+    // portrait: turn them to match
+    ESP_ERROR_CHECK(bsp_touch_new(NULL, &s_touch));
+    if (rotation == ESP_LV_ADAPTER_ROTATE_270) {
+        esp_lcd_touch_set_mirror_y(s_touch, true);
+        esp_lcd_touch_set_swap_xy(s_touch, true);
+    } else if (rotation == ESP_LV_ADAPTER_ROTATE_90) {
+        esp_lcd_touch_set_mirror_x(s_touch, true);
+        esp_lcd_touch_set_swap_xy(s_touch, true);
     }
+    const esp_lv_adapter_touch_config_t touch_cfg = ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, s_touch);
+    lv_indev_t *indev = esp_lv_adapter_register_touch(&touch_cfg);
+    assert(indev);
+    (void)indev;
+    ESP_ERROR_CHECK(esp_lv_adapter_start());
     bsp_display_backlight_on();
 }
 
@@ -169,12 +215,12 @@ void board_wifi_power_on(void)
 
 void board_lock(void)
 {
-    bsp_display_lock(0); // 0 waits forever in esp_lvgl_port
+    esp_lv_adapter_lock(-1);
 }
 
 void board_unlock(void)
 {
-    bsp_display_unlock();
+    esp_lv_adapter_unlock();
 }
 
 // ---------------------------------------------------------------- battery

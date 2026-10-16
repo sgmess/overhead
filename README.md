@@ -333,12 +333,16 @@ on the right (15 rows), with the details card above the list while something
 is selected. Portrait, the panel's native orientation, puts the scope in the
 top 720x720 and the list below it; it is set on the configuration page or the
 settings screen.
-In landscape LVGL renders 1280x720 and the P4's PPA rotates each strip into
-the portrait frame buffer, so the CPU never rotates pixels. Measured against
-portrait: about 65 ms more per once-a-second redraw (mostly from the smaller
-24-line strips, about 15 ms the rotation itself), and about 33 KB more
-internal RAM free, because its three draw buffers are smaller than
-portrait's two. The BSP (`espressif/m5stack_tab5`) detects the
+The display goes through `esp_lvgl_adapter`, as on the 3.4C, not the BSP's
+`esp_lvgl_port`: the board code creates the panel and touch with the BSP and
+registers them with the adapter. It draws into one internal buffer and, in
+landscape, the P4's PPA rotates that into one of three PSRAM frame buffers
+while another is on the panel. Scrolling the settings screen
+(`/api/debug/bench`, debug builds) runs at 16.7 fps in landscape against
+esp_lvgl_port's 12, which rotated 24-line strips one at a time; portrait
+went from 27 to 20.5, and about 40 KB more internal RAM is free. The adapter
+draws rotated but passes touches on as the panel reports them, portrait, so
+the board code sets the touch driver's swap and mirror to match. The BSP (`espressif/m5stack_tab5`) detects the
 three panel revisions at boot by which touch controller answers on I2C. The
 board code releases the panel and touch resets and waits for that controller
 first, because without it detection failed on a revision-3 (ST7121) unit. The

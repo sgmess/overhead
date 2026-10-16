@@ -52,9 +52,10 @@ CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=12
 # and 2 MB of PSRAM.
 CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 
-# Landscape: esp_lvgl_port rotates each LVGL strip with the P4's PPA rather
-# than the CPU. Only used when the orientation option is a landscape one.
-CONFIG_LVGL_PORT_ENABLE_PPA=y
+# Three frame buffers for esp_lvgl_adapter's TRIPLE_PARTIAL mode (see
+# boards/tab5/board/board.c): it draws into one, rotating with the PPA when
+# landscape, while another is on the panel. 5.5 MB of PSRAM.
+CONFIG_BSP_LCD_DPI_BUFFER_NUMS=3
 
 # Extra font sizes for the larger, finer-pitched panel
 CONFIG_LV_FONT_MONTSERRAT_24=y

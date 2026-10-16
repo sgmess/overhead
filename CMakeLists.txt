@@ -37,10 +37,10 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 idf_build_set_property(DEPENDENCIES_LOCK "${CMAKE_CURRENT_LIST_DIR}/dependencies.lock.${OVERHEAD_BOARD}")
 
-# Waveshare's BSP pins esp_lvgl_adapter to ~0.6, which includes LVGL 9.6's
-# deprecated src/ headers. Their #warning is an error under IDF 6.1's -Werror,
-# so for the 3.4C it stays a warning.
-if(OVERHEAD_BOARD STREQUAL "p4_34c")
+# esp_lvgl_adapter ~0.6 (the 3.4C's BSP pins it; the Tab5 uses it too)
+# includes LVGL 9.6's deprecated src/ headers. Their #warning is an error
+# under IDF 6.1's -Werror, so on the P4 boards it stays a warning.
+if(OVERHEAD_BOARD STREQUAL "p4_34c" OR OVERHEAD_BOARD STREQUAL "tab5")
     idf_build_set_property(COMPILE_OPTIONS "-Wno-error=cpp" APPEND)
 endif()
 
