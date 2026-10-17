@@ -1,5 +1,13 @@
 # Overhead
 
+<p align="center">
+  <a href="https://sgmess.github.io/overhead/"><img alt="Flash in Browser" src="https://img.shields.io/badge/Flash%20in%20Browser-FF6D00?logo=googlechrome&logoColor=white"></a>
+  <img alt="Boards" src="https://img.shields.io/badge/Boards-ESP32--P4%20%C2%B7%20M5Stack--Tab5-E7352C?logo=espressif&logoColor=white">
+  <a href="https://github.com/sgmess/overhead/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/sgmess/overhead?color=7B42BC"></a>
+  <a href="LICENSE"><img alt="GitHub License" src="https://img.shields.io/github/license/sgmess/overhead"></a>
+  <img alt="GitHub top language" src="https://img.shields.io/github/languages/top/sgmess/overhead">
+</p>
+
 A small, single-screen ADS-B radar for ESP32 touch displays. It joins
 WiFi, polls a free online ADS-B feed, and plots the aircraft around a fixed
 point on a radar scope.
