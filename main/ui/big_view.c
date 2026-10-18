@@ -178,9 +178,14 @@ void update_big(void)
     if (a->track_deg >= 0) snprintf(text, sizeof(text), "track %03.0f\xC2\xB0", a->track_deg);
     set_text_if_changed(s_big_trk, text);
     lv_obj_set_hidden(s_big_pointer, a->track_deg < 0);
-    s_big_ptr_rad = a->track_deg * DEG2RAD;
-    s_big_ptr_color = alt_color(a);
-    lv_obj_invalidate(s_big_pointer);
+    // Redrawn only when it turns or changes colour (hiding redraws by itself)
+    const float rad = a->track_deg * DEG2RAD;
+    const lv_color_t color = alt_color(a);
+    if (rad != s_big_ptr_rad || !lv_color_eq(color, s_big_ptr_color)) {
+        s_big_ptr_rad = rad;
+        s_big_ptr_color = color;
+        lv_obj_invalidate(s_big_pointer);
+    }
 
     // Where it is from here, and its squawk
     snprintf(text, sizeof(text), "%.1f NM  " LV_SYMBOL_BULLET "  bearing %03.0f\xC2\xB0", s->dist_nm, s->brg_deg);

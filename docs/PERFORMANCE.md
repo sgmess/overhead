@@ -20,14 +20,34 @@ tools/bench.sh 192.168.1.226
 | `settings` | Scrolls the settings screen up and down: a full-screen redraw every frame. The smoothness you feel. |
 | `scope` | Redraws the whole radar scope every frame: what the once-a-second scope redraw costs. |
 | `radar` | The radar as it is, with nothing forced: the everyday cost. |
+| `big` | The big view as it is. |
 | `covered` | The settings screen open and still over the radar. |
 
-Each run reports frames a second, the average and longest frame, `busy` (the
-share of the time spent drawing), how much of the screen was marked for
-redrawing (number of areas, thousands of pixels, the biggest area) and
-internal RAM free (now, and the lowest since boot). The frame time runs from
-LVGL's `REFR_START` to `REFR_READY`, so it includes handing the frame to the
-panel.
+Each run reports:
+
+- **fps, and the average and longest refresh.** A refresh runs from LVGL's
+  `REFR_START` to `REFR_READY`, so it includes handing the frame to the panel.
+- **`busy`:** the share of the time spent refreshing. **This is display
+  pipeline occupancy, not CPU use.** It includes time inside the flush and
+  waiting, so 96% means the display was never idle, not that the CPU was 96%
+  used.
+- **`flush` and `wait`:** within `busy`, the time inside the flush callback
+  (`FLUSH_START` to `FLUSH_FINISH`) and in LVGL's own wait for a flush to
+  finish (`FLUSH_WAIT_START` to `FLUSH_WAIT_FINISH`). With the adapter the
+  waiting happens inside its flush callback, where it also rotates, so `wait`
+  reads 0% and `flush` carries both. Drawing is roughly `busy` minus `flush`.
+- **`drawn`:** the pixels handed to the panel (the areas of `FLUSH_START`):
+  what was really drawn.
+- **`requests` and the biggest request:** LVGL's `INVALIDATE_AREA` events.
+  They fire before duplicate areas are dropped, and again while LVGL sizes the
+  draw buffer, so they count requests, not areas drawn. The biggest still
+  shows when the whole screen or scope was asked for. (Before 19 Oct 2026
+  these were reported as `inv_areas` and `inv_kpx`, wrongly suggesting areas
+  drawn.)
+- **Internal RAM free,** now and the lowest since boot.
+
+Feed parsing and the aircraft layout aren't timed; add that before
+optimising either.
 
 **Pitfalls, each of which has cost a wrong result:**
 
@@ -48,29 +68,43 @@ panel.
   ends in `-dirty`; if it doesn't, delete `build_tab5/*_flashed.bin` and
   `build_tab5/*/*_flashed.bin` and flash again.
 
-## Current figures (18 Oct 2026, v1.0.2 + changes)
+## Current figures (19 Oct 2026, v1.0.3 + changes)
 
-Tab5, landscape (rotation 90), sweep off, trails 120 s, about 80 aircraft:
+Tab5, landscape (rotation 90), trails 120 s, about 80 aircraft. Sweep off
+and on, back to back:
 
-| Mode | fps | Frame (avg) | Busy |
-| --- | --- | --- | --- |
-| `settings` | 21.0 | 46 ms | 96% |
-| `scope` | 14–17 | 58–70 ms | 97% |
-| `radar` | 2.2 | 41–45 ms | 8–9% |
-| `covered` | under 1 | 9–15 ms | about 0% |
+| Mode | Sweep off | Sweep on |
+| --- | --- | --- |
+| `settings` | 20.7 fps, 47 ms, busy 96% (flush 44%) | the same: no sweep while covered |
+| `scope` | 13–14 fps, 73 ms, busy 97% (flush 15%) | 9 fps, 108 ms, busy 98% (flush 10%) |
+| `radar` | 2.3 fps, 51–66 ms, **busy 12–15%** (flush 2%) | 51 fps, 11 ms, **busy 55%** (flush 11%) |
+| `big` | 2.3 fps, 14–25 ms, busy 3–5% | the same |
+| `covered` | under 1 fps, busy about 0% | the same |
 
-Internal RAM: about 181 KB free while running, lowest since boot about
-97–104 KB. Static D/IRAM 128,670 bytes against CI's 140,000 limit.
+Tab5 portrait (rotation 0), sweep off: `settings` **25.6 fps**, 38 ms, busy
+97% (flush 18%); `scope` 14 fps, 71 ms (flush 7%).
 
-Tab5 portrait (rotation 0): `settings` 20.7 fps.
+Internal RAM: about 178–181 KB free while running, lowest since boot about
+95–104 KB. Static D/IRAM 128,670 bytes against CI's 140,000 limit.
 
 3.4C (800x800, never rotated), on v1.0.1: `settings` 46 fps, 21 ms a frame.
 
 ## Tab5 display pipeline
 
 The panel is natively portrait, 720x1280. Landscape, the default, needs every
-frame rotated. That rotation, not the chip or the pixel count, is most of the
-gap to the 3.4C.
+frame rotated.
+
+- **With esp_lvgl_port** (up to v1.0.1), rotation was most of the cost:
+  about 45 ms of each 81 ms landscape frame.
+- **With the adapter it is about 30%.** Scrolling the settings, the flush
+  (rotation, copying and waiting for a frame buffer) takes 44% of a 47 ms
+  landscape frame, about 21 ms. In portrait, with no rotation, it takes 18%
+  of a 38 ms frame, about 7 ms. So rotation costs about 14 ms a frame, and
+  portrait scrolls at 25.6 fps against landscape's 20.7.
+- **The rest of the gap to the 3.4C's 46 fps** is drawing: about 26–31 ms a
+  frame on the Tab5. The likely causes are 44% more pixels (921,600 against
+  640,000), PSRAM at 200 MHz against 250, and a rev v1.3 chip against
+  rev v3.1. That split hasn't been measured on the 3.4C.
 
 ### esp_lvgl_port (up to v1.0.1): replaced
 
@@ -111,6 +145,7 @@ the PPA rotates it straight into one of three PSRAM frame buffers
   40 KB more internal RAM is free.
 - **Against:** portrait got slower (27 → 20.5 fps). A hybrid (the old layer
   for portrait only) was offered and not taken: two display paths to keep.
+  With one drawing thread (below) portrait is back to 25.6.
 - **Touch isn't rotated by the adapter.** The board code sets the touch
   driver's swap and mirror flags to match. esp_lvgl_port's
   `LV_DISPLAY_ROTATION_90` is the adapter's `ROTATE_270`.
@@ -159,6 +194,8 @@ Tried on adapter 0.6.4, landscape, scrolling the settings:
   second and isn't visible.
 - **Likely cause:** with one internal draw buffer and PSRAM shared with the
   PPA's rotation, a second thread adds contention more than parallelism.
+- **Portrait gains more:** 20.7 fps with two threads, 25.6 with one
+  (measured a day apart, but `settings` doesn't depend on traffic).
 - Set in `sdkconfig.defaults.tab5`. **The 3.4C wasn't measured** and keeps
   two.
 
@@ -201,14 +238,39 @@ free (`lv_obj_set_hidden` returns early), and so are `lv_obj_set_x`, `_y`,
 | Change | Result | Verdict |
 | --- | --- | --- |
 | Skip all radar drawing while the settings screen covers it or the backlight is off (`radar_hidden()`), refreshing once on waking | `covered` from about 13% busy (partly radar) to about 0%; under 1 frame a second, small areas only | Kept |
+| The status line (set by the fetch task) and the battery corner (every 2 s from the battery task) skip updates while hidden, and catch up in `refresh()` once it shows | Removes the last radar redraws behind the settings screen; `covered` was already about 0% | Kept (19 Oct) |
+| The big view redraws its heading pointer only when its heading or colour changes, not every second | Small | Kept (19 Oct) |
 | Card, alert banner, big view and battery corner set text and colours only when they change; the 3.4C's card is aligned only when it moves | `radar` from 3.0 fps and 10% busy to 2.2 fps and 8–9% | Kept |
-| Redraw only the changed parts of the scope, not all of it each second | Not built. LVGL keeps at most 32 areas to redraw a frame and redraws the whole screen past that; about 80 aircraft, each with a label and trail, always pass it. The most it could save is about 4% of the time, on a scope drawn once a second. | Rejected |
-| Look the route up once per refresh, not twice (`fmt_route` and `fmt_progress`) | A mutex and a cache copy: microseconds | Not worth the code |
-| Cache the trigonometry in `layout()` | Once a second, about 80 aircraft × about 6 double-precision calls. The P4's FPU is single precision, so doubles are done in software, but that's roughly 1–3 ms a second. | Only if profiling points there |
-| Parse the feed's JSON selectively, not into a full cJSON tree | About 45 KB every 5 s, into PSRAM; probably a few ms. Not measured. | Measure first |
+| Redraw only the changed parts of the scope, not all of it each second | Not built. LVGL keeps at most 32 areas to redraw a frame and redraws the whole screen past that; about 80 aircraft, each with a label and trail, always pass it. **Estimate, not measured:** at most about 4% of the time, on a scope drawn once a second. | Rejected |
+| Look the route up once per refresh, not twice (`fmt_route` and `fmt_progress`) | A mutex and a cache copy: microseconds (estimate) | Not worth the code |
+| Cache the trigonometry in `layout()` | **Estimate, not measured:** once a second, about 80 aircraft × about 6 double-precision calls. The P4's FPU is single precision, so doubles are done in software: roughly 1–3 ms a second. | Only if profiling points there |
+| Parse the feed's JSON selectively, not into a full cJSON tree | **Not measured:** about 45 KB every 5 s, into PSRAM; probably a few ms | Measure first |
 
-The radar's remaining cost is one full scope redraw a second, about 40 ms,
-plus the list and labels.
+With sweep off, the radar's remaining cost is one full scope redraw a second
+(about 50–65 ms) plus the list and labels.
+
+### The sweep (19 Oct 2026): the largest remaining cost
+
+The sweep is on by default (`settings_defaults()`), so a new device runs it.
+It moves eight short line segments every 33 ms (`SWEEP_TICK_MS`); eight
+keep each one's redraw area small, where one long diagonal line would ask
+for up to a quarter of the scope.
+
+- **Cost:** the radar goes from 12–15% busy to 55%, at about 51 frames a
+  second of about 11 ms each. The full scope redraw also slows, from 73 to
+  108 ms, with the segments in every frame.
+- **Already free:** it stops while the radar is hidden (settings screen or
+  asleep), and its lines are hidden in the big view, where hidden objects ask
+  for no redraw. `big`, `settings` and `covered` measure the same with it on
+  or off.
+- **Why 11 ms for a small area:** the scope's draw already skips aircraft,
+  labels and airspace outside the area being drawn (`in_clip()` in
+  `scope.c`). So most of each frame is fixed overhead per frame (LVGL's
+  refresh, the background image for each area, the adapter's flush and
+  rotation) rather than drawing the sweep itself. Not broken down further.
+- **Next candidates, untested:** a slower tick (66 ms would roughly halve
+  the cost, but looks less smooth); a profile of a sweep frame, to see which
+  overhead dominates.
 
 ## Memory decisions (from earlier versions)
 

@@ -240,16 +240,17 @@ Drawing about 4,000 outline segments every second took a frame from about
 Nothing of the radar is redrawn while the settings screen covers it or the
 screen is off overnight, and labels and colours are only set when they
 change, since LVGL redraws an object whenever either is set. On the Tab5 the
-radar takes about 9% of the time drawing; with the settings screen open, next
-to none.
+radar keeps the display busy about 12–15% of the time with the sweep off
+and about 55% with it on; with the settings screen open, next to none.
 
 `/api/debug/bench?what=` (debug builds, with `CONFIG_LV_USE_SNAPSHOT` in a
 local sdkconfig) times the display for five seconds: `settings` scrolls the
 settings screen, `scope` redraws the whole scope every frame, `radar` leaves
-it as it is, and `covered` holds the settings screen still over it. It gives
-frames a second, the average and longest frame, the share of time spent
-drawing, how much of the screen was marked for redrawing, and internal RAM
-free now and at its lowest since boot; `tools/bench.sh` runs every mode.
+it as it is, `big` the big view, and `covered` holds the settings screen
+still over it. It gives frames a second, the average and longest frame, the
+share of time the display was busy and how much of that went on handing
+frames to the panel, the pixels drawn, and internal RAM free now and at its
+lowest since boot; `tools/bench.sh` runs every mode.
 [docs/PERFORMANCE.md](docs/PERFORMANCE.md) records every display and memory
 experiment so far, with the results and why each was kept or dropped.
 

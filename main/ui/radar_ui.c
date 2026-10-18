@@ -289,9 +289,15 @@ static void update_alert(void)
 
 // ---------------------------------------------------------------- views and touch
 
+#ifdef HAS_LIST
+static battery_status_t s_batt; // the latest, while the radar is hidden
+static bool s_batt_pending;
+static void apply_battery(const battery_status_t *st);
+#endif
+
 bool radar_hidden(void)
 {
-    return settings_ui_is_open() || !lv_obj_is_hidden(s_sleep_shield);
+    return settings_ui_is_open() || (s_sleep_shield && !lv_obj_is_hidden(s_sleep_shield));
 }
 
 static void refresh(void)
@@ -300,6 +306,12 @@ static void refresh(void)
     // Hidden, the rest is only drawing nobody sees. Closing the settings or
     // waking redraws the whole screen, from the next tick at the latest.
     if (radar_hidden()) return;
+#ifdef HAS_LIST
+    if (s_batt_pending) {
+        apply_battery(&s_batt);
+        s_batt_pending = false;
+    }
+#endif
     if (s_bg_range != s_range_idx) render_background();
     update_card();
     update_big(); // before the list, which marks the one it shows
@@ -801,7 +813,7 @@ void radar_ui_set_status(const char *text)
 {
     strlcpy(s_status, text ? text : "", sizeof(s_status));
     splash_set_status(s_status);
-    update_status_label();
+    if (!radar_hidden()) update_status_label(); // otherwise from refresh(), once it shows
 }
 
 void radar_ui_apply_settings(const settings_t *old)
@@ -845,9 +857,9 @@ int radar_ui_range_nm(void)
     return RANGES[s_range_idx].nm;
 }
 
-void radar_ui_set_battery(const battery_status_t *st)
-{
 #ifdef HAS_LIST
+static void apply_battery(const battery_status_t *st)
+{
     if (st->state == BATT_NO_PACK || st->state == BATT_CHECKING) {
         show_battery(0, C_DIM, C_DIM, "", st->state == BATT_NO_PACK ? "No battery" : "Checking battery", C_DIM);
         return;
@@ -875,6 +887,16 @@ void radar_ui_set_battery(const battery_status_t *st)
     // Percent is read off the voltage curve, so it is an estimate
     snprintf(level, sizeof(level), "%d%%", st->percent);
     show_battery(st->percent, color, fill, level, detail, st->shutdown_in_s > 0 ? C_EMERG : C_DIM);
+}
+#endif
+
+void radar_ui_set_battery(const battery_status_t *st)
+{
+#ifdef HAS_LIST
+    // Hidden, kept for when the radar shows again (refresh())
+    s_batt = *st;
+    s_batt_pending = radar_hidden();
+    if (!s_batt_pending) apply_battery(st);
 #else
     (void)st;
 #endif

@@ -548,9 +548,12 @@ static esp_err_t on_debug_settings(httpd_req_t *req)
 //   settings  scrolling the settings screen up and down
 //   scope     the radar, its whole scope redrawn every frame
 //   radar     the radar as it is, with nothing forced
+//   big       the big view as it is
 //   covered   the settings screen open and still, over the radar
-// Then frames a second, the average and longest time to draw one, the share
-// of the time spent drawing, and internal RAM (now, and the least since boot).
+// Then frames a second, the average and longest refresh, the share of the
+// time refreshing and of that in the flush and waiting (see bench.h), the
+// pixels drawn, the redraw requests, and internal RAM (now, and the least
+// since boot).
 static esp_err_t on_debug_bench(httpd_req_t *req)
 {
     char query[48], ms_s[8] = "5000", what[12] = "settings";
@@ -560,8 +563,9 @@ static esp_err_t on_debug_bench(httpd_req_t *req)
     }
     const int ms = atoi(ms_s) > 0 ? atoi(ms_s) : 5000;
     const bool settings_open = strcmp(what, "settings") == 0 || strcmp(what, "covered") == 0;
-    if (!settings_open && strcmp(what, "scope") != 0 && strcmp(what, "radar") != 0) {
-        return send_result(req, ESP_ERR_INVALID_ARG, "what: settings, scope, radar or covered");
+    const bool big = strcmp(what, "big") == 0;
+    if (!settings_open && !big && strcmp(what, "scope") != 0 && strcmp(what, "radar") != 0) {
+        return send_result(req, ESP_ERR_INVALID_ARG, "what: settings, scope, radar, big or covered");
     }
     board_lock();
     // As a touch would: untouched for a minute, the settings screen closes,
@@ -571,7 +575,7 @@ static esp_err_t on_debug_bench(httpd_req_t *req)
         settings_ui_open();
     } else {
         settings_ui_debug_close();
-        radar_ui_debug_view(0);
+        radar_ui_debug_view(big ? 1 : 0);
     }
     board_unlock();
     vTaskDelay(pdMS_TO_TICKS(500)); // drawn once first
@@ -587,6 +591,7 @@ static esp_err_t on_debug_bench(httpd_req_t *req)
     settings_ui_debug_scroll_stop();
     radar_ui_debug_stress(false);
     if (settings_open) settings_ui_debug_close();
+    if (big) radar_ui_debug_view(0);
     board_unlock();
 
     openaip_status_t aip;
@@ -598,11 +603,13 @@ static esp_err_t on_debug_bench(httpd_req_t *req)
     cJSON_AddNumberToObject(reply, "avg_ms", b.avg_us / 1000.0);
     cJSON_AddNumberToObject(reply, "max_ms", b.max_us / 1000.0);
     cJSON_AddNumberToObject(reply, "busy_pct", b.busy_pct);
-    cJSON_AddNumberToObject(reply, "inv_areas", b.inv_areas);
-    cJSON_AddNumberToObject(reply, "inv_kpx", b.inv_kpx);
+    cJSON_AddNumberToObject(reply, "flush_pct", b.flush_pct);
+    cJSON_AddNumberToObject(reply, "wait_pct", b.wait_pct);
+    cJSON_AddNumberToObject(reply, "drawn_kpx", b.drawn_kpx);
+    cJSON_AddNumberToObject(reply, "requests", b.requests);
     char biggest[48];
     snprintf(biggest, sizeof(biggest), "%dx%d at %d,%d", b.biggest_w, b.biggest_h, b.biggest_x, b.biggest_y);
-    cJSON_AddStringToObject(reply, "biggest", biggest);
+    cJSON_AddStringToObject(reply, "biggest_request", biggest);
     cJSON_AddNumberToObject(reply, "internal_free", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     cJSON_AddNumberToObject(reply, "internal_min", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
     cJSON_AddNumberToObject(reply, "internal_largest", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));

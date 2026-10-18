@@ -14,7 +14,7 @@ curl -s -m 5 "http://$H/api/state" | python3 -c "
 import sys, json
 d = json.load(sys.stdin); s = d['settings']
 print('firmware', d['firmware'], '| up', d['uptime_s'], 's | rotation', s['rotation'], '| sweep', s['sweep'], '| trails', s['trail_s'])"
-for what in ${MODES:-settings scope radar covered}; do
+for what in ${MODES:-settings scope radar big covered}; do
     for r in $(seq 1 "$RUNS"); do
         curl -s -m 30 -X POST "http://$H/api/debug/bench?what=$what&ms=5000" | python3 -c "
 import sys, json
@@ -22,8 +22,9 @@ try:
     d = json.load(sys.stdin)
 except ValueError:
     sys.exit('no /api/debug/bench: is it a debug build (CONFIG_LV_USE_SNAPSHOT=y)?')
-print(f\"{d['what']:9} fps {d['fps']:5.1f}  avg {d['avg_ms']:6.1f} ms  max {d['max_ms']:6.1f} ms  busy {d['busy_pct']:3}%  \"
-      f\"redraw {d['inv_areas']} areas {d['inv_kpx']} kpx, biggest {d['biggest']}  \"
+print(f\"{d['what']:9} fps {d['fps']:5.1f}  avg {d['avg_ms']:6.1f} ms  max {d['max_ms']:6.1f} ms  \"
+      f\"busy {d['busy_pct']:3}% (flush {d['flush_pct']}%, wait {d['wait_pct']}%)  drawn {d['drawn_kpx']} kpx  \"
+      f\"requests {d['requests']}, biggest {d['biggest_request']}  \"
       f\"internal {d['internal_free']} (min {d['internal_min']})  openaip {d['openaip']}\")"
     done
 done
