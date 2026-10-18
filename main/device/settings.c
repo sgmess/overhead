@@ -33,11 +33,7 @@ void settings_defaults(settings_t *out)
         .fetch_s = 5,
         .show_ground = true,
         .sweep = true,
-#if defined(OVERHEAD_BOARD_S3_28C)
-        .max_labels = 25, // a smaller scope
-#else
         .max_labels = 40,
-#endif
         // The Tab5's NP-F550 latches into protection below 6.0 V and has to
         // be refitted before it charges again
         .batt_auto_off = true,
@@ -54,11 +50,7 @@ void settings_defaults(settings_t *out)
         .dim_to = 7 * 60,
         .clock = 0, // UTC until a timezone is chosen
         .tag_fields = TAG_CALLSIGN | TAG_ALT,
-#if defined(OVERHEAD_BOARD_S3_28C)
-        .trail_s = 0, // every line drawn is more PSRAM traffic against the scanout
-#else
         .trail_s = 120,
-#endif
         .show_military = true,
         .show_route = true,
         .alert = false, // near an airport it would never stop
@@ -310,25 +302,56 @@ bool settings_need_restart(const settings_t *s)
 // can't interleave, and its stack is internal: on a board without XIP a
 // flash write takes PSRAM away, and with it any stack there.
 
-static QueueHandle_t s_queue;          // of settings_t, one deep: the newest wins
+typedef struct {
+    settings_t s;
+    uint32_t seq; // numbers each change, so a waiter can tell its own from a newer one
+} change_t;
+
+static QueueHandle_t s_queue;          // of change_t, one deep: the newest wins
 static SemaphoreHandle_t s_applied;    // given after each change, for waiters
 static SemaphoreHandle_t s_wait_lock;  // one waiter at a time
+static SemaphoreHandle_t s_send_lock;  // one sender at a time
 static settings_listener_t s_listener;
+static uint32_t s_seq;                 // the last number handed out
+// The waiter's change, and what became of it
+typedef enum { W_NONE, W_PENDING, W_DONE, W_REPLACED } wait_state_t;
+static uint32_t s_wait_seq;
+static volatile wait_state_t s_wait_state;
+static volatile esp_err_t s_wait_err;
+
+static void done(uint32_t seq, esp_err_t err)
+{
+    xSemaphoreTake(s_send_lock, portMAX_DELAY);
+    if (s_wait_state == W_PENDING) {
+        if (seq == s_wait_seq) {
+            s_wait_err = err;
+            s_wait_state = W_DONE;
+        } else if ((int32_t)(seq - s_wait_seq) > 0) {
+            // The queue is one deep: a newer change finished first, so it
+            // replaced the waiter's before the task took it
+            s_wait_state = W_REPLACED;
+        }
+    }
+    xSemaphoreGive(s_send_lock);
+    xSemaphoreGive(s_applied);
+}
 
 static void settings_task(void *arg)
 {
-    static settings_t next, old; // too big for a 4 KB stack twice over
+    static change_t c;  // too big for a 4 KB stack, with old
+    static settings_t old;
     for (;;) {
-        xQueueReceive(s_queue, &next, portMAX_DELAY);
-        if (memcmp(&next, &s_settings, sizeof(next)) == 0) {
-            xSemaphoreGive(s_applied);
+        xQueueReceive(s_queue, &c, portMAX_DELAY);
+        const settings_t *next = &c.s;
+        if (memcmp(next, &s_settings, sizeof(*next)) == 0) {
+            done(c.seq, ESP_OK);
             continue;
         }
-        const bool restart = settings_need_restart(&next);
-        esp_err_t err = store(&next);
+        const bool restart = settings_need_restart(next);
+        esp_err_t err = store(next);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "not stored: %s", esp_err_to_name(err));
-            xSemaphoreGive(s_applied);
+            done(c.seq, err);
             continue;
         }
         if (restart) {
@@ -340,21 +363,37 @@ static void settings_task(void *arg)
         // seeing half of a string
         old = s_settings;
         board_lock();
-        s_settings = next;
+        s_settings = *next;
         board_unlock();
         ESP_LOGI(TAG, "changed and applied");
         if (s_listener) s_listener(&old, &s_settings);
-        xSemaphoreGive(s_applied);
+        done(c.seq, ESP_OK);
     }
 }
 
 void settings_start(settings_listener_t listener)
 {
     s_listener = listener;
-    s_queue = xQueueCreate(1, sizeof(settings_t));
+    s_queue = xQueueCreate(1, sizeof(change_t));
     s_applied = xSemaphoreCreateBinary();
     s_wait_lock = xSemaphoreCreateMutex();
+    s_send_lock = xSemaphoreCreateMutex();
     xTaskCreate(settings_task, "settings", 4096, NULL, 4, NULL);
+}
+
+// Queue s as the next change, as the waiter's with wait
+static void send(const settings_t *s, bool wait)
+{
+    static change_t c; // too big for some callers' stacks, so under s_send_lock
+    xSemaphoreTake(s_send_lock, portMAX_DELAY);
+    c.s = *s;
+    c.seq = ++s_seq;
+    if (wait) {
+        s_wait_seq = c.seq;
+        s_wait_state = W_PENDING;
+    }
+    xQueueOverwrite(s_queue, &c);
+    xSemaphoreGive(s_send_lock);
 }
 
 esp_err_t settings_change(const settings_t *s, bool wait)
@@ -362,13 +401,27 @@ esp_err_t settings_change(const settings_t *s, bool wait)
     if (!settings_valid(s)) return ESP_ERR_INVALID_ARG;
     if (!s_queue) return ESP_ERR_INVALID_STATE;
     if (!wait) {
-        xQueueOverwrite(s_queue, s);
+        send(s, false);
         return ESP_OK;
     }
     xSemaphoreTake(s_wait_lock, portMAX_DELAY);
     xSemaphoreTake(s_applied, 0); // drop a give left from a change nobody waited for
-    xQueueOverwrite(s_queue, s);
-    const bool done = xSemaphoreTake(s_applied, pdMS_TO_TICKS(3000)) == pdTRUE;
+    const TickType_t until = xTaskGetTickCount() + pdMS_TO_TICKS(3000);
+    esp_err_t err = ESP_ERR_TIMEOUT;
+    // A change from the screen (which doesn't wait) can replace this one
+    // before the task takes it; then send it again, after that one
+    for (int tries = 0; tries < 3; tries++) {
+        send(s, true);
+        while (s_wait_state == W_PENDING) {
+            const int32_t left = (int32_t)(until - xTaskGetTickCount());
+            if (left <= 0 || xSemaphoreTake(s_applied, left) != pdTRUE) break;
+        }
+        if (s_wait_state != W_REPLACED) break;
+    }
+    if (s_wait_state == W_DONE) err = s_wait_err;
+    xSemaphoreTake(s_send_lock, portMAX_DELAY);
+    s_wait_state = W_NONE;
+    xSemaphoreGive(s_send_lock);
     xSemaphoreGive(s_wait_lock);
-    return done ? ESP_OK : ESP_ERR_TIMEOUT;
+    return err;
 }

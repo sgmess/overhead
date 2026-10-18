@@ -579,10 +579,40 @@ static bool clock_set(void)
 
 // ---------------------------------------------------------------- public
 
+// Whether the map for cfg still belongs on the radar: a fetch takes about a
+// minute and a half, and the centre or countries can change meanwhile. Under
+// the display lock, which the settings task changes them under.
+static bool still_current(const settings_t *cfg)
+{
+    const settings_t *now = settings();
+    return now->lat == cfg->lat && now->lon == cfg->lon &&
+           strcmp(now->openaip_countries, cfg->openaip_countries) == 0;
+}
+
+// Hand map to the radar if it is still for the running settings; false, with
+// it freed, if not
+static bool show(const settings_t *cfg, aero_map_t *map)
+{
+    board_lock();
+    const bool current = still_current(cfg);
+    if (current) radar_ui_set_aero(map); // the radar owns it now
+    board_unlock();
+    if (!current) {
+        aero_map_free(map);
+        ESP_LOGI(TAG, "settings changed meanwhile, starting again");
+        ulTaskNotifyTake(pdTRUE, 0); // the change's wake-up: this is it
+    }
+    return current;
+}
+
 static void openaip_task(void *arg)
 {
-    const settings_t *s = settings();
+    static settings_t cfg; // what this pass works to, copied as it starts
+    const settings_t *s = &cfg;
     for (;;) {
+        board_lock();
+        cfg = *settings();
+        board_unlock();
         if (!configured(s)) {
             s_state = "off";
             board_lock();
@@ -606,9 +636,7 @@ static void openaip_task(void *arg)
             s_updated_us = esp_timer_get_time();
             s_state = "ok";
             s_detail[0] = '\0';
-            board_lock();
-            radar_ui_set_aero(cached); // the radar owns it now
-            board_unlock();
+            if (!show(s, cached)) continue;
 
             // Its age needs the clock, which SNTP sets soon after joining
             while (!net_wait_connected(60000)) {
@@ -652,11 +680,11 @@ static void openaip_task(void *arg)
         s_updated_us = esp_timer_get_time();
         s_state = "ok";
         s_detail[0] = '\0';
-        // Before the radar has it: once it does, a new centre can free it
+        // Before the radar has it: once it does, a new centre can free it.
+        // Kept with the centre it was fetched for, so a cache that is no
+        // longer current is just passed over.
         cache_save(s, map);
-        board_lock();
-        radar_ui_set_aero(map);
-        board_unlock();
+        if (!show(s, map)) continue;
         sleep_s(REFRESH_S);
     }
 }

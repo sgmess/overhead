@@ -424,6 +424,7 @@ void on_gesture(lv_event_t *e)
 
 static void on_alert_click(lv_event_t *e)
 {
+    if (swiped()) return;
     const int i = s_emerg_best >= 0 ? s_emerg_best : s_alert_best;
     if (i >= 0) select_aircraft(s_ac[i].hex);
 }
@@ -776,6 +777,12 @@ void radar_ui_set_centre(double lat, double lon)
     s_count = 0; // the next fetch fills in around the new centre
     s_sel_hex[0] = '\0';
     radar_ui_set_aero(NULL); // projected for the old one; OpenAIP fetches again
+}
+
+void radar_ui_get_centre(double *lat, double *lon)
+{
+    *lat = s_lat0;
+    *lon = s_lon0;
 }
 
 int radar_ui_range_nm(void)

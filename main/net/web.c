@@ -105,10 +105,12 @@ static cJSON *read_json(httpd_req_t *req)
     if (req->content_len <= 0 || req->content_len > BODY_MAX) return NULL;
     char *body = malloc(req->content_len + 1);
     if (!body) return NULL;
-    int got = 0;
+    int got = 0, timeouts = 0;
     while (got < req->content_len) {
         int n = httpd_req_recv(req, body + got, req->content_len - got);
-        if (n == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        // A few, then give up: one client that stops sending mid-body would
+        // otherwise hold the only server task, and with it every page
+        if (n == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts < 3) continue;
         if (n <= 0) {
             free(body);
             return NULL;

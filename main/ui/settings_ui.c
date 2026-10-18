@@ -20,7 +20,7 @@
 #include "settings.h"
 #include "zones.h"
 
-// Sizes per board, following physical size as radar_ui.c does. The round
+// Sizes per board, following physical size as radar_priv.h does. The round
 // panels keep everything inside the middle of the circle.
 #if defined(OVERHEAD_BOARD_TAB5)
 #define F_ROW lv_font_montserrat_20
@@ -42,16 +42,8 @@
 #define SWITCH_H 30
 #define COL_MAX 800
 #define ROUND 1
-#else // S3 2.8C
-#define F_ROW lv_font_montserrat_14
-#define F_HEAD lv_font_montserrat_12
-#define F_TITLE lv_font_montserrat_20
-#define PAD 12
-#define GAP 8
-#define SWITCH_W 44
-#define SWITCH_H 24
-#define COL_MAX 480
-#define ROUND 1
+#else
+#error "Unknown OVERHEAD_BOARD"
 #endif
 
 #define C_BG 0x030806
@@ -91,7 +83,8 @@ typedef struct {
 // Everything the open screen needs, in PSRAM while it is open: static
 // internal RAM is what the Tab5 is short of at boot (see radar_ui_create())
 typedef struct {
-    settings_t edit; // the screen's working copy, sent whole each change
+    settings_t edit; // the screen's working copy
+    settings_t base; // the settings edit started from, to tell what the screen changed
     bind_t bind[BIND_MAX];
     int n_bind;
     int half_hours[48];
@@ -133,7 +126,19 @@ static void commit(void)
     const bool crossed = s_ui->edit.filter_min_ft >= s_ui->edit.filter_max_ft;
     if (s_filter_warn) lv_obj_set_hidden(s_filter_warn, !crossed);
     if (crossed) return;
-    settings_change(&s_ui->edit, false);
+    // Only what was changed here, over the running settings: the web page
+    // may have changed others since the screen opened
+    settings_t next = *settings();
+    for (int i = 0; i < s_ui->n_bind; i++) {
+        const bind_t *b = &s_ui->bind[i];
+        const size_t at = (const char *)b->field - (const char *)&s_ui->edit;
+        const size_t n = b->kind == B_BOOL ? sizeof(bool) : b->kind == B_TZ ? sizeof(next.tz) : sizeof(int);
+        if (memcmp((const char *)&s_ui->edit + at, (const char *)&s_ui->base + at, n) != 0) {
+            memcpy((char *)&next + at, (const char *)&s_ui->edit + at, n);
+        }
+    }
+    s_ui->edit = s_ui->base = next;
+    settings_change(&next, false);
 }
 
 static void show_dependent(void)
@@ -828,7 +833,7 @@ void settings_ui_open(void)
     if (s_root) return;
     s_ui = heap_caps_calloc(1, sizeof(*s_ui), MALLOC_CAP_SPIRAM);
     if (!s_ui) return;
-    s_ui->edit = *settings();
+    s_ui->edit = s_ui->base = *settings();
 
     const int w = lv_display_get_horizontal_resolution(NULL), h = lv_display_get_vertical_resolution(NULL);
     s_root = lv_obj_create(lv_screen_active());

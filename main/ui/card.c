@@ -118,6 +118,7 @@ void update_card(void)
 // The card opens its aircraft in the big view
 static void on_card_click(lv_event_t *e)
 {
+    if (swiped()) return;
     if (s_sel_hex[0]) open_big(s_sel_hex);
 }
 

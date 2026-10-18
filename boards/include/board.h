@@ -18,9 +18,7 @@
 #define BOARD_CAN_ROTATE 0
 #define BOARD_HAS_SPEAKER 1 // ES8311, on the speaker header
 #else
-#define BOARD_NAME "Waveshare ESP32-S3-Touch-LCD-2.8C"
-#define BOARD_CAN_ROTATE 0
-#define BOARD_HAS_SPEAKER 0
+#error "Unknown OVERHEAD_BOARD"
 #endif
 
 // Panel, touch and the LVGL task, with the backlight on. rotation_deg is
@@ -32,7 +30,7 @@ void board_display_start(int rotation_deg);
 void board_set_brightness(int percent);
 
 // Play a short two-tone chime without blocking, on boards with a speaker
-// (the Tab5 and the 3.4C); does nothing on the others.
+// (both have one).
 void board_chime(void);
 
 // Power the WiFi radio. Call before esp_wifi_init().

@@ -6,11 +6,11 @@ otadata,  data, ota,     0xf000,  0x2000,
 phy_init, data, phy,     0x11000, 0x1000,
 ota_0,    app,  ota_0,   0x20000, 7M,
 ota_1,    app,  ota_1,   ,        7M,
-# The last OpenAIP map, so airspace shows at boot (main/openaip.c). Added
+# The last OpenAIP map, so airspace shows at boot (main/sources/openaip.c). Added
 # 12 October 2026 in flash the app slots leave free; a device updated only
 # over WiFi doesn't have it and fetches at every boot instead.
 aipcache, data, 0x40,    ,        1M,
-# Today's stats, so a restart doesn't start the day again (main/stats.c):
+# Today's stats, so a restart doesn't start the day again (main/core/stats.c):
 # eight slots written in turn, to spread the wear. Added 14 October 2026,
 # likewise only on devices flashed over USB or from the web flasher since.
 stats,    data, 0x41,    ,        256K,

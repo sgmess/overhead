@@ -37,6 +37,9 @@ void radar_ui_apply_settings(const settings_t *old);
 // A new centre: the traffic and the airspace go until fetched for it.
 void radar_ui_set_centre(double lat, double lon);
 
+// The centre the radar draws around. With the display lock held.
+void radar_ui_get_centre(double *lat, double *lon);
+
 // Open the card of the aircraft with this ICAO address, as a tap would; NULL
 // closes it. With the display lock held.
 void radar_ui_select(const char *hex);

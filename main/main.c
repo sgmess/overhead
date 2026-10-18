@@ -30,21 +30,17 @@ static const char *TAG = "overhead";
 // after the last request: two 70 ms apart drew HTTP 429 from adsb.fi
 #define FETCH_GAP_MS 2000
 
-#if CONFIG_IDF_TARGET_ESP32P4
 #define FETCH_STACK (16 * 1024)
-#else
-#define FETCH_STACK (10 * 1024) // internal RAM is tight on the S3
-#endif
 
 #define GEOLOC_RETRY_US (10 * 60 * 1000000LL)
 
 static TaskHandle_t s_fetch_task;
-static double s_lat, s_lon;
 
 // Runs in the LVGL task: wake the fetcher so the new range fills in at once.
 static void on_range_change(void)
 {
-    xTaskNotifyGive(s_fetch_task);
+    // A swipe in the first seconds after boot comes before the task
+    if (s_fetch_task) xTaskNotifyGive(s_fetch_task);
 }
 
 static void apply_tz(const char *tz)
@@ -71,10 +67,6 @@ static void on_settings_changed(const settings_t *old, const settings_t *now)
         openaip_restart();
     }
     if (now->feed != old->feed) feed_reset();
-    if (moved) {
-        s_lat = now->lat;
-        s_lon = now->lon;
-    }
     // A new centre, feed or interval: fetch now rather than at the old pace
     if (moved || now->feed != old->feed || now->fetch_s != old->fetch_s) xTaskNotifyGive(s_fetch_task);
 }
@@ -149,22 +141,34 @@ static void fetch_task(void *arg)
         if (last_us && since_ms < FETCH_GAP_MS) vTaskDelay(pdMS_TO_TICKS(FETCH_GAP_MS - since_ms));
         last_us = esp_timer_get_time();
 
+        // Around the radar's own centre, so the answer is drawn where it was asked for
+        double lat, lon;
+        board_lock();
+        radar_ui_get_centre(&lat, &lon);
+        const int range = radar_ui_range_nm();
+        board_unlock();
         // Ask for a little beyond the scope edge so aircraft don't pop in at the rim
-        int range = radar_ui_range_nm();
         int n = 0;
-        esp_err_t err = feed_fetch(s_lat, s_lon, range + range / 10 + 1, buf, AC_MAX, &n);
+        esp_err_t err = feed_fetch(lat, lon, range + range / 10 + 1, buf, AC_MAX, &n);
 
         board_lock();
-        if (err == ESP_OK) {
+        // A new centre while it was out: these belong to the old one, and the
+        // change woke this task to fetch again
+        double now_lat, now_lon;
+        radar_ui_get_centre(&now_lat, &now_lon);
+        const bool moved = now_lat != lat || now_lon != lon;
+        if (moved) {
+            ESP_LOGI(TAG, "centre moved during the fetch, dropping it");
+        } else if (err == ESP_OK) {
             radar_ui_set_aircraft(buf, n, feed_name());
             radar_ui_set_status("");
         } else {
             radar_ui_set_status("Feed error, retrying");
         }
         board_unlock();
-        if (err == ESP_OK) stats_update(buf, n, s_lat, s_lon, range);
+        if (err == ESP_OK && !moved) stats_update(buf, n, lat, lon, range);
 
-        // Internal RAM is the constraint on the S3. The IDF low-water mark is
+        // Internal RAM is the constraint, the Tab5's above all. The IDF low-water mark is
         // not logged: it misreads the DMA reserve pool as once full.
         ESP_LOGI(TAG, "heap: internal %u free, largest %u; psram %u free",
                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
@@ -195,13 +199,11 @@ void app_main(void)
     apply_tz(settings()->tz);
     // Early, so the web flasher finds it within its wait after installing
     improv_start();
-    s_lat = settings()->lat;
-    s_lon = settings()->lon;
 
     board_display_start(settings()->rotation);
 
     board_lock();
-    radar_ui_create(s_lat, s_lon, on_range_change);
+    radar_ui_create(settings()->lat, settings()->lon, on_range_change);
     radar_ui_set_status("Starting WiFi");
     board_unlock();
 

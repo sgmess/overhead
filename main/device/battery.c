@@ -72,8 +72,6 @@ static void battery_task(void *arg)
     int64_t in_range_ms = -1; // how long the voltage has stayed in a pack's range
     int discharging_ms = 0, since_ui = UI_EVERY_MS, since_log = LOG_EVERY_MS;
     batt_state_t last_state = BATT_CHECKING;
-    const bool auto_off = settings()->batt_auto_off;
-    const float shutdown_volts = settings()->batt_shutdown_mv / 1000.0f;
     int critical_ms = 0, countdown_ms = -1; // -1: no countdown running
 
     for (;;) {
@@ -133,6 +131,10 @@ static void battery_task(void *arg)
         }
 
         bool power_off = false;
+        // Each time round: they can be changed while running, and turning
+        // auto-off off cancels a countdown
+        const bool auto_off = settings()->batt_auto_off;
+        const float shutdown_volts = settings()->batt_shutdown_mv / 1000.0f;
         // Below 6.0 V the pack latches into protection and has to be taken out
         // and refitted, so power off cleanly before it gets there. Only with a
         // confirmed pack; plugging in during the countdown cancels it.

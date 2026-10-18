@@ -8,14 +8,13 @@
   <img alt="GitHub top language" src="https://img.shields.io/github/languages/top/sgmess/overhead">
 </p>
 
-A small, single-screen ADS-B radar for ESP32 touch displays. It joins
+A small, single-screen ADS-B radar for ESP32-P4 touch displays. It joins
 WiFi, polls a free online ADS-B feed, and plots the aircraft around a fixed
 point on a radar scope.
 
 | Board | `OVERHEAD_BOARD` | Panel |
 | --- | --- | --- |
 | ESP32-P4-WIFI6-Touch-LCD-3.4C | `p4_34c` (default) | 800x800 MIPI DSI, WiFi via ESP32-C6 |
-| ESP32-S3-Touch-LCD-2.8C | `s3_28c` | 480x480 ST7701 RGB, native WiFi |
 | M5Stack Tab5 | `tab5` | 720x1280 MIPI DSI portrait, WiFi via ESP32-C6 |
 
 - Aircraft drawn as arrowheads along their track, coloured by altitude (amber
@@ -102,14 +101,15 @@ the scope's square and the list stays beside it. Its route is looked up as
 the card's is, once per callsign.
 
 The round boards have no room for the Tab5's list beside the scope, so
-they get it as a third view: the nearest 10 (8 on the 2.8C) in the middle of
+they get it as a third view: the nearest 10 in the middle of
 the circle, with the same columns, colours and count.
 
 ## Build and flash
 
-Needs ESP-IDF 6.1 (the Tab5 and the 3.4C; the parked S3 2.8C's lock file is
-still from 5.5). Each board has its own build directory, `sdkconfig.<board>`
-and `dependencies.lock.<board>`, so building one never touches the other.
+Needs ESP-IDF 6.1. Each board has its own build directory, `sdkconfig.<board>`
+and `dependencies.lock.<board>`, so building one never changes the other's
+settings or component versions. `managed_components/` is shared, though, so
+the first build after switching boards re-fetches the components it needs.
 There is nothing to configure first: WiFi and every radar setting are set on
 the device (see [Setup and settings](#setup-and-settings)).
 
@@ -118,9 +118,6 @@ the device (see [Setup and settings](#setup-and-settings)).
 
 # P4 3.4C
 idf.py build flash monitor
-
-# S3 2.8C
-idf.py -B build_s3 -D OVERHEAD_BOARD=s3_28c build flash monitor
 
 # M5Stack Tab5
 idf.py -B build_tab5 -D OVERHEAD_BOARD=tab5 build flash monitor
@@ -146,7 +143,7 @@ That makes a GitHub release holding, for each board,
 to GitHub Pages at https://sgmess.github.io/overhead/, serving that release.
 Release builds start from the `sdkconfig.defaults*` files, never a local
 `sdkconfig`, so they contain no WiFi network and open the setup portal on
-first boot. The Tab5 and the 3.4C are built; the S3 2.8C is parked.
+first boot.
 
 The device also checks by itself, a minute after joining WiFi and then
 daily, and shows the result first in the status on the configuration page
@@ -308,8 +305,7 @@ kept in `main/ui/flags.bin`, which `tools/make_flags.py` rebuilds after a
 country is added. The airline logos are pics.avs.io's, drawn on white,
 trimmed and fitted to 138x40, and shown on a white badge because many are
 dark and would vanish on the card; `tools/make_logos.py` rebuilds
-`main/ui/logos.bin` after an airline is added (about 1 MB for 133). The 2.8C's
-card has no room for one.
+`main/ui/logos.bin` after an airline is added (about 1 MB for 133).
 
 Settings are kept in NVS (namespace `overhead`). Until something is saved
 the firmware's defaults apply (`settings_defaults()` in `main/device/settings.c`):
@@ -322,17 +318,11 @@ happens once: it never moves a centre set on the setup or configuration page.
 included, so the next connection looks the centre up again.
 
 The web server's task stack is in PSRAM. PSRAM is unreachable while flash is
-written, so a save is written to NVS from the esp_timer task just before the
-restart, not from the request handler.
-
-### S3 2.8C notes
-
-The panel has no frame memory: the S3 streams the frame out of PSRAM
-continuously, and anything that starves that bus shifts or tears the picture.
-The settings in `sdkconfig.defaults.s3_28c` come from traffic-display, where
-they ran stable with WiFi up. This app also runs TLS, so mbedTLS is moved to
-PSRAM to keep internal RAM free. It needs the Touch variant of the board: the
-non-touch 2.8C aborts at boot because its GT911 never answers.
+written, so a new network or a reset is written to NVS from the esp_timer
+task just before the restart, not from the request handler. Other changes go
+through `settings_change()`, as above. The device's settings screen sends only
+the settings changed on it, so a change made on the page while it is open is
+kept.
 
 ### Tab5 notes
 
@@ -413,7 +403,7 @@ The P4 3.4C made the same move in October 2026, when its C6 was updated to
 TLS buffers are in PSRAM too. Its Waveshare BSP pins esp_lvgl_adapter to
 0.6, which includes LVGL 9.6's deprecated `src/` headers; their `#warning`
 is an error under IDF 6.1, so the top-level CMakeLists keeps it a warning
-for that board.
+in that component alone (the Tab5 uses the adapter too).
 
 **Battery.** The Tab5 only charges while firmware holds the charger's enable
 line (CHG_EN, on the second I/O expander) high, so the firmware turns it on at
@@ -428,8 +418,7 @@ read 0 V. It alternates about 11 s at 8.38 V and 5.5 s at 4.2 V (measured on
 this unit; also noted in yejun/tab5-fancy-clock). So one reading outside
 5.5 to 9.0 V means no pack, and a pack is only shown once it has stayed in
 range for 20 s, longer than one whole cycle. The voltage is sampled every
-500 ms so a dip can't be missed. The P4 3.4C has no battery. The 2.8C has a battery voltage divider whose ratio
-nobody has measured, so it reports none.
+500 ms so a dip can't be missed. The P4 3.4C has no battery.
 
 ## Layout
 
@@ -452,7 +441,7 @@ so a file can move between folders without its users changing.
 | `geoloc.c` | A new device's centre from its IP address |
 | `zones.c` | Timezones and their POSIX rules, for the page and the screen |
 | **`main/net/`** | **WiFi, the web pages, updates** |
-| `net.c` | WiFi (via the ESP32-C6 on the P4 boards, native on the S3), setup portal, mDNS, SNTP |
+| `net.c` | WiFi (via the ESP32-C6), setup portal, mDNS, SNTP |
 | `dns_server.c`, `improv.c` | The portal's DNS, where every name answers with the device; WiFi setup from the web flasher |
 | `web.c`, `web/` | Web server, JSON API, and the setup and configuration pages |
 | `ota.c` | Updates from GitHub releases, image check, rollback confirmation |
@@ -474,7 +463,6 @@ so a file can move between folders without its users changing.
 | `tools/` | `make_flags.py` and `make_logos.py`, which build `main/ui/flags.bin` and `main/ui/logos.bin` |
 | `web/flash/`, `.github/workflows/` | Web flasher page and the build, release and Pages workflow |
 | `boards/<board>/board/` | Per-board bring-up: display start, WiFi power, LVGL lock; the BSP is its dependency |
-| `boards/s3_28c/waveshare__esp32_s3_touch_lcd_28c` | 2.8C BSP, vendored from traffic-display (Apache-2.0) |
 
 The P4 3.4C and Tab5 BSPs come from the component registry
 (`waveshare/esp32_p4_wifi6_touch_lcd_xc` 3.0.1, `espressif/m5stack_tab5` 1.3.1),
@@ -482,8 +470,7 @@ each fetched only for its own board.
 
 ## Licence
 
-Apache License 2.0; see [LICENSE](LICENSE). The vendored 2.8C BSP keeps its
-own Apache-2.0 terms. `main/third_party/stb_image.h` is Sean Barrett's,
+Apache License 2.0; see [LICENSE](LICENSE). `main/third_party/stb_image.h` is Sean Barrett's,
 public domain or MIT. The flag images in `main/ui/flags.bin` are from
 [Twemoji](https://github.com/jdecked/twemoji), Copyright 2019 Twitter, Inc
 and other contributors, licensed under

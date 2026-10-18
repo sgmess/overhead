@@ -1,10 +1,8 @@
 build/
-build_s3/
 build_tab5/
 managed_components/
 # per machine; older ones may still hold a WiFi password
 sdkconfig.p4_34c
-sdkconfig.s3_28c
 sdkconfig.tab5
 sdkconfig*.old
 __pycache__/

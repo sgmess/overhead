@@ -33,7 +33,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The S3 2.8C (s3_28c, esp32s3) is parked; add it back here
           - board: tab5
             target: esp32p4
           - board: p4_34c

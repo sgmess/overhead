@@ -190,6 +190,7 @@ void create_rlist(lv_obj_t *scr)
 // Tapping a row selects that aircraft; tapping the selected row clears it.
 static void on_row_click(lv_event_t *e)
 {
+    if (swiped()) return;
     int r = (int)(intptr_t)lv_event_get_user_data(e);
     if (!s_row_hex[r][0]) return;
     if (s_view == VIEW_BIG) s_big_auto[0] = '\0'; // what was tapped, ahead of an alert

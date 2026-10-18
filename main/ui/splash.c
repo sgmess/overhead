@@ -11,7 +11,7 @@
 #define SPLASH_MS 10000
 #define TICK_MS 50
 
-// Sizes per board, following physical size as radar_ui.c does
+// Sizes per board, following physical size as radar_priv.h does
 #if defined(OVERHEAD_BOARD_TAB5)
 #define EMBLEM_R 96
 #define F_TITLE lv_font_montserrat_32
@@ -24,18 +24,14 @@
 #define F_LINE lv_font_montserrat_16
 #define F_SMALL lv_font_montserrat_14
 #define GAP 14
-#else // S3 2.8C
-#define EMBLEM_R 52
-#define F_TITLE lv_font_montserrat_20
-#define F_LINE lv_font_montserrat_14
-#define F_SMALL lv_font_montserrat_12
-#define GAP 8
+#else
+#error "Unknown OVERHEAD_BOARD"
 #endif
 #define ARC_GAP (EMBLEM_R / 8)
 #define ARC_W (EMBLEM_R / 20 + 2)
 #define EMBLEM_SIZE (2 * (EMBLEM_R + ARC_GAP + ARC_W))
 
-// radar_ui.c's palette
+// radar_priv.h's palette
 #define C_BG 0x030806
 #define C_DISC 0x06120d
 #define C_RING 0x1c4535

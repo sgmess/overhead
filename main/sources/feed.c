@@ -30,7 +30,10 @@ static const feed_def_t FEEDS[] = {
 };
 #define FEED_COUNT (sizeof(FEEDS) / sizeof(FEEDS[0]))
 
-static int s_feed = -1; // the primary from settings() until one fails
+// The feed in use: the primary from settings() until one fails. Only the
+// fetch task changes it; a new primary just asks it to (feed_reset()).
+static int s_feed = -1;
+static bool s_reset_wanted;
 
 typedef struct {
     char *data;
@@ -209,7 +212,7 @@ void feed_init(void)
 esp_err_t feed_fetch(double lat, double lon, int radius_nm,
                      aircraft_t *out, int max, int *count)
 {
-    if (s_feed < 0) s_feed = settings()->feed;
+    if (__atomic_exchange_n(&s_reset_wanted, false, __ATOMIC_ACQ_REL) || s_feed < 0) s_feed = settings()->feed;
     const feed_def_t *f = &FEEDS[s_feed];
     char url[160];
     snprintf(url, sizeof(url), f->url_fmt, lat, lon, radius_nm);
@@ -253,10 +256,11 @@ esp_err_t feed_fetch(double lat, double lon, int radius_nm,
 
 void feed_reset(void)
 {
-    s_feed = -1;
+    __atomic_store_n(&s_reset_wanted, true, __ATOMIC_RELEASE);
 }
 
 const char *feed_name(void)
 {
-    return FEEDS[s_feed < 0 ? settings()->feed : s_feed].name;
+    const int f = s_feed; // once: the fetch task can change it meanwhile
+    return FEEDS[f < 0 ? settings()->feed : f].name;
 }

@@ -44,7 +44,7 @@
 #define DEG2RAD ((float)M_PI / 180.0f)
 
 // Sizes per board. They follow physical size, not resolution: pixel pitch is
-// 0.107 mm on the P4 3.4C, 0.148 mm on the 2.8C and 0.0865 mm on the Tab5.
+// 0.107 mm on the P4 3.4C and 0.0865 mm on the Tab5.
 #if defined(OVERHEAD_BOARD_TAB5) // 720x1280 panel, scope 720x720 plus the list
 #define HAS_LIST 1
 #define LIST_ROWS_MAX 15
@@ -146,54 +146,8 @@
 #define F_TITLE lv_font_montserrat_28
 #define F_CARD lv_font_montserrat_16
 #define QR_SIZE 220
-#else // S3 2.8C, 480x480 round
-#define R_SCOPE 206
-#define TAP_RADIUS 30
-#define TICK_LEN_30 9
-#define TICK_LEN_10 5
-#define TICK_LEN_5 3
-#define ROSE_TEXT_R (R_SCOPE + 20)
-#define ARROW_SCALE 0.75f
-#define VECTOR_MAX 45
-#define SEL_RING 14
-#define HOME_ARM 7
-#define TAG_DX 10
-#define TAG_DY 8
-#define TAG_W 100
-#define CLOCK_Y 10
-#define RANGE_Y 28
-#define STATUS_Y 12
-#define CARD_W 320
-#define CARD_H 170
-#define CARD_PAD 12
-#define CARD_SUB_Y 26
-#define CARD_ROWS_Y 52
-#define CARD_LINE_SPACE 4
-#define CARD_LINE 20
-#define FLAG_SCALE 180 // 25x18 beside the smaller title
-#define F_BIG lv_font_montserrat_28
-#define F_BIG_MID lv_font_montserrat_20
-#define F_BIG_TEXT lv_font_montserrat_14
-#define BIG_POINTER 1.6f
-#define BIG_PAD_TOP 66
-#define BIG_PAD_SIDE 66
-#define RL_ROWS 8
-#define RL_ROW_H 30
-#define RL_W 330
-#define RL_COLS {0, 84, 136, 200, 248, 290}
-#define F_RL lv_font_montserrat_14
-#define F_RL_HEAD lv_font_montserrat_12
-#define CARD_COLS {0, 38, 148, 184}
-#define F_CARDINAL lv_font_montserrat_16
-#define F_ROSE lv_font_montserrat_12
-#define F_RING lv_font_montserrat_12
-#define F_TAG lv_font_montserrat_12
-#define F_CLOCK lv_font_montserrat_16
-#define F_RANGE lv_font_montserrat_20
-#define F_STATUS lv_font_montserrat_12
-#define F_TITLE lv_font_montserrat_20
-#define F_CARD lv_font_montserrat_14
-#define QR_SIZE 130
+#else
+#error "Unknown OVERHEAD_BOARD"
 #endif
 
 #define SWEEP_SEGS 8

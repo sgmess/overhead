@@ -178,8 +178,13 @@ static esp_err_t install(void)
     // Refuse an image built for another board before writing any of it
     esp_app_desc_t incoming;
     err = esp_https_ota_get_img_desc(h, &incoming);
+    if (err != ESP_OK) {
+        snprintf(s_detail, sizeof(s_detail), "Couldn't read the image (%s)", esp_err_to_name(err));
+        esp_https_ota_abort(h);
+        return err;
+    }
     const char *mine = esp_app_get_description()->project_name;
-    if (err == ESP_OK && strncmp(incoming.project_name, mine, sizeof(incoming.project_name)) != 0) {
+    if (strncmp(incoming.project_name, mine, sizeof(incoming.project_name)) != 0) {
         snprintf(s_detail, sizeof(s_detail), "That image is for %.32s, not %s", incoming.project_name, mine);
         esp_https_ota_abort(h);
         return ESP_ERR_INVALID_VERSION;

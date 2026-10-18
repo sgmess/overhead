@@ -196,22 +196,31 @@ static void load(const struct tm *tm)
     if (!p || !s_packed) return;
     save_hdr_t *h = heap_caps_malloc(sizeof(*h), MALLOC_CAP_SPIRAM); // too big for a stack
     if (!h) return;
-    uint32_t best_seq = 0;
+    // The newest save that reads back whole: power lost part way through
+    // one leaves the save before it
+    uint32_t best_seq = 0, top_seq = 0;
     int best_slot = -1;
     for (int k = 0; k < SLOTS && (k + 1) * SLOT_SIZE <= (int)p->size; k++) {
-        if (esp_partition_read(p, k * SLOT_SIZE, h, sizeof(*h)) != ESP_OK) continue;
+        const size_t at = k * SLOT_SIZE;
+        if (esp_partition_read(p, at, h, sizeof(*h)) != ESP_OK) continue;
         if (h->magic != SAVE_MAGIC || h->version != SAVE_VERSION ||
             h->sizes != sizeof(today_t) + sizeof(history_t) || h->n > TABLE_FULL)
             continue;
-        if (best_slot < 0 || h->seq > best_seq) {
-            best_seq = h->seq;
-            best_slot = k;
+        if (h->seq > top_seq) top_seq = h->seq;
+        if (best_slot >= 0 && h->seq <= best_seq) continue;
+        if (esp_partition_read(p, at + sizeof(*h), s_packed, h->n * sizeof(uint32_t)) != ESP_OK ||
+            save_crc(h, s_packed) != h->crc) {
+            ESP_LOGW(TAG, "save %u in slot %d unreadable", (unsigned)h->seq, k);
+            continue;
         }
+        best_seq = h->seq;
+        best_slot = k;
     }
     if (best_slot >= 0) {
-        s_seq = best_seq;
+        s_seq = top_seq;    // past any unreadable one, so the next save is newest
         s_slot = best_slot; // the next save goes in the one after
         const size_t at = best_slot * SLOT_SIZE;
+        // Again: a later candidate may have been read over it
         if (esp_partition_read(p, at, h, sizeof(*h)) != ESP_OK ||
             esp_partition_read(p, at + sizeof(*h), s_packed, h->n * sizeof(uint32_t)) != ESP_OK ||
             save_crc(h, s_packed) != h->crc) {
