@@ -153,6 +153,17 @@ void set_text_if_changed(lv_obj_t *label, const char *text)
     if (strcmp(lv_label_get_text(label), text) != 0) lv_label_set_text(label, text);
 }
 
+// Setting a style redraws too, even to the value it has
+void set_text_color_if_changed(lv_obj_t *obj, lv_color_t color)
+{
+    if (!lv_color_eq(lv_obj_get_style_text_color(obj, LV_PART_MAIN), color)) lv_obj_set_style_text_color(obj, color, 0);
+}
+
+void set_bg_color_if_changed(lv_obj_t *obj, lv_color_t color)
+{
+    if (!lv_color_eq(lv_obj_get_style_bg_color(obj, LV_PART_MAIN), color)) lv_obj_set_style_bg_color(obj, color, 0);
+}
+
 // "12 aircraft", or "12 of 30 aircraft" while the filter hides some
 void format_count(char *buf, size_t n)
 {
@@ -257,8 +268,8 @@ static void update_alert(void)
         if (s_emerg_n > 1) snprintf(more, sizeof(more), "  +%d", s_emerg_n - 1);
         snprintf(text, sizeof(text), LV_SYMBOL_WARNING "  %s%s%s  %s  %.1f NM%s", code ? a->squawk : "",
                  code ? " " : "", emerg_name(a->emerg), ac_name(a), s_scr[s_emerg_best].dist_nm, more);
-        lv_obj_set_style_bg_color(s_alert_lbl, lv_color_hex(C_EMERG), 0);
-        lv_obj_set_style_text_color(s_alert_lbl, lv_color_hex(C_SELECT), 0);
+        set_bg_color_if_changed(s_alert_lbl, lv_color_hex(C_EMERG));
+        set_text_color_if_changed(s_alert_lbl, lv_color_hex(C_SELECT));
     } else if (s_alert_best >= 0) {
         const aircraft_t *a = &s_ac[s_alert_best];
         char alt[16];
@@ -266,8 +277,8 @@ static void update_alert(void)
         if (s_alert_n > 1) snprintf(more, sizeof(more), "  +%d", s_alert_n - 1);
         snprintf(text, sizeof(text), LV_SYMBOL_BELL "  %s  %s ft  %.1f NM%s", ac_name(a), alt,
                  s_scr[s_alert_best].dist_nm, more);
-        lv_obj_set_style_bg_color(s_alert_lbl, lv_color_hex(C_WARN), 0);
-        lv_obj_set_style_text_color(s_alert_lbl, lv_color_hex(C_ALERT_INK), 0);
+        set_bg_color_if_changed(s_alert_lbl, lv_color_hex(C_WARN));
+        set_text_color_if_changed(s_alert_lbl, lv_color_hex(C_ALERT_INK));
     } else {
         lv_obj_set_hidden(s_alert_lbl, true);
         return;
@@ -278,9 +289,17 @@ static void update_alert(void)
 
 // ---------------------------------------------------------------- views and touch
 
+bool radar_hidden(void)
+{
+    return settings_ui_is_open() || !lv_obj_is_hidden(s_sleep_shield);
+}
+
 static void refresh(void)
 {
-    layout();
+    layout(); // the alerts, which wake the screen, come from here
+    // Hidden, the rest is only drawing nobody sees. Closing the settings or
+    // waking redraws the whole screen, from the next tick at the latest.
+    if (radar_hidden()) return;
     if (s_bg_range != s_range_idx) render_background();
     update_card();
     update_big(); // before the list, which marks the one it shows
@@ -404,6 +423,21 @@ void radar_ui_debug_view(int view)
 {
     if (view >= 0 && view < VIEW_COUNT && view != s_view) show_view(view);
 }
+
+static void on_stress(lv_timer_t *t)
+{
+    lv_obj_invalidate(s_scope);
+}
+
+void radar_ui_debug_stress(bool on)
+{
+    static lv_timer_t *timer;
+    if (on && !timer) timer = lv_timer_create(on_stress, 1, NULL);
+    if (!on && timer) {
+        lv_timer_delete(timer);
+        timer = NULL;
+    }
+}
 #endif
 
 // A swipe also ends in a release, which mustn't count as a tap as well
@@ -433,7 +467,9 @@ static void on_alert_click(lv_event_t *e)
 static void update_backlight(void)
 {
     const bool asleep = backlight_update(s_alert_n > 0 || s_emerg_n > 0, lv_display_get_inactive_time(NULL));
+    const bool woke = !asleep && !lv_obj_is_hidden(s_sleep_shield);
     lv_obj_set_hidden(s_sleep_shield, !asleep);
+    if (woke) refresh(); // skipped while asleep: up to date before it shows
 }
 
 // A touch on the dark screen only wakes it: the shield takes it, so it
@@ -445,7 +481,7 @@ static void on_shield_pressed(lv_event_t *e)
 
 static void on_tick(lv_timer_t *t)
 {
-    update_clock();
+    if (!radar_hidden()) update_clock();
     if (s_count && esp_timer_get_time() - s_last_update_us > DROP_STALE_S * 1000000LL) {
         s_count = 0; // don't keep extrapolating ghosts forever
     }
@@ -520,6 +556,25 @@ static void create_battery(lv_obj_t *parent)
 static void show_battery(int percent, uint32_t outline, uint32_t fill, const char *level, const char *detail,
                          uint32_t detail_color)
 {
+    // It comes every 2 s, and restyling redraws even when nothing changed
+    static struct {
+        int percent;
+        uint32_t outline, fill, detail_color;
+        char level[32], detail[48];
+        bool shown;
+    } last;
+    if (last.shown && last.percent == percent && last.outline == outline && last.fill == fill &&
+        last.detail_color == detail_color && strcmp(last.level, level) == 0 && strcmp(last.detail, detail) == 0 &&
+        !lv_obj_is_hidden(s_batt_row)) {
+        return;
+    }
+    last.percent = percent;
+    last.outline = outline;
+    last.fill = fill;
+    last.detail_color = detail_color;
+    strlcpy(last.level, level, sizeof(last.level));
+    strlcpy(last.detail, detail, sizeof(last.detail));
+    last.shown = true;
     lv_obj_set_style_border_color(s_batt_body, lv_color_hex(outline), 0);
     lv_obj_set_style_bg_color(s_batt_nub, lv_color_hex(outline), 0);
     lv_obj_set_style_bg_color(s_batt_fill, lv_color_hex(fill), 0);

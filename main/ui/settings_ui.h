@@ -12,14 +12,14 @@ void settings_ui_init(void);
 
 void settings_ui_open(void);
 
+// Whether it is open, covering the radar. With the display lock held.
+bool settings_ui_is_open(void);
+
 #if CONFIG_LV_USE_SNAPSHOT
 // For development: scroll the open settings screen up and down without a
-// finger, counting the frames drawn, until stopped; then how many, and the
-// time from the start of each to the end of its drawing
-typedef struct {
-    int frames;
-    int avg_us, max_us;
-} settings_ui_bench_t;
+// finger until stopped (main/ui/bench.h counts the frames)
 void settings_ui_debug_scroll_start(void);
-void settings_ui_debug_scroll_stop(settings_ui_bench_t *out);
+void settings_ui_debug_scroll_stop(void);
+// Close it, as its Done button does
+void settings_ui_debug_close(void);
 #endif

@@ -12,6 +12,11 @@ CONFIG_SPIRAM_SPEED_200M=y
 CONFIG_CACHE_L2_CACHE_256KB=y
 CONFIG_CACHE_L2_CACHE_LINE_128B=y
 CONFIG_LV_DEF_REFR_PERIOD=15
+# One drawing thread, not the shared default's two: scrolling the settings
+# went from 16.8 to 20.8 fps and 8 KB more internal RAM is free, for a full
+# scope redraw about 8% slower, which happens once a second (/api/debug/bench,
+# 18 Oct 2026). LVGL's PPA renderer (CONFIG_LV_USE_PPA) was slower still.
+CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1
 
 # TLS buffers in PSRAM. esp_hosted 2.x left ~50 KB of internal RAM free with
 # a largest block of ~14 KB, under the size of a full TLS record (measured

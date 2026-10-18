@@ -1,0 +1,29 @@
+#!/bin/bash
+# Time the display of a device running a debug build (CONFIG_LV_USE_SNAPSHOT=y
+# in its local sdkconfig), through /api/debug/bench. See docs/PERFORMANCE.md.
+#
+#   tools/bench.sh [host] [runs]          every mode, 3 runs each
+#   MODES="settings scope" tools/bench.sh  just those
+#
+# Traffic changes from minute to minute, and the scope numbers with it: compare
+# builds with runs taken back to back, not against figures from another day.
+H=${1:-overhead.local}
+RUNS=${2:-3}
+for i in $(seq 1 40); do curl -s -m 3 "http://$H/api/state" >/dev/null && break; sleep 3; done
+curl -s -m 5 "http://$H/api/state" | python3 -c "
+import sys, json
+d = json.load(sys.stdin); s = d['settings']
+print('firmware', d['firmware'], '| up', d['uptime_s'], 's | rotation', s['rotation'], '| sweep', s['sweep'], '| trails', s['trail_s'])"
+for what in ${MODES:-settings scope radar covered}; do
+    for r in $(seq 1 "$RUNS"); do
+        curl -s -m 30 -X POST "http://$H/api/debug/bench?what=$what&ms=5000" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    sys.exit('no /api/debug/bench: is it a debug build (CONFIG_LV_USE_SNAPSHOT=y)?')
+print(f\"{d['what']:9} fps {d['fps']:5.1f}  avg {d['avg_ms']:6.1f} ms  max {d['max_ms']:6.1f} ms  busy {d['busy_pct']:3}%  \"
+      f\"redraw {d['inv_areas']} areas {d['inv_kpx']} kpx, biggest {d['biggest']}  \"
+      f\"internal {d['internal_free']} (min {d['internal_min']})  openaip {d['openaip']}\")"
+    done
+done

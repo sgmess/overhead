@@ -828,6 +828,11 @@ void settings_ui_init(void)
     lv_display_set_theme(disp, th);
 }
 
+bool settings_ui_is_open(void)
+{
+    return s_root != NULL;
+}
+
 void settings_ui_open(void)
 {
     if (s_root) return;
@@ -883,23 +888,6 @@ void settings_ui_open(void)
 }
 
 #if CONFIG_LV_USE_SNAPSHOT
-static int s_frames;
-static int64_t s_frame_start_us, s_frame_total_us, s_frame_max_us;
-
-static void on_refr_start(lv_event_t *e)
-{
-    s_frame_start_us = esp_timer_get_time();
-}
-
-static void on_refr_ready(lv_event_t *e)
-{
-    if (!s_frame_start_us) return;
-    const int64_t d = esp_timer_get_time() - s_frame_start_us;
-    s_frames++;
-    s_frame_total_us += d;
-    if (d > s_frame_max_us) s_frame_max_us = d;
-}
-
 static void scroll_to(void *obj, int32_t y)
 {
     lv_obj_scroll_to_y(obj, y, LV_ANIM_OFF);
@@ -911,11 +899,6 @@ void settings_ui_debug_scroll_start(void)
     lv_obj_scroll_to_y(s_root, 0, LV_ANIM_OFF);
     lv_obj_update_layout(s_root);
     const int32_t bottom = lv_obj_get_scroll_bottom(s_root);
-    s_frames = 0;
-    s_frame_start_us = s_frame_total_us = s_frame_max_us = 0;
-    lv_display_t *d = lv_display_get_default();
-    lv_display_add_event_cb(d, on_refr_start, LV_EVENT_REFR_START, NULL);
-    lv_display_add_event_cb(d, on_refr_ready, LV_EVENT_REFR_READY, NULL);
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_root);
@@ -927,14 +910,13 @@ void settings_ui_debug_scroll_start(void)
     lv_anim_start(&a);
 }
 
-void settings_ui_debug_scroll_stop(settings_ui_bench_t *out)
+void settings_ui_debug_scroll_stop(void)
 {
-    lv_display_t *d = lv_display_get_default();
-    lv_display_remove_event_cb_with_user_data(d, on_refr_start, NULL);
-    lv_display_remove_event_cb_with_user_data(d, on_refr_ready, NULL);
     if (s_root) lv_anim_delete(s_root, scroll_to);
-    out->frames = s_frames;
-    out->avg_us = s_frames ? (int)(s_frame_total_us / s_frames) : 0;
-    out->max_us = (int)s_frame_max_us;
+}
+
+void settings_ui_debug_close(void)
+{
+    close_screen();
 }
 #endif

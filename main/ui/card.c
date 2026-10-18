@@ -61,12 +61,18 @@ void update_card(void)
     // on the Tab5 the panel places it. A margin, so one crossing the middle
     // doesn't flip it back and forth.
     static bool top;
+    static int placed = -1; // aligning redraws even in the same place, so only on a move
     if (s->y > CY + CARD_FLIP) top = true;
     if (s->y < CY - CARD_FLIP) top = false;
-    lv_obj_align(s_card, LV_ALIGN_CENTER, 0, top ? -CARD_OFFSET : CARD_OFFSET);
+    if (placed != top) {
+        lv_obj_align(s_card, LV_ALIGN_CENTER, 0, top ? -CARD_OFFSET : CARD_OFFSET);
+        placed = top;
+    }
 #endif
 
-    lv_label_set_text(s_card_title, ac_name(a));
+    // Each only when it changes: setting a label redraws it even when the
+    // text is the same, and this runs every second
+    set_text_if_changed(s_card_title, ac_name(a));
     const country_t *country = country_for_hex(a->hex);
     update_card_flag(country ? country->iso : "");
 
@@ -89,7 +95,7 @@ void update_card(void)
 
     char sub[64];
     fmt_sub(a, true, sub, sizeof(sub));
-    lv_label_set_text(s_card_sub, sub);
+    set_text_if_changed(s_card_sub, sub);
 
     // The owner and age, when known, on a line of their own that moves the
     // figures down
@@ -109,9 +115,12 @@ void update_card(void)
     if (a->gs_kt >= 0) snprintf(gs, sizeof(gs), "%.0f kt", a->gs_kt);
     if (a->track_deg >= 0) snprintf(trk, sizeof(trk), "%03.0f\xC2\xB0", a->track_deg);
 
-    lv_label_set_text_fmt(s_card_v1, "%s\n%s\n%s%s", alt, gs, a->squawk[0] ? a->squawk : "-",
-                          a->emergency ? "  " LV_SYMBOL_WARNING : "");
-    lv_label_set_text_fmt(s_card_v2, "%s\n%s\n%.1f NM  %03.0f\xC2\xB0", vs, trk, s->dist_nm, s->brg_deg);
+    char v[96];
+    snprintf(v, sizeof(v), "%s\n%s\n%s%s", alt, gs, a->squawk[0] ? a->squawk : "-",
+             a->emergency ? "  " LV_SYMBOL_WARNING : "");
+    set_text_if_changed(s_card_v1, v);
+    snprintf(v, sizeof(v), "%s\n%s\n%.1f NM  %03.0f\xC2\xB0", vs, trk, s->dist_nm, s->brg_deg);
+    set_text_if_changed(s_card_v2, v);
     lv_obj_set_hidden(s_card, false);
 }
 

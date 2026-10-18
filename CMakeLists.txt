@@ -41,8 +41,11 @@ idf_build_set_property(DEPENDENCIES_LOCK "${CMAKE_CURRENT_LIST_DIR}/dependencies
 # over-the-air update for another board is refused (see main/net/ota.c)
 project(overhead-${OVERHEAD_BOARD})
 
-# esp_lvgl_adapter ~0.6 (the 3.4C's BSP pins it; the Tab5 uses it too)
-# includes LVGL 9.6's deprecated src/ headers. Their #warning is an error
-# under IDF 6.1's -Werror, so in that component alone it stays a warning.
-idf_component_get_property(lvgl_adapter_lib espressif__esp_lvgl_adapter COMPONENT_LIB)
-target_compile_options(${lvgl_adapter_lib} PRIVATE -Wno-error=cpp)
+# esp_lvgl_adapter 0.6, which the 3.4C's BSP pins, includes LVGL 9.6's
+# deprecated src/ headers. Their #warning is an error under IDF 6.1's
+# -Werror, so in that component alone it stays a warning. The Tab5's 0.7
+# needs none of this.
+if(OVERHEAD_BOARD STREQUAL "p4_34c")
+    idf_component_get_property(lvgl_adapter_lib espressif__esp_lvgl_adapter COMPONENT_LIB)
+    target_compile_options(${lvgl_adapter_lib} PRIVATE -Wno-error=cpp)
+endif()

@@ -679,6 +679,7 @@ void start_trails(void)
 // thin band the sweep actually crosses, not one huge bounding box.
 void on_sweep(lv_timer_t *t)
 {
+    if (radar_hidden()) return;
     s_sweep_deg = fmodf(s_sweep_deg + 360.0f * SWEEP_TICK_MS / SWEEP_PERIOD_MS, 360.0f);
     const float sx = sinf(s_sweep_deg * DEG2RAD), sy = -cosf(s_sweep_deg * DEG2RAD);
     for (int i = 0; i < SWEEP_SEGS; i++) {

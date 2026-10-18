@@ -9,7 +9,7 @@ idf_component_register(
          "core/airlines.c" "core/countries.c" "core/stats.c" "core/trails.c"
          "sources/details.c" "sources/feed.c" "sources/geoloc.c" "sources/openaip.c" "sources/route.c" "sources/zones.c"
          "net/dns_server.c" "net/improv.c" "net/net.c" "net/ota.c" "net/web.c"
-         "ui/backlight.c" "ui/flags.c" "ui/logos.c" "ui/lvgl_mem.c" "ui/radar_ui.c" "ui/scope.c" "ui/card.c" "ui/big_view.c" "ui/lists.c" "ui/describe.c" "ui/settings_ui.c" "ui/splash.c"
+         "ui/backlight.c" "ui/flags.c" "ui/logos.c" "ui/lvgl_mem.c" "ui/radar_ui.c" "ui/scope.c" "ui/card.c" "ui/big_view.c" "ui/lists.c" "ui/describe.c" "ui/settings_ui.c" "ui/splash.c" "ui/bench.c"
          "device/battery.c" "device/settings.c"
          "third_party/stb_image.c"
     # Headers by name alone, wherever they are; "." for third_party/

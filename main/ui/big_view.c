@@ -162,7 +162,7 @@ void update_big(void)
     const char *trend = a->on_ground ? "" : a->vs_fpm > 250 ? " " LV_SYMBOL_UP : a->vs_fpm < -250 ? " " LV_SYMBOL_DOWN : "";
     snprintf(text, sizeof(text), "%s%s", alt, trend);
     set_text_if_changed(s_big_alt, text);
-    lv_obj_set_style_text_color(s_big_alt, alt_color(a), 0);
+    set_text_color_if_changed(s_big_alt, alt_color(a));
     fmt_vs(a, text, sizeof(text));
     set_text_if_changed(s_big_vs, a->alt_ft == AC_ALT_UNKNOWN ? "" : text);
 
@@ -189,7 +189,7 @@ void update_big(void)
         strlcat(text, num, sizeof(text));
     }
     set_text_if_changed(s_big_where, text);
-    lv_obj_set_style_text_color(s_big_where, lv_color_hex(a->emergency ? C_EMERG : C_TEXT), 0);
+    set_text_color_if_changed(s_big_where, lv_color_hex(a->emergency ? C_EMERG : C_TEXT));
 
     char route[48], places[ROUTE_PLACES_MAX + 16];
     fmt_route(a, route, sizeof(route), places, sizeof(places));

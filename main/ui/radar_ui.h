@@ -52,6 +52,9 @@ void radar_ui_debug_emergency(const char *hex);
 // For development: 0 the scope, 1 the big view, 2 the list (round boards),
 // as swipes would.
 void radar_ui_debug_view(int view);
+
+// For development: redraw the whole scope every frame, to time that.
+void radar_ui_debug_stress(bool on);
 #endif
 
 // Current range in NM. Safe to call without the lock.

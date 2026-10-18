@@ -520,6 +520,7 @@ static esp_err_t on_settings(httpd_req_t *req)
 // that aircraft squawk 7700, &emerg=0 stops it, and &view=radar, big or
 // list swipes. How the invisible sliders were found.
 #include "lvgl.h"
+#include "bench.h"
 #include "radar_ui.h"
 #include "settings_ui.h"
 static esp_err_t on_debug_screen(httpd_req_t *req)
@@ -543,32 +544,69 @@ static esp_err_t on_debug_settings(httpd_req_t *req)
     board_unlock();
     return send_result(req, ESP_OK, NULL);
 }
-// Scrolls the settings screen for ?ms= (5 s), then how smoothly: frames a
-// second, and the average and longest time to draw one
+// Times the display for ?ms= (5 s) doing one of (?what=):
+//   settings  scrolling the settings screen up and down
+//   scope     the radar, its whole scope redrawn every frame
+//   radar     the radar as it is, with nothing forced
+//   covered   the settings screen open and still, over the radar
+// Then frames a second, the average and longest time to draw one, the share
+// of the time spent drawing, and internal RAM (now, and the least since boot).
 static esp_err_t on_debug_bench(httpd_req_t *req)
 {
-    char query[32], ms_s[8] = "5000";
+    char query[48], ms_s[8] = "5000", what[12] = "settings";
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
         httpd_query_key_value(query, "ms", ms_s, sizeof(ms_s));
+        httpd_query_key_value(query, "what", what, sizeof(what));
     }
     const int ms = atoi(ms_s) > 0 ? atoi(ms_s) : 5000;
+    const bool settings_open = strcmp(what, "settings") == 0 || strcmp(what, "covered") == 0;
+    if (!settings_open && strcmp(what, "scope") != 0 && strcmp(what, "radar") != 0) {
+        return send_result(req, ESP_ERR_INVALID_ARG, "what: settings, scope, radar or covered");
+    }
     board_lock();
-    settings_ui_open();
+    // As a touch would: untouched for a minute, the settings screen closes,
+    // and the screen goes dark overnight
+    lv_display_trigger_activity(NULL);
+    if (settings_open) {
+        settings_ui_open();
+    } else {
+        settings_ui_debug_close();
+        radar_ui_debug_view(0);
+    }
     board_unlock();
     vTaskDelay(pdMS_TO_TICKS(500)); // drawn once first
     board_lock();
-    settings_ui_debug_scroll_start();
+    if (strcmp(what, "settings") == 0) settings_ui_debug_scroll_start();
+    if (strcmp(what, "scope") == 0) radar_ui_debug_stress(true);
+    bench_start();
     board_unlock();
     vTaskDelay(pdMS_TO_TICKS(ms));
-    settings_ui_bench_t b;
+    bench_t b;
     board_lock();
-    settings_ui_debug_scroll_stop(&b);
+    bench_stop(&b);
+    settings_ui_debug_scroll_stop();
+    radar_ui_debug_stress(false);
+    if (settings_open) settings_ui_debug_close();
     board_unlock();
+
+    openaip_status_t aip;
+    openaip_get_status(&aip);
     cJSON *reply = cJSON_CreateObject();
+    cJSON_AddStringToObject(reply, "what", what);
     cJSON_AddNumberToObject(reply, "frames", b.frames);
     cJSON_AddNumberToObject(reply, "fps", b.frames * 1000.0 / ms);
     cJSON_AddNumberToObject(reply, "avg_ms", b.avg_us / 1000.0);
     cJSON_AddNumberToObject(reply, "max_ms", b.max_us / 1000.0);
+    cJSON_AddNumberToObject(reply, "busy_pct", b.busy_pct);
+    cJSON_AddNumberToObject(reply, "inv_areas", b.inv_areas);
+    cJSON_AddNumberToObject(reply, "inv_kpx", b.inv_kpx);
+    char biggest[48];
+    snprintf(biggest, sizeof(biggest), "%dx%d at %d,%d", b.biggest_w, b.biggest_h, b.biggest_x, b.biggest_y);
+    cJSON_AddStringToObject(reply, "biggest", biggest);
+    cJSON_AddNumberToObject(reply, "internal_free", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(reply, "internal_min", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(reply, "internal_largest", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    cJSON_AddStringToObject(reply, "openaip", aip.state);
     return send_json(req, reply);
 }
 static esp_err_t on_debug_select(httpd_req_t *req)

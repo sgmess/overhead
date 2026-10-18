@@ -237,6 +237,21 @@ Everything under the traffic (disc, rings, compass rose, airspace and
 airfields) is drawn once per range into a PSRAM image and copied each frame.
 Drawing about 4,000 outline segments every second took a frame from about
 100 ms to 400 ms at 100 NM; with the image, frames are 25–65 ms.
+Nothing of the radar is redrawn while the settings screen covers it or the
+screen is off overnight, and labels and colours are only set when they
+change, since LVGL redraws an object whenever either is set. On the Tab5 the
+radar takes about 9% of the time drawing; with the settings screen open, next
+to none.
+
+`/api/debug/bench?what=` (debug builds, with `CONFIG_LV_USE_SNAPSHOT` in a
+local sdkconfig) times the display for five seconds: `settings` scrolls the
+settings screen, `scope` redraws the whole scope every frame, `radar` leaves
+it as it is, and `covered` holds the settings screen still over it. It gives
+frames a second, the average and longest frame, the share of time spent
+drawing, how much of the screen was marked for redrawing, and internal RAM
+free now and at its lowest since boot; `tools/bench.sh` runs every mode.
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md) records every display and memory
+experiment so far, with the results and why each was kept or dropped.
 
 ### Clock, dimming and alerts
 
@@ -336,9 +351,12 @@ The display goes through `esp_lvgl_adapter`, as on the 3.4C, not the BSP's
 registers them with the adapter. It draws into one internal buffer and, in
 landscape, the P4's PPA rotates that into one of three PSRAM frame buffers
 while another is on the panel. Scrolling the settings screen
-(`/api/debug/bench`, debug builds) runs at 16.7 fps in landscape against
+(`/api/debug/bench`, debug builds) runs at 20.8 fps in landscape against
 esp_lvgl_port's 12, which rotated 24-line strips one at a time; portrait
-went from 27 to 20.5, and about 40 KB more internal RAM is free. The adapter
+went from 27 to 20.5, and about 40 KB more internal RAM is free. LVGL draws
+with one thread on the Tab5, not two: two scrolled at 16.8 fps. LVGL's PPA
+renderer was slower than drawing in software. The BSP is the variant without
+its own LVGL layer (`m5stack_tab5_noglib`). The adapter
 draws rotated but passes touches on as the panel reports them, portrait, so
 the board code sets the touch driver's swap and mirror to match. The BSP (`espressif/m5stack_tab5`) detects the
 three panel revisions at boot by which touch controller answers on I2C. The
@@ -403,7 +421,7 @@ The P4 3.4C made the same move in October 2026, when its C6 was updated to
 TLS buffers are in PSRAM too. Its Waveshare BSP pins esp_lvgl_adapter to
 0.6, which includes LVGL 9.6's deprecated `src/` headers; their `#warning`
 is an error under IDF 6.1, so the top-level CMakeLists keeps it a warning
-in that component alone (the Tab5 uses the adapter too).
+in that component alone. The Tab5 uses the adapter's 0.7, which doesn't.
 
 **Battery.** The Tab5 only charges while firmware holds the charger's enable
 line (CHG_EN, on the second I/O expander) high, so the firmware turns it on at
@@ -460,7 +478,8 @@ so a file can move between folders without its users changing.
 | `settings.c` | Settings in NVS over the firmware defaults |
 | `battery.c` | Battery state, charge estimate, time left, low-voltage power-off |
 | `main/third_party/` | stb_image, the JPEG decoder for the photos |
-| `tools/` | `make_flags.py` and `make_logos.py`, which build `main/ui/flags.bin` and `main/ui/logos.bin` |
+| `tools/` | `make_flags.py` and `make_logos.py`, which build `main/ui/flags.bin` and `main/ui/logos.bin`; `bench.sh`, which times the display |
+| `docs/PERFORMANCE.md` | The benchmarks run, their results, and what was decided |
 | `web/flash/`, `.github/workflows/` | Web flasher page and the build, release and Pages workflow |
 | `boards/<board>/board/` | Per-board bring-up: display start, WiFi power, LVGL lock; the BSP is its dependency |
 

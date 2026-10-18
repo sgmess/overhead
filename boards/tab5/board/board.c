@@ -51,7 +51,8 @@ static void wait_for_touch_controller(void)
 // settings (/api/debug/bench, October 2026). The adapter renders into one
 // internal buffer and rotates it straight into one of three PSRAM frame
 // buffers (CONFIG_BSP_LCD_DPI_BUFFER_NUMS=3): 16.7 fps, and 40 KB more
-// internal RAM free. Portrait goes from 27 fps to 20.5.
+// internal RAM free. Portrait goes from 27 fps to 20.5. With one LVGL
+// drawing thread (sdkconfig.defaults.tab5), landscape is 20.8.
 #define DRAW_BUF_LINES 40 // of the panel's native 720-pixel width: 57 KB internal
 
 #define ST7121_LANE_MBPS 965 // the BSP's, private to it, for revision 3's panel

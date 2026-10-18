@@ -280,10 +280,14 @@ bool note_alert(alert_memory_t *mem, const aircraft_t *a, int64_t now);
 void big_auto(const char *hex, bool emerg);
 bool filtered_out(const aircraft_t *a, const settings_t *set);
 void set_text_if_changed(lv_obj_t *label, const char *text);
+void set_text_color_if_changed(lv_obj_t *obj, lv_color_t color);
+void set_bg_color_if_changed(lv_obj_t *obj, lv_color_t color);
 void format_count(char *buf, size_t n);
 void select_aircraft(const char *hex);
 void show_view(int view);
 bool swiped(void);
+// Nothing of the radar can be seen: the settings screen covers it, or the backlight is off
+bool radar_hidden(void);
 void on_press(lv_event_t *e);
 void on_scope_long_press(lv_event_t *e);
 void on_gesture(lv_event_t *e);
