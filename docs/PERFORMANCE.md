@@ -45,6 +45,15 @@ Each run reports:
   these were reported as `inv_areas` and `inv_kpx`, wrongly suggesting areas
   drawn.)
 - **Internal RAM free,** now and the lowest since boot.
+- **A frame in stages,** averaged over all frames: `prep` (refresh start to
+  render start: layout updates and joining areas), `render` (render start to
+  end, less the flushes), `flush`, the flushes a frame, and `scope` (time in
+  the scope's draw callback, which queues its drawing and is part of
+  `render`).
+- **`rendered`:** frames that drew anything. LVGL also runs refreshes that
+  find nothing to draw (see the sweep below), which count in `frames`, so
+  divide by `rendered` for the cost of a real frame.
+- **`sweep_ticks`:** sweep steps taken.
 
 Feed parsing and the aircraft layout aren't timed; add that before
 optimising either.
@@ -263,14 +272,49 @@ for up to a quarter of the scope.
   asleep), and its lines are hidden in the big view, where hidden objects ask
   for no redraw. `big`, `settings` and `covered` measure the same with it on
   or off.
-- **Why 11 ms for a small area:** the scope's draw already skips aircraft,
-  labels and airspace outside the area being drawn (`in_clip()` in
-  `scope.c`). So most of each frame is fixed overhead per frame (LVGL's
-  refresh, the background image for each area, the adapter's flush and
-  rotation) rather than drawing the sweep itself. Not broken down further.
-- **Next candidates, untested:** a slower tick (66 ms would roughly halve
-  the cost, but looks less smooth); a profile of a sweep frame, to see which
-  overhead dominates.
+#### Profile of a sweep frame (19 Oct 2026)
+
+With the frame stages above, sweep on, 8 segments, 5 s:
+
+| | Value |
+| --- | --- |
+| Sweep steps | 140 |
+| Refreshes | 280, of which **145 drew** and 135 found nothing |
+| A real sweep frame | about 15 ms: about 10.5 ms rendering (2.4 ms of it in the scope's draw callback), 4 ms in the flush, 1 ms prep |
+| Areas drawn a frame | about 9–10 (one flush each), about 37,000 pixels in all |
+
+- **Two refreshes a step, one empty:** moving a line with `lv_obj_set_pos`
+  only marks the layout dirty. LVGL works out the new position in the next
+  refresh's layout stage, and the redraw request that makes then re-arms the
+  refresh timer, after it was paused for this refresh. The area is drawn in
+  this refresh, so the next one finds nothing. Each empty refresh costs under
+  1 ms, about 2–3% busy in all. Not worth fixing on its own.
+- **The cost is per area, not per pixel:** 37,000 pixels take 15 ms, where a
+  full scope of 520,000 takes about 60 ms. Each area costs about 1.5 ms:
+  - the scope's draw callback runs once per area and walks every aircraft,
+    trail and airfield to cull them (`in_clip()`);
+  - the background image is drawn into each area;
+  - every area is a separate flush, which the adapter rotates and copies into
+    the other frame buffers.
+- **Fewer segments, fewer areas:** 4 segments measured 33% busy against
+  45% for 8 (one run). **But with 2 or 4 segments the Tab5 locked up**
+  soon after the sweep started: the web server stopped answering, then the
+  traffic fetches stopped, which points to something holding the display
+  lock forever. The likely suspect is the adapter's flush waiting for a
+  frame buffer that never frees. Not investigated; finding it would need a
+  backtrace over JTAG. 8 segments (the released setting) ran 9 minutes with
+  the sweep on, polled every 12 s, with no failures and steady memory.
+  `SWEEP_SEGS 1` doesn't build (a division by `SWEEP_SEGS - 1` in
+  `radar_ui.c`).
+- **Next candidates, untested:**
+  - a slower tick (66 ms would roughly halve the cost, but looks less
+    smooth);
+  - drawing the sweep in the scope's own draw callback and asking for one
+    redraw area per step instead of eight line objects. Fewer areas, without
+    the line objects that fewer segments locked up with, but each area is
+    larger;
+  - finding the lock-up with fewer segments, in case it can also happen with
+    8.
 
 ## Memory decisions (from earlier versions)
 

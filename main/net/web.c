@@ -610,6 +610,13 @@ static esp_err_t on_debug_bench(httpd_req_t *req)
     char biggest[48];
     snprintf(biggest, sizeof(biggest), "%dx%d at %d,%d", b.biggest_w, b.biggest_h, b.biggest_x, b.biggest_y);
     cJSON_AddStringToObject(reply, "biggest_request", biggest);
+    cJSON_AddNumberToObject(reply, "prep_us", b.prep_us);
+    cJSON_AddNumberToObject(reply, "render_us", b.render_us);
+    cJSON_AddNumberToObject(reply, "flush_us", b.flush_us);
+    cJSON_AddNumberToObject(reply, "flushes_per_frame", b.flushes_x10 / 10.0);
+    cJSON_AddNumberToObject(reply, "scope_cb_us", b.scope_cb_us);
+    cJSON_AddNumberToObject(reply, "sweep_ticks", b.sweep_ticks);
+    cJSON_AddNumberToObject(reply, "rendered", b.rendered);
     cJSON_AddNumberToObject(reply, "internal_free", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     cJSON_AddNumberToObject(reply, "internal_min", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
     cJSON_AddNumberToObject(reply, "internal_largest", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));

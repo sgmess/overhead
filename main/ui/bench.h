@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 #include "sdkconfig.h"
 
 #if CONFIG_LV_USE_SNAPSHOT
@@ -21,7 +23,17 @@ typedef struct {
     // drawn. The largest shows when the whole screen was asked for.
     int requests;
     int biggest_x, biggest_y, biggest_w, biggest_h;
+    // A refresh in stages, in microseconds averaged over the frames: before
+    // rendering (layout, joining the areas), rendering less the flushes, and
+    // the flushes; the flushes a frame; and the scope's draw callback (which
+    // queues its drawing, run within render)
+    int prep_us, render_us, flush_us, flushes_x10, scope_cb_us;
+    int sweep_ticks; // sweep steps taken
+    int rendered;    // frames that drew anything (the rest found nothing to draw)
 } bench_t;
 void bench_start(void);
 void bench_stop(bench_t *out);
+// From the scope's draw callback and the sweep timer, while measuring
+void bench_note_scope_draw(int64_t us);
+void bench_note_sweep(void);
 #endif

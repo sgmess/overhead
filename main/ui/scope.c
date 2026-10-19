@@ -2,6 +2,7 @@
 // trails, the drawing, the background cache and the sweep
 
 #include "radar_priv.h"
+#include "bench.h"
 
 // OpenAIP layers, by aero_kind_t: chart blues for controlled airspace, reds
 // for restricted. Thin and translucent so traffic stays on top.
@@ -607,6 +608,9 @@ static void draw_airfields(lv_layer_t *layer)
 
 void on_scope_draw(lv_event_t *e)
 {
+#if CONFIG_LV_USE_SNAPSHOT
+    const int64_t started = esp_timer_get_time();
+#endif
     lv_layer_t *layer = lv_event_get_layer(e);
     if (s_bg_buf && s_bg_range == s_range_idx) {
         lv_draw_image_dsc_t d;
@@ -621,6 +625,9 @@ void on_scope_draw(lv_event_t *e)
     }
     draw_trails(layer);
     draw_aircraft(layer);
+#if CONFIG_LV_USE_SNAPSHOT
+    bench_note_scope_draw(esp_timer_get_time() - started);
+#endif
 }
 
 // Not from a draw callback: it renders, and renders don't nest
@@ -680,6 +687,9 @@ void start_trails(void)
 void on_sweep(lv_timer_t *t)
 {
     if (radar_hidden()) return;
+#if CONFIG_LV_USE_SNAPSHOT
+    bench_note_sweep();
+#endif
     s_sweep_deg = fmodf(s_sweep_deg + 360.0f * SWEEP_TICK_MS / SWEEP_PERIOD_MS, 360.0f);
     const float sx = sinf(s_sweep_deg * DEG2RAD), sy = -cosf(s_sweep_deg * DEG2RAD);
     for (int i = 0; i < SWEEP_SEGS; i++) {
