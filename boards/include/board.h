@@ -39,6 +39,8 @@ void board_wifi_power_on(void);
 // LVGL mutex. Every lv_* call outside the LVGL task must hold it.
 void board_lock(void);
 void board_unlock(void);
+// The same, waiting at most timeout_ms: false, without it, if not had in time.
+bool board_lock_timeout(int timeout_ms);
 
 // Battery, on boards with a monitor (only the Tab5 so far).
 typedef struct {

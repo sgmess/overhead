@@ -357,7 +357,14 @@ esp_lvgl_port's 12, which rotated 24-line strips one at a time; portrait
 went from 27 to 20.5, and about 40 KB more internal RAM is free. LVGL draws
 with one thread on the Tab5, not two: two scrolled at 16.8 fps. LVGL's PPA
 renderer was slower than drawing in software. The BSP is the variant without
-its own LVGL layer (`m5stack_tab5_noglib`). The adapter
+its own LVGL layer (`m5stack_tab5_noglib`).
+The P4's PPA, which does the rotation, can hang for good on some rotations
+(a hardware bug), freezing the screen; IDF 6.1's workaround didn't cover the
+Tab5's flushes. `boards/tab5/esp_driver_ppa/` is IDF's PPA driver with the
+fix esp_lvgl_adapter ships as an IDF patch, and replaces IDF's own in the
+Tab5 build. As a safety net on both boards, `main/device/display_watch.c`
+restarts the device if the display stays frozen for 15 s, and `/api/state`
+counts those restarts since power-on (`display_restarts`). The adapter
 draws rotated but passes touches on as the panel reports them, portrait, so
 the board code sets the touch driver's swap and mirror to match. The BSP (`espressif/m5stack_tab5`) detects the
 three panel revisions at boot by which touch controller answers on I2C. The
@@ -478,11 +485,13 @@ so a file can move between folders without its users changing.
 | **`main/device/`** | **The device itself** |
 | `settings.c` | Settings in NVS over the firmware defaults |
 | `battery.c` | Battery state, charge estimate, time left, low-voltage power-off |
+| `display_watch.c` | Restarts the device if the display stays frozen |
 | `main/third_party/` | stb_image, the JPEG decoder for the photos |
 | `tools/` | `make_flags.py` and `make_logos.py`, which build `main/ui/flags.bin` and `main/ui/logos.bin`; `bench.sh`, which times the display |
 | `docs/PERFORMANCE.md` | The benchmarks run, their results, and what was decided |
 | `web/flash/`, `.github/workflows/` | Web flasher page and the build, release and Pages workflow |
 | `boards/<board>/board/` | Per-board bring-up: display start, WiFi power, LVGL lock; the BSP is its dependency |
+| `boards/tab5/esp_driver_ppa/` | IDF's PPA driver with the rotation-hang fix, for the Tab5 only |
 
 The P4 3.4C and Tab5 BSPs come from the component registry
 (`waveshare/esp32_p4_wifi6_touch_lcd_xc` 3.0.1, `espressif/m5stack_tab5` 1.3.1),
@@ -490,7 +499,8 @@ each fetched only for its own board.
 
 ## Licence
 
-Apache License 2.0; see [LICENSE](LICENSE). `main/third_party/stb_image.h` is Sean Barrett's,
+Apache License 2.0; see [LICENSE](LICENSE). `boards/tab5/esp_driver_ppa/`
+is ESP-IDF's, Apache-2.0, changed as its README says. `main/third_party/stb_image.h` is Sean Barrett's,
 public domain or MIT. The flag images in `main/ui/flags.bin` are from
 [Twemoji](https://github.com/jdecked/twemoji), Copyright 2019 Twitter, Inc
 and other contributors, licensed under

@@ -224,6 +224,11 @@ void board_unlock(void)
     esp_lv_adapter_unlock();
 }
 
+bool board_lock_timeout(int timeout_ms)
+{
+    return esp_lv_adapter_lock(timeout_ms) == ESP_OK;
+}
+
 // ---------------------------------------------------------------- battery
 //
 // INA226 at 0x41 measures the pack through a 5 mOhm shunt (values from

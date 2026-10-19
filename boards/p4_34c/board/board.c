@@ -110,6 +110,11 @@ void board_unlock(void)
     bsp_display_unlock();
 }
 
+bool board_lock_timeout(int timeout_ms)
+{
+    return bsp_display_lock(timeout_ms) == ESP_OK;
+}
+
 bool board_battery_init(void)
 {
     return false; // no battery monitor on this board

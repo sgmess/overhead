@@ -12,6 +12,7 @@
 #include "nvs_flash.h"
 
 #include "battery.h"
+#include "display_watch.h"
 #include "feed.h"
 #include "geoloc.h"
 #include "improv.h"
@@ -206,6 +207,7 @@ void app_main(void)
     radar_ui_create(settings()->lat, settings()->lon, on_range_change);
     radar_ui_set_status("Starting WiFi");
     board_unlock();
+    display_watch_start();
 
     // Before WiFi, which takes seconds to come up: the airspace kept from the
     // last fetch needs no network

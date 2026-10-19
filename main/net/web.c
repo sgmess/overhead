@@ -8,6 +8,7 @@
 #include "backlight.h"
 #include "board.h"
 #include "battery.h"
+#include "display_watch.h"
 #include "airlines.h"
 #include "cJSON.h"
 #include "esp_app_desc.h"
@@ -292,6 +293,7 @@ static esp_err_t on_state(httpd_req_t *req)
     cJSON_AddBoolToObject(json, "asleep", backlight_asleep());
     add_stats(json);
     cJSON_AddNumberToObject(json, "uptime_s", (double)(esp_timer_get_time() / 1000000));
+    cJSON_AddNumberToObject(json, "display_restarts", display_watch_restarts()); // since power-on
     cJSON_AddNumberToObject(json, "heap_internal", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     cJSON_AddNumberToObject(json, "heap_psram", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 

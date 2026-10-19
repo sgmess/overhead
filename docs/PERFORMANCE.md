@@ -158,9 +158,11 @@ the PPA rotates it straight into one of three PSRAM frame buffers
 - **Touch isn't rotated by the adapter.** The board code sets the touch
   driver's swap and mirror flags to match. esp_lvgl_port's
   `LV_DISPLAY_ROTATION_90` is the adapter's `ROTATE_270`.
-- **IDF PPA freeze:** a patch for a PPA freeze exists upstream. It wasn't
-  applied, because IDF 6.1 has its own conditional workaround and no freeze
-  has been seen.
+- **IDF PPA freeze:** the adapter documents a display freeze on the P4 in
+  `TRIPLE_PARTIAL` with rotation, and ships an IDF patch for it. It wasn't
+  applied at first, because IDF 6.1 has its own conditional workaround and no
+  freeze had been seen. **It does freeze; the patch is now applied** (19 Oct
+  2026; see "The display lock-up" below).
 
 Tried on adapter 0.6.4, landscape, scrolling the settings:
 
@@ -297,24 +299,78 @@ With the frame stages above, sweep on, 8 segments, 5 s:
   - every area is a separate flush, which the adapter rotates and copies into
     the other frame buffers.
 - **Fewer segments, fewer areas:** 4 segments measured 33% busy against
-  45% for 8 (one run). **But with 2 or 4 segments the Tab5 locked up**
-  soon after the sweep started: the web server stopped answering, then the
-  traffic fetches stopped, which points to something holding the display
-  lock forever. The likely suspect is the adapter's flush waiting for a
-  frame buffer that never frees. Not investigated; finding it would need a
-  backtrace over JTAG. 8 segments (the released setting) ran 9 minutes with
-  the sweep on, polled every 12 s, with no failures and steady memory.
-  `SWEEP_SEGS 1` doesn't build (a division by `SWEEP_SEGS - 1` in
-  `radar_ui.c`).
-- **Next candidates, untested:**
-  - a slower tick (66 ms would roughly halve the cost, but looks less
-    smooth);
-  - drawing the sweep in the scope's own draw callback and asking for one
-    redraw area per step instead of eight line objects. Fewer areas, without
-    the line objects that fewer segments locked up with, but each area is
-    larger;
-  - finding the lock-up with fewer segments, in case it can also happen with
-    8.
+  45% for 8 (one run). With 2 or 4 the Tab5 froze soon after the sweep
+  started: the PPA hang below, which those patterns trigger quickly. Not
+  retried since the fix. `SWEEP_SEGS 1` doesn't build (a division by
+  `SWEEP_SEGS - 1` in `radar_ui.c`).
+- **Drawing the sweep in the scope (option 2): rejected.** The scope's draw
+  callback drew it, and each step asked for one to three boxes around the old
+  and new line (more near the diagonals) instead of moving eight line
+  objects. It froze within seconds until the PPA fix; with the fix, back to
+  back on 19 Oct 2026:
+
+  | Sweep | Busy | Refreshes a step | Areas a frame | A frame |
+  | --- | --- | --- | --- | --- |
+  | 8 line objects | 45–47% | 2 (1 empty) | 4.6 flushes, 18 kpx | 8.3 ms, empty ones included |
+  | Drawn in the scope | 36–45% | 1 | 3.4 flushes, 45 kpx | 13–17 ms |
+
+  The empty refreshes went, but each box is larger, so a frame costs nearly
+  as much. Not clearly faster, so the line objects stay. The code is in
+  `git stash` ("WIP: sweep drawn in the scope") if it is ever wanted.
+- **Untested:** a slower tick (66 ms would roughly halve the cost, but looks
+  less smooth).
+
+### The display lock-up (19 Oct 2026): found and fixed
+
+**Symptom.** The screen froze for good. The web server and the traffic
+fetches, which wait for the display lock, stopped soon after. Nothing
+recovered it but a restart.
+
+**How it was found.**
+
+1. A debug-only watchdog logged where the display was when its lock couldn't
+   be had for 10 s: always inside the flush, with no refresh or flush
+   finishing afterwards.
+2. A JTAG backtrace (OpenOCD over the P4's USB, after installing OpenOCD's
+   udev rules in WSL) showed the LVGL task in
+   `ppa_do_operation()` (`esp_driver_ppa`), called from the adapter's
+   `display_bridge_v9_flush_partial_rotate()`: waiting forever for a PPA
+   scale-rotate-mirror operation to finish.
+
+**Cause.** The P4's PPA can hang on some rotations: a hardware bug
+(Espressif's DIG-734). IDF 6.1 works around it only when it reckons it
+necessary, and on the Tab5's rotated partial flushes that wasn't enough.
+esp_lvgl_adapter documents this exact case (P4, `TRIPLE_PARTIAL`, 90° or
+270°) and ships `0001-bugfix-ppa-Temporary-fix-for-the-PPA-hang-issue.patch`
+for IDF, which always applies the workaround.
+
+**When it froze, before the fix.**
+
+- Within seconds of the sweep starting with 2 or 4 line segments, or drawn
+  in the scope: fewer, larger areas to rotate.
+- About 6 s into boot on boots where the serial port had just been opened,
+  which resets the board mid-boot.
+- Not seen with the released 8 segments in a 9-minute sweep-on run, nor in
+  hours of running with the sweep off. Not a regression of adapter 0.7.3:
+  0.6.4 froze the same way.
+
+**Fix.** `boards/tab5/esp_driver_ppa/` is IDF 6.1's PPA driver with the
+patch's one change applied by hand (the patch was written for IDF 6.0). As a
+component of the Tab5's board directory it replaces IDF's own for that build
+only; the 3.4C doesn't rotate. After it, the sweep drawn in the scope, which
+had frozen within seconds of every boot, ran without a freeze, and the
+release candidate (8 line segments) ran with the sweep on for over 6 hours
+without a freeze. Its one restart, early on, came as the host computer went
+to sleep, and it cleared the freeze-restart count, which a watchdog restart
+or a crash keeps: a chip reset over USB, not the firmware.
+
+**Safety net.** `main/device/display_watch.c` restarts the device if the
+display lock can't be had for 15 s, and counts those restarts since power-on
+in memory kept through a restart (`display_restarts` in `/api/state`).
+Before the fix, it brought a frozen Tab5 back within 15–20 s every time.
+
+**Not needed after all:** other tear-avoid modes (`DOUBLE_PARTIAL` uses the
+same rotated partial flush, so the same PPA path).
 
 ## Memory decisions (from earlier versions)
 
