@@ -122,21 +122,24 @@ static void copy_str(char *dst, size_t n, const cJSON *item)
     for (size_t i = strlen(dst); i > 0 && dst[i - 1] == ' '; i--) dst[i - 1] = '\0';
 }
 
-static double num_or(const cJSON *obj, const char *key, double fallback)
+// obj's key when it is a number from lo to hi, else fallback: cJSON reads
+// 1e999 as infinity, and converting that, or anything out of range, to an
+// integer is undefined
+static double num_in(const cJSON *obj, const char *key, double lo, double hi, double fallback)
 {
     const cJSON *v = cJSON_GetObjectItemCaseSensitive(obj, key);
-    return cJSON_IsNumber(v) ? v->valuedouble : fallback;
+    if (!cJSON_IsNumber(v) || !isfinite(v->valuedouble)) return fallback;
+    return v->valuedouble >= lo && v->valuedouble <= hi ? v->valuedouble : fallback;
 }
 
 static bool parse_aircraft(const cJSON *j, int64_t now_us, aircraft_t *a)
 {
-    const cJSON *lat = cJSON_GetObjectItemCaseSensitive(j, "lat");
-    const cJSON *lon = cJSON_GetObjectItemCaseSensitive(j, "lon");
-    if (!cJSON_IsNumber(lat) || !cJSON_IsNumber(lon)) return false;
+    const double lat = num_in(j, "lat", -90, 90, NAN), lon = num_in(j, "lon", -180, 180, NAN);
+    if (isnan(lat) || isnan(lon)) return false;
 
     memset(a, 0, sizeof(*a));
-    a->lat = lat->valuedouble;
-    a->lon = lon->valuedouble;
+    a->lat = lat;
+    a->lon = lon;
     copy_str(a->hex, sizeof(a->hex), cJSON_GetObjectItemCaseSensitive(j, "hex"));
     copy_str(a->callsign, sizeof(a->callsign), cJSON_GetObjectItemCaseSensitive(j, "flight"));
     copy_str(a->reg, sizeof(a->reg), cJSON_GetObjectItemCaseSensitive(j, "r"));
@@ -145,12 +148,15 @@ static bool parse_aircraft(const cJSON *j, int64_t now_us, aircraft_t *a)
     copy_str(a->owner, sizeof(a->owner), cJSON_GetObjectItemCaseSensitive(j, "ownOp"));
     // A string, "2001"
     const cJSON *year = cJSON_GetObjectItemCaseSensitive(j, "year");
-    if (cJSON_IsString(year)) a->year = (uint16_t)atoi(year->valuestring);
+    if (cJSON_IsString(year)) {
+        const long y = strtol(year->valuestring, NULL, 10);
+        if (y >= 1900 && y <= 2100) a->year = (uint16_t)y;
+    }
 
     // alt_baro is a number, or the string "ground"
     const cJSON *alt = cJSON_GetObjectItemCaseSensitive(j, "alt_baro");
     if (cJSON_IsNumber(alt)) {
-        a->alt_ft = (int32_t)alt->valuedouble;
+        a->alt_ft = (int32_t)num_in(j, "alt_baro", -2000, 150000, AC_ALT_UNKNOWN);
     } else if (cJSON_IsString(alt) && strcmp(alt->valuestring, "ground") == 0) {
         a->on_ground = true;
         a->alt_ft = 0;
@@ -158,11 +164,11 @@ static bool parse_aircraft(const cJSON *j, int64_t now_us, aircraft_t *a)
         a->alt_ft = AC_ALT_UNKNOWN;
     }
 
-    a->gs_kt = (float)num_or(j, "gs", -1);
-    a->track_deg = (float)num_or(j, "track", num_or(j, "true_heading", -1));
-    a->vs_fpm = (int32_t)num_or(j, "baro_rate", num_or(j, "geom_rate", 0));
+    a->gs_kt = (float)num_in(j, "gs", 0, 5000, -1);
+    a->track_deg = (float)num_in(j, "track", 0, 360, num_in(j, "true_heading", 0, 360, -1));
+    a->vs_fpm = (int32_t)num_in(j, "baro_rate", -100000, 100000, num_in(j, "geom_rate", -100000, 100000, 0));
 
-    a->military = ((int)num_or(j, "dbFlags", 0) & 1) != 0;
+    a->military = ((int)num_in(j, "dbFlags", 0, 65535, 0) & 1) != 0;
     const cJSON *cat = cJSON_GetObjectItemCaseSensitive(j, "category");
     const char *c = cJSON_IsString(cat) ? cat->valuestring : "";
     a->heli = strcmp(c, "A7") == 0;
@@ -176,7 +182,7 @@ static bool parse_aircraft(const cJSON *j, int64_t now_us, aircraft_t *a)
         a->kind = AC_KIND_OTHER;
     }
 
-    double seen_pos = num_or(j, "seen_pos", 0);
+    const double seen_pos = num_in(j, "seen_pos", 0, 86400, 0);
     a->pos_time_us = now_us - (int64_t)(seen_pos * 1e6);
 
     // The squawk first: it is what the crew set. Then readsb's field, which

@@ -33,6 +33,12 @@ point on a radar scope.
   far along its route it is ("LHR > JFK • 23%"); its registered owner,
   when that isn't the airline, and for US registrations the year it was
   built; and in the big view a photo from [planespotters.net](https://www.planespotters.net).
+- With an [AeroDataBox](https://aerodatabox.com) key (optional): for the
+  aircraft you pick, when its flight left and gets in and how late it is
+  ("Dep 14:23  Arr 00:24 • on time"), the flight number it's sold under,
+  today's route, the terminal and gate it arrives at, and the aircraft's
+  full type, age and seats ("Airbus A380-800", "built 2019, 7 years old •
+  516 seats").
 - An overhead alert: an aircraft within a set distance and below a set
   altitude blinks amber, a banner names it, and the Tab5 or 3.4C chimes.
 - An emergency alert: any aircraft in range squawking 7700, 7600 or 7500, or
@@ -200,6 +206,38 @@ NVS, makes it the running settings under the display lock, then applies what
 isn't read afresh: the timezone, the centre (the radar re-projects and the
 airspace is fetched again), the sweep, trails, starting range, feed and the
 OpenAIP layers.
+
+### Flight details
+
+With an [AeroDataBox](https://aerodatabox.com) API key entered on the
+configuration page, the aircraft you tap gets its flight's times and the
+aircraft's details. The key is for AeroDataBox's own direct API
+(`api.aerodatabox.com`, header `X-Api-Key`), not RapidAPI or API.Market,
+and can run on the credits AeroDataBox gives for feeding it ADS-B.
+
+Every answer costs credits, so only the aircraft someone picked is looked
+up, never the lists or the big view stepping to the nearest:
+
+- The flight: today's flights of that aircraft (by ICAO address), 2
+  credits. That finds the flight once AeroDataBox has seen it flying. If
+  none of them is about now, 2 more for today's flights by the flight
+  number the callsign is (AAL91 is AA91), which the schedules are filed
+  under, or for a callsign that isn't one (BAW21V), by the callsign, which
+  AeroDataBox only links to a flight once it has seen it. With no date it
+  answers for the nearest day with one, which can be yesterday's, so the
+  date is always given. Of what comes back, the flight in the
+  air that fits where the aircraft is wins; nothing is shown if none is
+  within three hours of now. Its times are asked for again after 15
+  minutes if it is still being looked at.
+- The aircraft, 1 credit, kept until a restart.
+
+The configuration page sets the most to spend a day (100 credits unless
+changed) and shows what has been spent. The count is stored in flash (NVS,
+its own namespace), so restarts, power cuts and a reset to the defaults
+don't start the day again. Nothing is looked up before the clock is set, a
+refused key isn't tried again until another is entered, and "too many
+requests" holds off for 10 minutes. Without a key, adsb.im's routes and the
+feed's details are shown as before.
 
 ### Airspace and airfields
 
@@ -468,6 +506,7 @@ so a file can move between folders without its users changing.
 | `feed.c` | HTTPS poll and readsb JSON parsing (buffers in PSRAM) |
 | `route.c` | Origin and destination by callsign from adsb.im, cached, and how far along it is |
 | `details.c` | The registered owner from adsbdb.com and a photo from planespotters.net, by ICAO address |
+| `aerodatabox.c` | Optional flight times and aircraft details from AeroDataBox, for the picked aircraft only, within a daily credit limit |
 | `openaip.c` | OpenAIP airspace and airfields: fetch by country, trim to range, project to NM |
 | `geoloc.c` | A new device's centre from its IP address |
 | `zones.c` | Timezones and their POSIX rules, for the page and the screen |
@@ -513,6 +552,7 @@ and other contributors, licensed under
 down for the screen. The airline logos in `main/ui/logos.bin` are trademarks of
 their airlines and are not covered by this licence. The licence covers this code only: aircraft data from
 adsb.fi and adsb.lol, routes from adsb.im, owners from adsbdb.com, photos
-from planespotters.net (each its photographer's), airspace from OpenAIP and the
+from planespotters.net (each its photographer's), flight and aircraft details
+from AeroDataBox, airspace from OpenAIP and the
 IP-location answers from ipinfo.io and ipwho.is are under those services'
 own terms.

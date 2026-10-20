@@ -228,6 +228,29 @@ h3{margin:18px 0 0;font-size:11px;font-weight:600;letter-spacing:1.2px;text-tran
   </section>
 
   <section class="card">
+    <h2>Flight details</h2>
+    <p class="hint">With an <a href="https://aerodatabox.com" target="_blank" rel="noopener">AeroDataBox</a> key
+      (direct API access, which can run on credits earned by feeding ADS-B), the aircraft you pick on the screen
+      shows when its flight left and gets in and how late it is, the flight number it's sold under, today's route,
+      and the aircraft's full type, age and seats. Only the aircraft you tap is looked up: 2 credits for its flight,
+      sometimes 4 (its times again after 15 minutes if you are still looking), and 1 for the aircraft, each kept until a
+      restart.</p>
+    <label for="adb_key">AeroDataBox API key</label>
+    <div class="pw">
+      <input id="adb_key" type="password" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false">
+      <button type="button" id="clear-adb-key" class="ghost">Remove</button>
+    </div>
+    <p class="hint" id="adb-key-state"></p>
+    <label for="adb_daily">Spend at most</label>
+    <select id="adb_daily">
+      <option value="25">25 credits a day</option><option value="50">50 credits a day</option>
+      <option value="100">100 credits a day</option><option value="200">200 credits a day</option>
+      <option value="500">500 credits a day</option><option value="1000">1,000 credits a day</option>
+    </select>
+    <p class="hint" id="adb-state"></p>
+  </section>
+
+  <section class="card">
     <h2>Traffic feed</h2>
     <label for="feed">Primary feed</label>
     <select id="feed"><option value="0">adsb.lol</option><option value="1">adsb.fi</option></select>
@@ -338,11 +361,11 @@ h3{margin:18px 0 0;font-size:11px;font-weight:600;letter-spacing:1.2px;text-tran
 <script>
 const $ = id => document.getElementById(id);
 const FIELDS = ['range_idx', 'max_labels', 'feed', 'fetch_s', 'rotation', 'batt_shutdown_mv', 'dim_mode', 'clock',
-                'trail_s', 'alert_nm10', 'alert_ft', 'filter_min_ft', 'filter_max_ft'];
+                'trail_s', 'alert_nm10', 'alert_ft', 'filter_min_ft', 'filter_max_ft', 'adb_daily'];
 const CHECKS = ['sleep', 'sweep', 'show_ground', 'batt_auto_off', 'show_airspace', 'show_airfields', 'show_military', 'show_route',
                 'alert', 'alert_sound', 'show_vector', 'emerg_alert', 'show_centrelines'];
 const SLIDERS = ['brightness', 'dim_brightness'];
-let map, pin, keyCleared = false;
+let map, pin, keyCleared = false, adbKeyCleared = false;
 // The fields follow the device (a change on its own settings screen, say)
 // until something here is edited; then they stay as typed
 let dirty = false, shown = '';
@@ -501,6 +524,18 @@ function showOpenaip(j) {
     : j.settings.has_openaip_key ? o.detail + '.' : '';
 }
 
+function showAdb(j) {
+  const a = j.aerodatabox, has = j.settings.has_adb_key;
+  $('adb-key-state').textContent = adbKeyCleared ? 'The key will be removed when you save.'
+    : has ? 'A key is saved. Type a new one to replace it.' : 'No key saved.';
+  $('adb_key').placeholder = has && !adbKeyCleared ? 'Saved' : '';
+  const used = a.used_today + ' of ' + j.settings.adb_daily + ' credits used today';
+  $('adb-state').textContent = !has ? ''
+    : a.state === 'ok' ? (a.lookups ? used + ', ' + a.lookups + ' lookups since the restart.' : 'Nothing looked up yet: tap an aircraft.')
+    : a.state === 'limit' ? a.detail + '. ' + used + '.'
+    : a.state === 'error' ? 'Last lookup failed: ' + a.detail + '.' : '';
+}
+
 function placePin() {
   const lat = parseFloat($('lat').value), lon = parseFloat($('lon').value);
   if (pin && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) pin.setLatLng([lat, lon]);
@@ -626,6 +661,7 @@ async function load() {
   const s = j.settings;
   showStatus(j);
   showOpenaip(j);
+  showAdb(j);
   fillFields(j);
   $('rotation-row').classList.toggle('hidden', !j.can_rotate);
   $('alert-sound-row').classList.toggle('hidden', !j.has_speaker);
@@ -730,6 +766,14 @@ $('clear-key').onclick = () => {
   $('key-state').textContent = 'The key will be removed when you save.';
 };
 
+$('clear-adb-key').onclick = () => {
+  $('adb_key').value = '';
+  $('adb_key').placeholder = '';
+  adbKeyCleared = true;
+  dirty = true;
+  $('adb-key-state').textContent = 'The key will be removed when you save.';
+};
+
 // Poll until it answers again, then show the new settings
 function waitForRestart(text, poll = !text) {
   if (text) $('restart-text').textContent = text;
@@ -790,6 +834,8 @@ $('form').onsubmit = async e => {
   body.sleep_to = minutes($('sleep_to').value);
   const key = $('openaip_key').value.trim();
   if (key || keyCleared) body.openaip_key = key; // otherwise the saved one stays
+  const adbKey = $('adb_key').value.trim();
+  if (adbKey || adbKeyCleared) body.adb_key = adbKey;
   body.openaip_countries = $('openaip_countries').value;
   $('save').disabled = true;
   msg.textContent = '';
@@ -800,8 +846,9 @@ $('form').onsubmit = async e => {
       waitForRestart('Overhead is restarting into the new orientation. This page reloads when it is back.', true);
       return;
     }
-    keyCleared = false;
+    keyCleared = adbKeyCleared = false;
     $('openaip_key').value = '';
+    $('adb_key').value = '';
     await load();
     msg.className = 'ok';
     msg.textContent = 'Saved. No restart needed.';
@@ -838,6 +885,7 @@ async function poll() {
     const j = await api('/api/state');
     showStatus(j);
     showOpenaip(j);
+    showAdb(j);
     if (JSON.stringify(j.settings) !== shown) {
       if (dirty) {
         $('stale').classList.remove('hidden');

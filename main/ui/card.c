@@ -5,7 +5,7 @@
 
 lv_obj_t *s_card;
 static lv_obj_t *s_card_flag, *s_card_title, *s_card_route, *s_card_airline, *s_card_sub;
-static lv_obj_t *s_card_k1, *s_card_v1, *s_card_k2, *s_card_v2, *s_card_info;
+static lv_obj_t *s_card_k1, *s_card_v1, *s_card_k2, *s_card_v2, *s_card_times, *s_card_info;
 static char s_card_iso[3]; // the flag showing; "" for none
 #ifdef HAS_LOGO
 static lv_obj_t *s_card_logo_box, *s_card_logo;
@@ -97,13 +97,18 @@ void update_card(void)
     fmt_sub(a, true, sub, sizeof(sub));
     set_text_if_changed(s_card_sub, sub);
 
-    // The owner and age, when known, on a line of their own that moves the
-    // figures down
-    char info[96];
+    // When it left and gets in, then the owner and age, when known, each on
+    // a line of its own that moves the figures down
+    char times[64], info[112];
+    fmt_times(a, false, times, sizeof(times));
+    set_text_if_changed(s_card_times, times);
+    lv_obj_set_hidden(s_card_times, !times[0]);
     fmt_info(a, al, info, sizeof(info));
     set_text_if_changed(s_card_info, info);
     lv_obj_set_hidden(s_card_info, !info[0]);
-    const int extra = info[0] ? CARD_LINE : 0;
+    int extra = times[0] ? CARD_LINE : 0;
+    lv_obj_set_y(s_card_info, CARD_SUB_Y + 2 * CARD_LINE + extra);
+    if (info[0]) extra += CARD_LINE;
     lv_obj_t *cols[] = {s_card_k1, s_card_v1, s_card_k2, s_card_v2};
     for (int k = 0; k < 4; k++) lv_obj_set_y(cols[k], CARD_ROWS_Y + CARD_LINE + extra);
     lv_obj_set_height(s_card, CARD_H + CARD_LINE + extra);
@@ -160,6 +165,12 @@ void create_card(lv_obj_t *parent)
     lv_obj_set_pos(s_card_airline, 0, CARD_SUB_Y);
     s_card_sub = make_label(s_card, &F_CARD, C_TEXT);
     lv_obj_set_pos(s_card_sub, 0, CARD_SUB_Y + CARD_LINE);
+    // When it left and gets in, from AeroDataBox
+    s_card_times = make_label(s_card, &F_CARD, C_TEXT);
+    lv_obj_set_pos(s_card_times, 0, CARD_SUB_Y + 2 * CARD_LINE);
+    lv_obj_set_width(s_card_times, CARD_W - 2 * CARD_PAD);
+    lv_label_set_long_mode(s_card_times, LV_LABEL_LONG_DOT);
+    lv_obj_set_hidden(s_card_times, true);
     // The owner and age; long owners' names end in "..."
     s_card_info = make_label(s_card, &F_CARD, C_DIM);
     lv_obj_set_pos(s_card_info, 0, CARD_SUB_Y + 2 * CARD_LINE);

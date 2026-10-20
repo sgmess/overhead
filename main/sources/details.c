@@ -285,13 +285,21 @@ void details_start(void)
 {
     s_cache = heap_caps_calloc(CACHE_N, sizeof(entry_t), MALLOC_CAP_SPIRAM);
     s_resp.data = heap_caps_malloc(RESP_MAX, MALLOC_CAP_SPIRAM);
-    if (!s_cache || !s_resp.data) return;
-    s_lock = xSemaphoreCreateMutex();
+    SemaphoreHandle_t lock = xSemaphoreCreateMutex();
     // TLS and the decoder are on the heap; this is call depth
-    if (xTaskCreateWithCaps(details_task, "details", 12288, NULL, 3, &s_task, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) !=
-        pdPASS) {
-        xTaskCreate(details_task, "details", 12288, NULL, 3, &s_task);
+    if (s_cache && s_resp.data && lock &&
+        (xTaskCreateWithCaps(details_task, "details", 12288, NULL, 3, &s_task, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) ==
+             pdPASS ||
+         xTaskCreate(details_task, "details", 12288, NULL, 3, &s_task) == pdPASS)) {
+        s_lock = lock; // last: lookups take it as everything ready; the task waits for one first
+        return;
     }
+    ESP_LOGE(TAG, "not started: no memory");
+    if (lock) vSemaphoreDelete(lock);
+    heap_caps_free(s_cache);
+    heap_caps_free(s_resp.data);
+    s_cache = NULL;
+    s_resp.data = NULL;
 }
 
 // Whether to ask (again) for something in state st; with the lock held

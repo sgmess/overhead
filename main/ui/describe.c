@@ -18,6 +18,24 @@ static void arrows(const char *raw, char sep, char *out, size_t size)
     }
 }
 
+// Whether a is the aircraft someone picked: only that one spends
+// AeroDataBox's credits
+static bool picked(const aircraft_t *a)
+{
+    return s_sel_hex[0] && strcmp(a->hex, s_sel_hex) == 0;
+}
+
+// a's route: AeroDataBox's, for today's flight, else adsb.im's
+static bool get_route(const aircraft_t *a, route_t *r)
+{
+    adb_flight_t f;
+    if (adb_flight(a->callsign, a->hex, a->lat, a->lon, picked(a), &f) && f.route.codes[0]) {
+        *r = f.route;
+        return true;
+    }
+    return route_get(a->callsign, a->lat, a->lon, r);
+}
+
 // "LHR > JFK" for a's callsign, and in places (if not NULL) where those are,
 // "London > New York"; "" while it is looked up, when nobody knows, or with
 // routes off
@@ -27,7 +45,7 @@ void fmt_route(const aircraft_t *a, char *route, size_t size, char *places, size
     if (places) places[0] = '\0';
     if (!settings()->show_route) return;
     route_t r;
-    route_get(a->callsign, a->lat, a->lon, &r);
+    get_route(a, &r);
     arrows(r.codes, '-', route, size);
     if (places) arrows(r.places, '|', places, places_size);
 }
@@ -40,7 +58,7 @@ void fmt_progress(const aircraft_t *a, bool full, char *out, size_t n)
     if (!settings()->show_route) return;
     route_t r;
     int pct, to_go;
-    if (!route_get(a->callsign, a->lat, a->lon, &r) || !route_progress(&r, a->lat, a->lon, &pct, &to_go)) return;
+    if (!get_route(a, &r) || !route_progress(&r, a->lat, a->lon, &pct, &to_go)) return;
     if (!full) {
         snprintf(out, n, "%d%%", pct);
         return;
@@ -48,6 +66,60 @@ void fmt_progress(const aircraft_t *a, bool full, char *out, size_t n)
     char num[16];
     fmt_thousands(num, sizeof(num), to_go);
     snprintf(out, n, "%d%% of the way  " LV_SYMBOL_BULLET "  %s NM to go", pct, num);
+}
+
+// "18 min late", "5 min early", "on time", or for a time only scheduled,
+// "scheduled"
+static void fmt_delay(const adb_end_t *e, char *out, size_t n)
+{
+    const int d = abs(e->delay_min);
+    if (!e->live) {
+        strlcpy(out, "scheduled", n);
+    } else if (d < 5) {
+        strlcpy(out, "on time", n);
+    } else if (d < 60) {
+        snprintf(out, n, "%d min %s", d, e->delay_min > 0 ? "late" : "early");
+    } else {
+        snprintf(out, n, "%d h %d min %s", d / 60, d % 60, e->delay_min > 0 ? "late" : "early");
+    }
+}
+
+// When a's flight leaves and arrives, from AeroDataBox: "Dep 10:42  Arr
+// 12:05  •  9 min late", or in full a line for each end with the delay, and
+// the terminal and gate it arrives at; "" when unknown
+void fmt_times(const aircraft_t *a, bool full, char *out, size_t n)
+{
+    out[0] = '\0';
+    adb_flight_t f;
+    if (!adb_flight(a->callsign, a->hex, a->lat, a->lon, picked(a), &f) || (!f.dep.best[0] && !f.arr.best[0])) return;
+    char delay[32];
+    if (!full) {
+        if (f.dep.best[0]) snprintf(out, n, "Dep %s", f.dep.best);
+        if (f.arr.best[0]) {
+            if (out[0]) strlcat(out, "  ", n);
+            strlcat(out, "Arr ", n);
+            strlcat(out, f.arr.best, n);
+        }
+        // How late it will be is what matters once it is up
+        fmt_delay(f.arr.best[0] ? &f.arr : &f.dep, delay, sizeof(delay));
+        strlcat(out, "  " LV_SYMBOL_BULLET "  ", n);
+        strlcat(out, f.diverted ? "diverted" : delay, n);
+        return;
+    }
+    size_t len = 0;
+    if (f.dep.best[0]) {
+        fmt_delay(&f.dep, delay, sizeof(delay));
+        len += snprintf(out + len, n - len, "%s %s, %s", f.departed ? "Departed" : "Departs", f.dep.best, delay);
+    }
+    if (f.arr.best[0] && len < n) {
+        fmt_delay(&f.arr, delay, sizeof(delay));
+        len += snprintf(out + len, n - len, "%s%s%s %s, %s", len ? "\n" : "", f.diverted ? "Diverted  " LV_SYMBOL_BULLET "  " : "",
+                        f.arrived ? "Arrived" : "Arrives", f.arr.best, delay);
+        if (f.arr.terminal[0] && len < n) len += snprintf(out + len, n - len, "  " LV_SYMBOL_BULLET "  Terminal %s", f.arr.terminal);
+        if (f.arr.gate[0] && len < n) {
+            snprintf(out + len, n - len, "%sgate %s", f.arr.terminal[0] ? ", " : "  " LV_SYMBOL_BULLET "  ", f.arr.gate);
+        }
+    }
 }
 
 // An owner's name as the FAA's register has it, "UNITED AIRLINES INC", as
@@ -73,11 +145,17 @@ static void tidy_name(char *s)
     }
 }
 
-// "Wells Fargo Trust Co  •  built 2001, 25 years old": the registered owner,
-// unless it is the airline the callsign already names, and when it was built
-// (which only the feed knows, and only for US registrations)
+// "Wells Fargo Trust Co  •  built 2001, 25 years old  •  186 seats": the
+// registered owner, unless it is the airline the callsign already names,
+// when it was built (from the feed, which only knows for US registrations,
+// else from AeroDataBox) and its seats
 void fmt_info(const aircraft_t *a, const airline_t *al, char *out, size_t n)
 {
+    adb_aircraft_t ac;
+    const bool have_ac = adb_aircraft(a->hex, picked(a), &ac);
+    const int year = a->year ? a->year : have_ac ? ac.built : 0;
+    char seats[16] = "";
+    if (have_ac && ac.seats) snprintf(seats, sizeof(seats), "%d seats", ac.seats);
     out[0] = '\0';
     char owner[48];
     if (a->owner[0]) {
@@ -87,19 +165,24 @@ void fmt_info(const aircraft_t *a, const airline_t *al, char *out, size_t n)
     }
     tidy_name(owner);
     if (owner[0] && !(al && strncasecmp(owner, al->name, strlen(al->name)) == 0)) strlcpy(out, owner, n);
-    if (!a->year) return;
-    const time_t now = time(NULL);
-    struct tm tm;
-    localtime_r(&now, &tm);
-    const int age = tm.tm_year + 1900 - a->year;
-    char built[40];
-    if (tm.tm_year >= 120 && age >= 2) {
-        snprintf(built, sizeof(built), "built %d, %d years old", a->year, age);
-    } else {
-        snprintf(built, sizeof(built), "built %d", a->year);
+    if (year) {
+        const time_t now = time(NULL);
+        struct tm tm;
+        localtime_r(&now, &tm);
+        const int age = tm.tm_year + 1900 - year;
+        char built[40];
+        if (tm.tm_year >= 120 && age >= 2) {
+            snprintf(built, sizeof(built), "built %d, %d years old", year, age);
+        } else {
+            snprintf(built, sizeof(built), "built %d", year);
+        }
+        if (out[0]) strlcat(out, "  " LV_SYMBOL_BULLET "  ", n);
+        strlcat(out, built, n);
     }
-    if (out[0]) strlcat(out, "  " LV_SYMBOL_BULLET "  ", n);
-    strlcat(out, built, n);
+    if (seats[0]) {
+        if (out[0]) strlcat(out, "  " LV_SYMBOL_BULLET "  ", n);
+        strlcat(out, seats, n);
+    }
 }
 
 // "BA117  •  British Airways", or the country for anything not an airline's;
@@ -108,7 +191,13 @@ const airline_t *fmt_airline(const aircraft_t *a, const country_t *country, char
 {
     out[0] = '\0';
     const airline_t *al = airline_for_callsign(a->callsign);
-    airline_flight_number(a->callsign, out, n);
+    // The number it is sold under, "BA 117", when AeroDataBox knows
+    adb_flight_t f;
+    if (adb_flight(a->callsign, a->hex, a->lat, a->lon, false, &f) && f.number[0]) {
+        strlcpy(out, f.number, n);
+    } else {
+        airline_flight_number(a->callsign, out, n);
+    }
     if (al) {
         if (out[0]) strlcat(out, "  " LV_SYMBOL_BULLET "  ", n);
         strlcat(out, al->name, n);
@@ -118,14 +207,18 @@ const airline_t *fmt_airline(const aircraft_t *a, const country_t *country, char
     return al;
 }
 
-// "G-STBC  •  B77W", the address when there is nothing else, and "Military"
+// "G-STBC  •  B77W", the address when there is nothing else, and "Military".
+// Without the address (the big view, which has room), the type in full,
+// "Boeing 777-300ER", when AeroDataBox knows it.
 void fmt_sub(const aircraft_t *a, bool hex, char *sub, size_t n)
 {
     sub[0] = '\0';
     if (a->reg[0] && strcmp(a->reg, ac_name(a)) != 0) strlcat(sub, a->reg, n);
-    if (a->type[0]) {
+    adb_aircraft_t ac;
+    const char *type = !hex && adb_aircraft(a->hex, false, &ac) && ac.model[0] ? ac.model : a->type;
+    if (type[0]) {
         if (sub[0]) strlcat(sub, "  " LV_SYMBOL_BULLET "  ", n);
-        strlcat(sub, a->type, n);
+        strlcat(sub, type, n);
     }
     if (hex || !sub[0]) {
         if (sub[0]) strlcat(sub, "  " LV_SYMBOL_BULLET "  ", n);

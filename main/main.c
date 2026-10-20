@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "aerodatabox.h"
 #include "board.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -229,6 +230,7 @@ void app_main(void)
     net_start();
     route_start();
     details_start();
+    adb_start();
     ota_start_auto_check();
     // TLS and JSON parsing buffers are in PSRAM; this is just call depth.
     if (xTaskCreate(fetch_task, "fetch", FETCH_STACK, NULL, 5, &s_fetch_task) != pdPASS) {

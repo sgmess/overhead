@@ -51,7 +51,12 @@ typedef struct {
     bool show_centrelines; // extended runway centrelines at the major airfields
     bool sleep;         // backlight off from sleep_from to sleep_to, waking on a touch
     int sleep_from, sleep_to; // minutes after local midnight, 0..1439
+    char adb_key[65];   // AeroDataBox, direct; empty: no flight times or aircraft details
+    int adb_daily;      // AeroDataBox credits to spend a day at most, ADB_DAILY_MIN..ADB_DAILY_MAX
 } settings_t;
+
+#define ADB_DAILY_MIN 10
+#define ADB_DAILY_MAX 5000
 
 #define FILTER_NO_CEILING 60000
 

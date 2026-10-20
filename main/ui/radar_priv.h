@@ -11,6 +11,7 @@
 #include <strings.h>
 #include <time.h>
 
+#include "aerodatabox.h"
 #include "airlines.h"
 #include "backlight.h"
 #include "board.h"
@@ -307,6 +308,7 @@ void on_sweep(lv_timer_t *t);
 // describe.c
 void fmt_route(const aircraft_t *a, char *route, size_t size, char *places, size_t places_size);
 void fmt_progress(const aircraft_t *a, bool full, char *out, size_t n);
+void fmt_times(const aircraft_t *a, bool full, char *out, size_t n);
 void fmt_info(const aircraft_t *a, const airline_t *al, char *out, size_t n);
 const airline_t *fmt_airline(const aircraft_t *a, const country_t *country, char *out, size_t n);
 void fmt_sub(const aircraft_t *a, bool hex, char *sub, size_t n);

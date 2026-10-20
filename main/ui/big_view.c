@@ -18,7 +18,7 @@ static lv_obj_t *s_big_alt, *s_big_vs, *s_big_pointer, *s_big_gs, *s_big_trk, *s
 static lv_obj_t *s_big_pic, *s_big_photo, *s_big_credit; // the photo and who took it, in s_big_pic
 static lv_image_dsc_t s_photo_dsc;
 static char s_photo_hex[8]; // whose photo is in s_photo_dsc; "" for none
-static lv_obj_t *s_big_route, *s_big_places, *s_big_progress, *s_big_info, *s_big_sub, *s_big_foot, *s_big_body, *s_big_empty;
+static lv_obj_t *s_big_route, *s_big_places, *s_big_progress, *s_big_times, *s_big_info, *s_big_sub, *s_big_foot, *s_big_body, *s_big_empty;
 static char s_big_iso[3], s_big_icao[4] = "-";
 static float s_big_ptr_rad;
 static lv_color_t s_big_ptr_color;
@@ -206,10 +206,18 @@ void update_big(void)
     fmt_progress(a, true, progress, sizeof(progress));
     set_text_if_changed(s_big_progress, progress);
     lv_obj_set_hidden(s_big_progress, !progress[0]);
+    char times[160];
+#ifdef HAS_LIST
+    fmt_times(a, true, times, sizeof(times));
+#else
+    fmt_times(a, false, times, sizeof(times)); // the card's one line: the round panels have no more room
+#endif
+    set_text_if_changed(s_big_times, times);
+    lv_obj_set_hidden(s_big_times, !times[0]);
     char sub[64];
     fmt_sub(a, false, sub, sizeof(sub));
     set_text_if_changed(s_big_sub, sub);
-    char info[96];
+    char info[112];
     fmt_info(a, airline_for_callsign(a->callsign), info, sizeof(info));
     set_text_if_changed(s_big_info, info);
     lv_obj_set_hidden(s_big_info, !info[0]);
@@ -348,6 +356,10 @@ void create_big(lv_obj_t *scr)
     lv_obj_set_width(s_big_places, LV_PCT(100));
     lv_label_set_long_mode(s_big_places, LV_LABEL_LONG_WRAP); // a multi-leg route can be long
     s_big_progress = big_label(s_big_body, &F_BIG_TEXT, C_TEXT);
+    s_big_times = big_label(s_big_body, &F_BIG_TEXT, C_TEXT);
+    lv_obj_set_width(s_big_times, LV_PCT(100));
+    lv_label_set_long_mode(s_big_times, LV_LABEL_LONG_WRAP);
+    lv_obj_set_hidden(s_big_times, true);
     s_big_sub = big_label(s_big_body, &F_BIG_TEXT, C_DIM);
     s_big_info = big_label(s_big_body, &F_BIG_TEXT, C_DIM);
     lv_obj_set_width(s_big_info, LV_PCT(100));

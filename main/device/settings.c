@@ -68,6 +68,7 @@ void settings_defaults(settings_t *out)
         .sleep = false,
         .sleep_from = 23 * 60,
         .sleep_to = 7 * 60,
+        .adb_daily = 100,
     };
 }
 
@@ -120,7 +121,8 @@ bool settings_valid(const settings_t *s)
            s->filter_min_ft >= 0 && s->filter_max_ft <= FILTER_NO_CEILING &&
            s->filter_min_ft < s->filter_max_ft &&
            s->show_kinds >= 1 && s->show_kinds <= AC_KIND_ALL &&
-           s->sleep_from >= 0 && s->sleep_from < 24 * 60 && s->sleep_to >= 0 && s->sleep_to < 24 * 60;
+           s->sleep_from >= 0 && s->sleep_from < 24 * 60 && s->sleep_to >= 0 && s->sleep_to < 24 * 60 &&
+           strlen(s->adb_key) < sizeof(s->adb_key) && s->adb_daily >= ADB_DAILY_MIN && s->adb_daily <= ADB_DAILY_MAX;
 }
 
 // Each getter leaves *v alone when the key is missing, so it keeps its default
@@ -202,6 +204,8 @@ void settings_load(void)
         get_bool(h, "sleep", &s.sleep);
         get_int(h, "sleep_from", &s.sleep_from);
         get_int(h, "sleep_to", &s.sleep_to);
+        get_str(h, "adb_key", s.adb_key, sizeof(s.adb_key));
+        get_int(h, "adb_daily", &s.adb_daily);
         nvs_close(h);
     }
 
@@ -269,6 +273,8 @@ static esp_err_t store_unlocked(const settings_t *s)
     if (err == ESP_OK) err = nvs_set_u8(h, "sleep", s->sleep);
     if (err == ESP_OK) err = nvs_set_i32(h, "sleep_from", s->sleep_from);
     if (err == ESP_OK) err = nvs_set_i32(h, "sleep_to", s->sleep_to);
+    if (err == ESP_OK) err = nvs_set_str(h, "adb_key", s->adb_key);
+    if (err == ESP_OK) err = nvs_set_i32(h, "adb_daily", s->adb_daily);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     return err;
@@ -426,7 +432,13 @@ void settings_start(settings_listener_t listener)
     s_send_lock = xSemaphoreCreateMutex();
     s_net_lock = xSemaphoreCreateMutex();
     QueueHandle_t queue = xQueueCreate(1, sizeof(change_t));
-    xTaskCreate(settings_task, "settings", 4096, queue, 4, NULL);
+    if (!s_applied || !s_wait_lock || !s_send_lock || !s_net_lock || !queue ||
+        xTaskCreate(settings_task, "settings", 4096, queue, 4, NULL) != pdPASS) {
+        // Changes are refused, ESP_ERR_INVALID_STATE; this is at boot, so
+        // nothing to free for a retry
+        ESP_LOGE(TAG, "changes not started: no memory");
+        return;
+    }
     s_queue = queue; // last: callers take its being set as everything ready
 }
 

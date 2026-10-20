@@ -10,6 +10,7 @@
 #include "board.h"
 #include "battery.h"
 #include "display_watch.h"
+#include "aerodatabox.h"
 #include "airlines.h"
 #include "cJSON.h"
 #include "esp_app_desc.h"
@@ -387,6 +388,8 @@ static esp_err_t on_state(httpd_req_t *req)
     cJSON_AddBoolToObject(set, "sleep", s->sleep);
     cJSON_AddNumberToObject(set, "sleep_from", s->sleep_from);
     cJSON_AddNumberToObject(set, "sleep_to", s->sleep_to);
+    cJSON_AddBoolToObject(set, "has_adb_key", s->adb_key[0] != '\0'); // nor this one
+    cJSON_AddNumberToObject(set, "adb_daily", s->adb_daily);
 
     openaip_status_t oa;
     openaip_get_status(&oa);
@@ -397,6 +400,14 @@ static esp_err_t on_state(httpd_req_t *req)
     cJSON_AddNumberToObject(o, "airspaces", oa.airspaces);
     cJSON_AddNumberToObject(o, "airfields", oa.airfields);
     cJSON_AddNumberToObject(o, "age_s", oa.age_s);
+
+    adb_status_t adb;
+    adb_get_status(&adb);
+    cJSON *ad = cJSON_AddObjectToObject(json, "aerodatabox");
+    cJSON_AddStringToObject(ad, "state", adb.state);
+    cJSON_AddStringToObject(ad, "detail", adb.detail);
+    cJSON_AddNumberToObject(ad, "used_today", adb.used_today);
+    cJSON_AddNumberToObject(ad, "lookups", adb.lookups);
     return send_json(req, json);
 }
 
@@ -448,6 +459,17 @@ static esp_err_t on_wifi(httpd_req_t *req)
     return send_result(req, commit(&s), NULL);
 }
 
+// json's key, if there, into out: printable, no spaces; false if not
+static bool take_key(const cJSON *json, const char *name, char *out, size_t n)
+{
+    const cJSON *key = cJSON_GetObjectItemCaseSensitive(json, name);
+    if (!key) return true;
+    bool ok = cJSON_IsString(key) && strlen(key->valuestring) < n;
+    for (const char *c = ok ? key->valuestring : ""; *c; c++) ok = ok && *c > ' ' && *c < 0x7f;
+    if (ok) strlcpy(out, key->valuestring, n);
+    return ok;
+}
+
 // The configuration page; any setting left out keeps its value
 static esp_err_t on_settings(httpd_req_t *req)
 {
@@ -490,6 +512,7 @@ static esp_err_t on_settings(httpd_req_t *req)
     take_bool(json, "sleep", &s.sleep);
     take_int(json, "sleep_from", &s.sleep_from);
     take_int(json, "sleep_to", &s.sleep_to);
+    take_int(json, "adb_daily", &s.adb_daily);
     const cJSON *tz = cJSON_GetObjectItemCaseSensitive(json, "tz");
     if (cJSON_IsString(tz)) {
         if (strlen(tz->valuestring) >= sizeof(s.tz)) {
@@ -510,16 +533,11 @@ static esp_err_t on_settings(httpd_req_t *req)
         norm[n] = '\0';
         strlcpy(s.openaip_countries, norm, sizeof(s.openaip_countries));
     }
-    // Only sent when typed or cleared, since the page never sees the old one
-    const cJSON *key = cJSON_GetObjectItemCaseSensitive(json, "openaip_key");
-    if (key) {
-        bool ok = cJSON_IsString(key) && strlen(key->valuestring) < sizeof(s.openaip_key);
-        for (const char *c = ok ? key->valuestring : ""; *c; c++) ok = ok && *c > ' ' && *c < 0x7f;
-        if (!ok) {
-            cJSON_Delete(json);
-            return send_result(req, ESP_ERR_INVALID_ARG, "The API key is up to 64 characters, no spaces");
-        }
-        strlcpy(s.openaip_key, key->valuestring, sizeof(s.openaip_key));
+    // Keys are only sent when typed or cleared, since the page never sees the old ones
+    if (!take_key(json, "openaip_key", s.openaip_key, sizeof(s.openaip_key)) ||
+        !take_key(json, "adb_key", s.adb_key, sizeof(s.adb_key))) {
+        cJSON_Delete(json);
+        return send_result(req, ESP_ERR_INVALID_ARG, "An API key is up to 64 characters, no spaces");
     }
     cJSON_Delete(json);
 
