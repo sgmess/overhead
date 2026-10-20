@@ -82,10 +82,12 @@ bool settings_valid(const settings_t *s);
 
 // Store every field; ESP_ERR_INVALID_ARG, with nothing written, unless
 // settings_valid(). It writes flash, so not from a task with its stack in
-// PSRAM: the cache, and with it PSRAM, is off during the write.
+// PSRAM: the cache, and with it PSRAM, is off during the write. For just
+// before a restart: nothing is stored after it, not even settings_change().
 esp_err_t settings_save(const settings_t *s);
 
-// Forget everything saved, so the next boot uses the defaults again.
+// Forget everything saved, so the next boot uses the defaults again. Like
+// settings_save(), the last write before a restart.
 esp_err_t settings_erase(void);
 
 // Whether going from the running settings to s needs a restart: the network

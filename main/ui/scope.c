@@ -3,6 +3,7 @@
 
 #include "radar_priv.h"
 #include "bench.h"
+#include "geo.h"
 
 // OpenAIP layers, by aero_kind_t: chart blues for controlled airspace, reds
 // for restricted. Thin and translucent so traffic stays on top.
@@ -164,7 +165,7 @@ static void layout_trail(int i, float ppn)
     int16_t(*xy)[2] = s_trail_xy[i];
     int m = 0;
     for (int j = 0; j < n; j++) {
-        const float dx = (pts[j].lon - s_lon0) * 60.0f * s_coslat0 * ppn;
+        const float dx = (float)lon_diff(pts[j].lon, s_lon0) * 60.0f * s_coslat0 * ppn;
         const float dy = (pts[j].lat - s_lat0) * 60.0f * ppn;
         if (dx * dx + dy * dy > (float)R_SCOPE * R_SCOPE) continue;
         const int x = CX + (int)lroundf(dx), y = CY - (int)lroundf(dy);
@@ -222,7 +223,7 @@ void layout(void)
         }
 
         // Flat-earth projection is well under a pixel out at 100 NM
-        double dx = (lon - s_lon0) * 60.0 * s_coslat0;
+        double dx = lon_diff(lon, s_lon0) * 60.0 * s_coslat0;
         double dy = (lat - s_lat0) * 60.0;
         s->dist_nm = (float)hypot(dx, dy);
         s->brg_deg = (float)fmod(atan2(dx, dy) * 180.0 / M_PI + 360.0, 360.0);

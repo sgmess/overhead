@@ -18,6 +18,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
+#include "geo.h"
 #include "net.h"
 #include "radar_ui.h"
 #include "settings.h"
@@ -237,7 +238,7 @@ typedef struct {
 static aero_pt_t project(const builder_t *bld, double lon, double lat)
 {
     return (aero_pt_t){
-        .x = (float)((lon - bld->lon0) * 60.0 * bld->coslat0),
+        .x = (float)(lon_diff(lon, bld->lon0) * 60.0 * bld->coslat0),
         .y = (float)((lat - bld->lat0) * 60.0),
     };
 }

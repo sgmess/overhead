@@ -19,6 +19,7 @@ static const char *TAG = "settings";
 
 static settings_t s_settings;
 static SemaphoreHandle_t s_store_lock; // see store(); made in settings_load(), before any writer
+static bool s_final; // under s_store_lock: a save or reset before a restart was written
 
 // Before anything is saved: no network (so the setup portal opens) and the
 // radar centred on Heathrow until, once connected, the internet address says
@@ -273,13 +274,31 @@ static esp_err_t store_unlocked(const settings_t *s)
     return err;
 }
 
+static esp_err_t erase_unlocked(void)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NS, NVS_READWRITE, &h);
+    if (err == ESP_OK) {
+        err = nvs_erase_all(h);
+        if (err == ESP_OK) err = nvs_commit(h);
+        nvs_close(h);
+    }
+    return err;
+}
+
 // One writer at a time: the settings task stores changes, and a new
 // network or a reset is written from the web server's restart timer, so
-// their keys could interleave and leave a mix in flash
-static esp_err_t store(const settings_t *s)
+// their keys could interleave and leave a mix in flash. That last write
+// before the restart is final: a change still queued would put older
+// values back, so it is refused.
+static esp_err_t store(const settings_t *s, bool final)
 {
     xSemaphoreTake(s_store_lock, portMAX_DELAY);
-    const esp_err_t err = store_unlocked(s);
+    esp_err_t err = ESP_ERR_INVALID_STATE;
+    if (!s_final) {
+        err = s ? store_unlocked(s) : erase_unlocked();
+        s_final = final;
+    }
     xSemaphoreGive(s_store_lock);
     return err;
 }
@@ -294,7 +313,7 @@ void settings_copy(settings_t *out)
 esp_err_t settings_save(const settings_t *s)
 {
     if (!settings_valid(s)) return ESP_ERR_INVALID_ARG;
-    esp_err_t err = store(s);
+    esp_err_t err = store(s, true);
     if (err == ESP_OK) {
         board_lock(); // the display task reads them all the time
         s_settings = *s;
@@ -305,16 +324,7 @@ esp_err_t settings_save(const settings_t *s)
 
 esp_err_t settings_erase(void)
 {
-    xSemaphoreTake(s_store_lock, portMAX_DELAY);
-    nvs_handle_t h;
-    esp_err_t err = nvs_open(NS, NVS_READWRITE, &h);
-    if (err == ESP_OK) {
-        err = nvs_erase_all(h);
-        if (err == ESP_OK) err = nvs_commit(h);
-        nvs_close(h);
-    }
-    xSemaphoreGive(s_store_lock);
-    return err;
+    return store(NULL, true);
 }
 
 bool settings_need_restart(const settings_t *s)
@@ -385,7 +395,7 @@ static void settings_task(void *arg)
             continue;
         }
         const bool restart = !c.keep_running && settings_need_restart(next);
-        esp_err_t err = store(next);
+        esp_err_t err = store(next, false);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "not stored: %s", esp_err_to_name(err));
             done(c.seq, err);

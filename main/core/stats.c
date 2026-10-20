@@ -12,6 +12,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "geo.h"
 
 static const char *TAG = "stats";
 
@@ -366,7 +367,7 @@ void stats_update(const aircraft_t *list, int n, double lat, double lon, int ran
     const double coslat = cos(lat * M_PI / 180.0);
     for (int i = 0; i < n; i++) {
         const aircraft_t *a = &list[i];
-        const double dx = (a->lon - lon) * 60.0 * coslat, dy = (a->lat - lat) * 60.0;
+        const double dx = lon_diff(a->lon, lon) * 60.0 * coslat, dy = (a->lat - lat) * 60.0;
         if (dx * dx + dy * dy > (double)range_nm * range_nm) continue;
         char *end;
         const unsigned long addr = strtoul(a->hex, &end, 16);

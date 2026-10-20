@@ -102,7 +102,9 @@ void trails_update(const aircraft_t *list, int count, int16_t *slot_out)
         trail_t *t = &s_trails[k];
         t->seen_s = now;
         slot_out[i] = k;
-        const uint32_t pos_s = (uint32_t)(a->pos_time_us / 1000000);
+        // A report older than the device's uptime is from before boot: 0, or
+        // as a huge unsigned time it would hold off every later point
+        const uint32_t pos_s = a->pos_time_us > 0 ? (uint32_t)(a->pos_time_us / 1000000) : 0;
         const uint32_t last_s = t->n ? t->t_s[(t->head + TRAIL_PTS - 1) % TRAIL_PTS] : 0;
         if (t->n && pos_s < last_s + spacing) continue;
         t->t_s[t->head] = pos_s;
