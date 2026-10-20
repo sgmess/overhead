@@ -293,7 +293,10 @@ static void save(void)
     esp_err_t err = esp_partition_erase_range(p, at, SLOT_SIZE);
     if (err == ESP_OK) err = esp_partition_write(p, at + sizeof(*h), s_packed, h->n * sizeof(uint32_t));
     if (err == ESP_OK) err = esp_partition_write(p, at, h, sizeof(*h));
-    if (err != ESP_OK) ESP_LOGW(TAG, "not saved: %s", esp_err_to_name(err));
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "not saved: %s", esp_err_to_name(err));
+        s_dirty = true; // still to save: the next turn, or the restart, tries again
+    }
     s_saved_us = esp_timer_get_time();
     heap_caps_free(h);
 #endif

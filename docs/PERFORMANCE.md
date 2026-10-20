@@ -72,12 +72,21 @@ optimising either.
   has just booted already counts as untouched. The bench registers activity
   as it opens the screen. Before that fix, `covered` was partly measuring the
   radar.
+- **After a USB flash the Tab5 can stick in a ROM panic** loading the
+  bootloader (`Store/AMO access fault`, MTVAL 0x50091000, the SHA block the
+  ROM hashes the bootloader with). The host's USB reset leaves the crypto
+  block unusable. `esptool.py --after watchdog-reset read-mac` boots it; then
+  re-attach the USB to WSL, as the board re-enumerates. Not something a
+  restart from the firmware or an over-the-air update runs into.
 - **After an over-the-air update or a rollback, `idf.py flash` can leave the
   board booting the other app slot.** Check that `/api/state`'s `firmware`
   ends in `-dirty`; if it doesn't, delete `build_tab5/*_flashed.bin` and
   `build_tab5/*/*_flashed.bin` and flash again.
 
 ## Current figures (19 Oct 2026, v1.0.3 + changes)
+
+Since then the sweep takes the radar from 12–15% to 25–29% busy, not 55%:
+4 segments, a turn in 8 s (see "The sweep" below).
 
 Tab5, landscape (rotation 90), trails 120 s, about 80 aircraft. Sweep off
 and on, back to back:
@@ -298,11 +307,20 @@ With the frame stages above, sweep on, 8 segments, 5 s:
   - the background image is drawn into each area;
   - every area is a separate flush, which the adapter rotates and copies into
     the other frame buffers.
-- **Fewer segments, fewer areas:** 4 segments measured 33% busy against
-  45% for 8 (one run). With 2 or 4 the Tab5 froze soon after the sweep
-  started: the PPA hang below, which those patterns trigger quickly. Not
-  retried since the fix. `SWEEP_SEGS 1` doesn't build (a division by
-  `SWEEP_SEGS - 1` in `radar_ui.c`).
+- **Fewer segments, fewer areas:** before the PPA fix, 2 or 4 segments
+  froze the Tab5 soon after the sweep started (the PPA hang below). Retested
+  with the fix, back to back on 19 Oct 2026:
+
+  | Segments | Busy | Flushes a frame | A real frame |
+  | --- | --- | --- | --- |
+  | 8 | 46–50% | 4.7 | about 16 ms |
+  | 4 | 34–38% | 2.6 | about 12 ms |
+
+  About a quarter less work, and no freeze. Four segments make the fade
+  towards the rim coarser (four steps of brightness instead of eight); it
+  looked fine on the Tab5, so 4 is the setting now.
+  `SWEEP_SEGS 1` doesn't build (a division by `SWEEP_SEGS - 1` in
+  `radar_ui.c`).
 - **Drawing the sweep in the scope (option 2): rejected.** The scope's draw
   callback drew it, and each step asked for one to three boxes around the old
   and new line (more near the diagonals) instead of moving eight line
@@ -317,8 +335,13 @@ With the frame stages above, sweep on, 8 segments, 5 s:
   The empty refreshes went, but each box is larger, so a frame costs nearly
   as much. Not clearly faster, so the line objects stay. The code is in
   `git stash` ("WIP: sweep drawn in the scope") if it is ever wanted.
-- **Untested:** a slower tick (66 ms would roughly halve the cost, but looks
-  less smooth).
+- **Slower sweep: kept (19 Oct 2026).** A turn in 8 s instead of 4, at a
+  step every 50 ms instead of 33: 2.25° a step, finer than the old 3°. With
+  4 segments the radar is **25–29% busy**, against 46–50% for v1.0.4's 8
+  segments at 4 s. Both the speed and the look were judged fine on the
+  Tab5. Stability: 64 minutes on the Tab5 with the sweep on, polled
+  every 30 s: no missed answer, no restart, no freeze, internal RAM steady
+  at about 176 KB; the 3.4C ran the same build an hour without a freeze.
 
 ### The display lock-up (19 Oct 2026): found and fixed
 

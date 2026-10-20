@@ -153,12 +153,10 @@ static void on_wifi_settings(const uint8_t *d, size_t len)
         send_byte(TYPE_STATE, STATE_READY);
         return;
     }
-    // Kept from now on. This writes flash, which is why this task's stack is
-    // in internal RAM.
-    settings_t s = *settings();
-    strlcpy(s.ssid, ssid, sizeof(s.ssid));
-    strlcpy(s.password, password, sizeof(s.password));
-    if (settings_save(&s) != ESP_OK) ESP_LOGE(TAG, "network joined but not saved");
+    // Kept from now on, and the running settings too: saved behind their
+    // back, the next change from the page or the screen would store the old,
+    // empty network over it
+    if (settings_change_network(ssid, password) != ESP_OK) ESP_LOGE(TAG, "network joined but not saved");
     send_provisioned(RPC_WIFI_SETTINGS);
 }
 

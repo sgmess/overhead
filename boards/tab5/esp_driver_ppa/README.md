@@ -18,4 +18,7 @@ seconds.
 
 Being in `boards/tab5/`, a component directory of the Tab5 build only, it
 replaces IDF's own component for that board. The 3.4C doesn't rotate.
-Drop it once IDF fixes the hang upstream.
+Its `CMakeLists.txt` stops the build on any IDF but 6.1.0. On a new IDF,
+check whether `ppa_srm.c` fixes the hang: if it does, delete this directory;
+if not, copy the new driver here and make the same change again. Then
+confirm with the sweep benchmark in docs/PERFORMANCE.md.

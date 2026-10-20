@@ -1,3 +1,12 @@
+# A patched copy of ESP-IDF 6.1.0's PPA driver (README.md). It replaces the
+# IDF's own, so on any other IDF it would swap that IDF's driver for this old
+# one: stop, so the copy is redone from the new IDF, or dropped if it fixes
+# the hang.
+if(NOT "${IDF_VERSION_MAJOR}.${IDF_VERSION_MINOR}.${IDF_VERSION_PATCH}" STREQUAL "6.1.0")
+    message(FATAL_ERROR "boards/tab5/esp_driver_ppa is a patched copy of ESP-IDF 6.1.0's driver, but this is "
+                        "${IDF_VERSION_MAJOR}.${IDF_VERSION_MINOR}.${IDF_VERSION_PATCH}: see its README.md")
+endif()
+
 idf_build_get_property(target IDF_TARGET)
 
 set(srcs)

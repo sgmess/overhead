@@ -100,3 +100,8 @@ void settings_start(settings_listener_t listener);
 // (up to a couple of seconds). Safe from any task, display lock or not
 // unless waiting.
 esp_err_t settings_change(const settings_t *s, bool wait);
+
+// A network already joined (Improv over USB): store it and make it the
+// running one, through the same task, without the restart a new network
+// otherwise means. Waits until done.
+esp_err_t settings_change_network(const char *ssid, const char *password);

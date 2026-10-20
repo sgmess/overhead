@@ -53,7 +53,8 @@ point on a radar scope.
 - Emergency squawks (7500/7600/7700) are drawn red and circled.
 - Extended runway centrelines at the airports, a dash a mile out to 9.5 NM,
   where arrivals line up and departures climb out.
-- UTC or local clock (or both), rotating sweep, compass rose, range rings.
+- UTC or local clock (or both), a sweep turning every 8 s, compass rose,
+  range rings.
   On the Tab5 the clock, range, traffic count and battery sit in the corners
   around the scope; the round panels have no corners, so they keep them along
   the top and bottom of the scope.
@@ -241,7 +242,8 @@ Nothing of the radar is redrawn while the settings screen covers it or the
 screen is off overnight, and labels and colours are only set when they
 change, since LVGL redraws an object whenever either is set. On the Tab5 the
 radar keeps the display busy about 12–15% of the time with the sweep off
-and about 55% with it on; with the settings screen open, next to none.
+and about 25–29% with it on (a turn every 8 s, drawn in four segments);
+with the settings screen open, next to none.
 
 `/api/debug/bench?what=` (debug builds, with `CONFIG_LV_USE_SNAPSHOT` in a
 local sdkconfig) times the display for five seconds: `settings` scrolls the
@@ -366,7 +368,7 @@ Tab5 build. As a safety net on both boards, `main/device/display_watch.c`
 restarts the device if the display stays frozen for 15 s, and `/api/state`
 counts those restarts since power-on (`display_restarts`). The adapter
 draws rotated but passes touches on as the panel reports them, portrait, so
-the board code sets the touch driver's swap and mirror to match. The BSP (`espressif/m5stack_tab5`) detects the
+the board code sets the touch driver's swap and mirror to match. The BSP (`espressif/m5stack_tab5_noglib`) detects the
 three panel revisions at boot by which touch controller answers on I2C. The
 board code releases the panel and touch resets and waits for that controller
 first, because without it detection failed on a revision-3 (ST7121) unit. The
@@ -494,7 +496,7 @@ so a file can move between folders without its users changing.
 | `boards/tab5/esp_driver_ppa/` | IDF's PPA driver with the rotation-hang fix, for the Tab5 only |
 
 The P4 3.4C and Tab5 BSPs come from the component registry
-(`waveshare/esp32_p4_wifi6_touch_lcd_xc` 3.0.1, `espressif/m5stack_tab5` 1.3.1),
+(`waveshare/esp32_p4_wifi6_touch_lcd_xc` 3.0.1, `espressif/m5stack_tab5_noglib` 1.3.2),
 each fetched only for its own board.
 
 ## Licence

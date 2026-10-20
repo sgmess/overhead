@@ -304,13 +304,15 @@ bool settings_need_restart(const settings_t *s)
 
 typedef struct {
     settings_t s;
-    uint32_t seq; // numbers each change, so a waiter can tell its own from a newer one
+    uint32_t seq;      // numbers each change, so a waiter can tell its own from a newer one
+    bool keep_running; // a new network already joined: no restart for it
 } change_t;
 
 static QueueHandle_t s_queue;          // of change_t, one deep: the newest wins
 static SemaphoreHandle_t s_applied;    // given after each change, for waiters
 static SemaphoreHandle_t s_wait_lock;  // one waiter at a time
 static SemaphoreHandle_t s_send_lock;  // one sender at a time
+static SemaphoreHandle_t s_net_lock;   // settings_change_network()'s copy
 static settings_listener_t s_listener;
 static uint32_t s_seq;                 // the last number handed out
 // The waiter's change, and what became of it
@@ -338,16 +340,17 @@ static void done(uint32_t seq, esp_err_t err)
 
 static void settings_task(void *arg)
 {
+    QueueHandle_t queue = arg; // s_queue may not be set yet
     static change_t c;  // too big for a 4 KB stack, with old
     static settings_t old;
     for (;;) {
-        xQueueReceive(s_queue, &c, portMAX_DELAY);
+        xQueueReceive(queue, &c, portMAX_DELAY);
         const settings_t *next = &c.s;
         if (memcmp(next, &s_settings, sizeof(*next)) == 0) {
             done(c.seq, ESP_OK);
             continue;
         }
-        const bool restart = settings_need_restart(next);
+        const bool restart = !c.keep_running && settings_need_restart(next);
         esp_err_t err = store(next);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "not stored: %s", esp_err_to_name(err));
@@ -374,20 +377,23 @@ static void settings_task(void *arg)
 void settings_start(settings_listener_t listener)
 {
     s_listener = listener;
-    s_queue = xQueueCreate(1, sizeof(change_t));
     s_applied = xSemaphoreCreateBinary();
     s_wait_lock = xSemaphoreCreateMutex();
     s_send_lock = xSemaphoreCreateMutex();
-    xTaskCreate(settings_task, "settings", 4096, NULL, 4, NULL);
+    s_net_lock = xSemaphoreCreateMutex();
+    QueueHandle_t queue = xQueueCreate(1, sizeof(change_t));
+    xTaskCreate(settings_task, "settings", 4096, queue, 4, NULL);
+    s_queue = queue; // last: callers take its being set as everything ready
 }
 
 // Queue s as the next change, as the waiter's with wait
-static void send(const settings_t *s, bool wait)
+static void send(const settings_t *s, bool wait, bool keep_running)
 {
     static change_t c; // too big for some callers' stacks, so under s_send_lock
     xSemaphoreTake(s_send_lock, portMAX_DELAY);
     c.s = *s;
     c.seq = ++s_seq;
+    c.keep_running = keep_running;
     if (wait) {
         s_wait_seq = c.seq;
         s_wait_state = W_PENDING;
@@ -396,12 +402,12 @@ static void send(const settings_t *s, bool wait)
     xSemaphoreGive(s_send_lock);
 }
 
-esp_err_t settings_change(const settings_t *s, bool wait)
+static esp_err_t change(const settings_t *s, bool wait, bool keep_running)
 {
     if (!settings_valid(s)) return ESP_ERR_INVALID_ARG;
     if (!s_queue) return ESP_ERR_INVALID_STATE;
     if (!wait) {
-        send(s, false);
+        send(s, false, keep_running);
         return ESP_OK;
     }
     xSemaphoreTake(s_wait_lock, portMAX_DELAY);
@@ -411,7 +417,7 @@ esp_err_t settings_change(const settings_t *s, bool wait)
     // A change from the screen (which doesn't wait) can replace this one
     // before the task takes it; then send it again, after that one
     for (int tries = 0; tries < 3; tries++) {
-        send(s, true);
+        send(s, true, keep_running);
         while (s_wait_state == W_PENDING) {
             const int32_t left = (int32_t)(until - xTaskGetTickCount());
             if (left <= 0 || xSemaphoreTake(s_applied, left) != pdTRUE) break;
@@ -423,5 +429,27 @@ esp_err_t settings_change(const settings_t *s, bool wait)
     s_wait_state = W_NONE;
     xSemaphoreGive(s_send_lock);
     xSemaphoreGive(s_wait_lock);
+    return err;
+}
+
+esp_err_t settings_change(const settings_t *s, bool wait)
+{
+    return change(s, wait, false);
+}
+
+esp_err_t settings_change_network(const char *ssid, const char *password)
+{
+    static settings_t s; // too big for the Improv task's stack, so under s_net_lock
+    // Improv starts early, so this can come before settings_start()
+    for (int i = 0; !s_queue && i < 100; i++) vTaskDelay(pdMS_TO_TICKS(100));
+    if (!s_queue) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_net_lock, portMAX_DELAY);
+    board_lock(); // the settings task swaps them under it
+    s = s_settings;
+    board_unlock();
+    strlcpy(s.ssid, ssid, sizeof(s.ssid));
+    strlcpy(s.password, password, sizeof(s.password));
+    const esp_err_t err = change(&s, true, true);
+    xSemaphoreGive(s_net_lock);
     return err;
 }

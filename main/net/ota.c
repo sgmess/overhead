@@ -235,10 +235,22 @@ static bool busy(void)
     return s_state == CHECKING || s_state == INSTALLING;
 }
 
+// The page, the screen and the daily check can all ask at once: whichever
+// gets here first moves the state on, the rest find it busy
+static portMUX_TYPE s_start_lock = portMUX_INITIALIZER_UNLOCKED;
+
+static bool start(state_t next)
+{
+    taskENTER_CRITICAL(&s_start_lock);
+    const bool ok = !busy() && (next != INSTALLING || (s_state == CHECKED && s_image_url[0]));
+    if (ok) s_state = next;
+    taskEXIT_CRITICAL(&s_start_lock);
+    return ok;
+}
+
 esp_err_t ota_check(void)
 {
-    if (busy()) return ESP_ERR_INVALID_STATE;
-    s_state = CHECKING;
+    if (!start(CHECKING)) return ESP_ERR_INVALID_STATE;
     s_detail[0] = '\0';
     if (xTaskCreate(check_task, "ota", 6144, NULL, 4, NULL) != pdPASS) {
         s_state = FAILED;
@@ -249,8 +261,7 @@ esp_err_t ota_check(void)
 
 esp_err_t ota_install(void)
 {
-    if (busy() || s_state != CHECKED || !s_image_url[0]) return ESP_ERR_INVALID_STATE;
-    s_state = INSTALLING;
+    if (!start(INSTALLING)) return ESP_ERR_INVALID_STATE;
     s_detail[0] = '\0';
     // Its stack must be internal: PSRAM is unreachable while flash is written
     if (xTaskCreate(install_task, "ota", 8192, NULL, 4, NULL) != pdPASS) {

@@ -62,9 +62,12 @@ static esp_timer_handle_t s_setup_timer, s_retry_timer;
 
 static void set_station(const char *ssid, const char *password)
 {
+    // Byte for byte: a 32-character SSID or 64-character password fills its
+    // field with no terminator, which the driver allows, where strlcpy()
+    // would drop the last character
     wifi_config_t sta = {0};
-    strlcpy((char *)sta.sta.ssid, ssid, sizeof(sta.sta.ssid));
-    strlcpy((char *)sta.sta.password, password, sizeof(sta.sta.password));
+    memcpy(sta.sta.ssid, ssid, strnlen(ssid, sizeof(sta.sta.ssid)));
+    memcpy(sta.sta.password, password, strnlen(password, sizeof(sta.sta.password)));
     sta.sta.threshold.authmode = password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
     sta.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     esp_wifi_set_config(WIFI_IF_STA, &sta);

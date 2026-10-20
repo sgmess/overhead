@@ -26,6 +26,7 @@
 #define F_ROW lv_font_montserrat_20
 #define F_HEAD lv_font_montserrat_16
 #define F_TITLE lv_font_montserrat_32
+#define F_DIALOG lv_font_montserrat_24 // a dialog's title
 #define PAD 24
 #define GAP 14
 #define SWITCH_W 64
@@ -36,6 +37,7 @@
 #define F_ROW lv_font_montserrat_16
 #define F_HEAD lv_font_montserrat_14
 #define F_TITLE lv_font_montserrat_28
+#define F_DIALOG lv_font_montserrat_20
 #define PAD 20
 #define GAP 12
 #define SWITCH_W 56
@@ -84,7 +86,7 @@ typedef struct {
 // internal RAM is what the Tab5 is short of at boot (see radar_ui_create())
 typedef struct {
     settings_t edit; // the screen's working copy
-    settings_t base; // the settings edit started from, to tell what the screen changed
+    settings_t base; // the settings when the screen opened, to tell what it changed
     bind_t bind[BIND_MAX];
     int n_bind;
     int half_hours[48];
@@ -126,8 +128,10 @@ static void commit(void)
     const bool crossed = s_ui->edit.filter_min_ft >= s_ui->edit.filter_max_ft;
     if (s_filter_warn) lv_obj_set_hidden(s_filter_warn, !crossed);
     if (crossed) return;
-    // Only what was changed here, over the running settings: the web page
-    // may have changed others since the screen opened
+    // Everything changed here since the screen opened, over the running
+    // settings: the web page may have changed others meanwhile. Everything,
+    // not just this change: an earlier one may still be waiting to be
+    // applied, and this one replaces it in the queue.
     settings_t next = *settings();
     for (int i = 0; i < s_ui->n_bind; i++) {
         const bind_t *b = &s_ui->bind[i];
@@ -137,7 +141,6 @@ static void commit(void)
             memcpy((char *)&next + at, (const char *)&s_ui->edit + at, n);
         }
     }
-    s_ui->edit = s_ui->base = next;
     settings_change(&next, false);
 }
 
@@ -336,6 +339,44 @@ static void on_ota_confirm(lv_event_t *e)
     update_ota();
 }
 
+// A question with two answers, sized for the screen. LVGL's own message box
+// is laid out for a 130 dpi display (260 pixels wide, 43 high rows), so on
+// the Tab5's 294 it came out a few centimetres across in small type.
+// on_answer gets true for yes.
+static lv_obj_t *dialog(const char *title, const char *text, const char *yes, const char *no,
+                        lv_event_cb_t on_answer)
+{
+    lv_obj_t *mb = lv_msgbox_create(NULL);
+    const int w = lv_display_get_horizontal_resolution(NULL);
+    lv_obj_set_width(mb, LV_MIN(w, COL_MAX) * (ROUND ? 70 : 85) / 100); // round: inside the circle
+    lv_obj_set_style_text_font(mb, &F_ROW, 0);
+    lv_obj_set_style_radius(mb, PAD / 2, 0);
+
+    lv_obj_t *t = lv_msgbox_add_title(mb, title);
+    lv_obj_set_style_text_font(t, &F_DIALOG, 0);
+    lv_obj_t *header = lv_msgbox_get_header(mb);
+    lv_obj_set_height(header, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_hor(header, PAD, 0);
+    lv_obj_set_style_pad_ver(header, GAP, 0);
+
+    lv_obj_t *body = lv_msgbox_add_text(mb, text);
+    lv_obj_set_style_text_line_space(body, GAP / 3, 0);
+    lv_obj_set_style_pad_hor(lv_msgbox_get_content(mb), PAD, 0);
+    lv_obj_set_style_pad_ver(lv_msgbox_get_content(mb), GAP, 0);
+
+    const char *labels[] = {yes, no};
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t *b = lv_msgbox_add_footer_button(mb, labels[i]);
+        lv_obj_set_height(b, SWITCH_H + GAP * 2); // a fingertip, not a stylus
+        lv_obj_set_style_pad_hor(b, PAD, 0);
+        lv_obj_add_event_cb(b, on_answer, LV_EVENT_CLICKED, (void *)(intptr_t)(i == 0));
+    }
+    lv_obj_t *footer = lv_msgbox_get_footer(mb);
+    lv_obj_set_height(footer, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_ver(footer, GAP, 0);
+    return mb;
+}
+
 static void on_ota_install(lv_event_t *e)
 {
     ota_status_t o;
@@ -345,15 +386,9 @@ static void on_ota_install(lv_event_t *e)
              "Overhead restarts when it is done. If the new firmware can't reach the network, the next restart "
              "goes back to %s.",
              esp_app_get_description()->version);
-    s_msgbox = lv_msgbox_create(NULL);
     char title[48];
     snprintf(title, sizeof(title), "Install %s?", o.latest);
-    lv_msgbox_add_title(s_msgbox, title);
-    lv_msgbox_add_text(s_msgbox, text);
-    lv_obj_t *yes = lv_msgbox_add_footer_button(s_msgbox, "Install");
-    lv_obj_t *no = lv_msgbox_add_footer_button(s_msgbox, "Cancel");
-    lv_obj_add_event_cb(yes, on_ota_confirm, LV_EVENT_CLICKED, (void *)(intptr_t) true);
-    lv_obj_add_event_cb(no, on_ota_confirm, LV_EVENT_CLICKED, (void *)(intptr_t) false);
+    s_msgbox = dialog(title, text, "Install", "Cancel", on_ota_confirm);
 }
 
 static void on_switch(lv_event_t *e)
@@ -433,13 +468,8 @@ static void on_choice(lv_event_t *e)
     const int v = i < b->n_values ? b->values[i] : b->extra;
     *(int *)b->field = v;
     if (b->kind == B_ROTATION) {
-        s_msgbox = lv_msgbox_create(NULL);
-        lv_msgbox_add_title(s_msgbox, "Change orientation");
-        lv_msgbox_add_text(s_msgbox, "Overhead restarts to turn the screen.");
-        lv_obj_t *yes = lv_msgbox_add_footer_button(s_msgbox, "Restart");
-        lv_obj_t *no = lv_msgbox_add_footer_button(s_msgbox, "Cancel");
-        lv_obj_add_event_cb(yes, on_rotation_answer, LV_EVENT_CLICKED, (void *)(intptr_t) true);
-        lv_obj_add_event_cb(no, on_rotation_answer, LV_EVENT_CLICKED, (void *)(intptr_t) false);
+        s_msgbox = dialog("Change orientation", "Overhead restarts to turn the screen.", "Restart", "Cancel",
+                          on_rotation_answer);
         return;
     }
     show_dependent();

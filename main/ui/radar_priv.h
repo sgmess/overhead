@@ -150,9 +150,9 @@
 #error "Unknown OVERHEAD_BOARD"
 #endif
 
-#define SWEEP_SEGS 8
-#define SWEEP_PERIOD_MS 4000
-#define SWEEP_TICK_MS 33
+#define SWEEP_SEGS 4
+#define SWEEP_PERIOD_MS 8000 // a turn
+#define SWEEP_TICK_MS 50     // a step: 2.25 degrees, finer than 4 s at 33 ms, for less drawing
 #define MAX_EXTRAPOLATE_S 60
 #define DROP_STALE_S 90
 #define TRAIL_MAX_AC 50  // the nearest; each trail is up to TRAIL_PTS lines a frame
