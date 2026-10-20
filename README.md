@@ -132,6 +132,16 @@ idf.py build flash monitor
 idf.py -B build_tab5 -D OVERHEAD_BOARD=tab5 build flash monitor
 ```
 
+The logic that is easiest to get wrong in a rare case (AeroDataBox's
+credits and flight cache, feed numbers, trails across boot and the 180th
+meridian) also has host tests: built for the PC with stand-ins for ESP-IDF
+and the address and undefined-behaviour sanitizers on. They need only gcc,
+and CI runs them before a release:
+
+```bash
+tests/host/run.sh
+```
+
 ## Releases, web flasher and updates
 
 `.github/workflows/firmware.yml` builds the firmware on every push to main.
@@ -541,6 +551,7 @@ so a file can move between folders without its users changing.
 | `display_watch.c` | Restarts the device if the display stays frozen |
 | `main/third_party/` | stb_image, the JPEG decoder for the photos |
 | `tools/` | `make_flags.py` and `make_logos.py`, which build `main/ui/flags.bin` and `main/ui/logos.bin`; `bench.sh`, which times the display |
+| `tests/host/` | Host tests of the firmware's logic, with stand-ins for ESP-IDF (`run.sh`) |
 | `docs/PERFORMANCE.md` | The benchmarks run, their results, and what was decided |
 | `web/flash/`, `.github/workflows/` | Web flasher page and the build, release and Pages workflow |
 | `boards/<board>/board/` | Per-board bring-up: display start, WiFi power, LVGL lock; the BSP is its dependency |

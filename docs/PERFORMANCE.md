@@ -224,8 +224,29 @@ Tried on adapter 0.6.4, landscape, scrolling the settings:
   PPA's rotation, a second thread adds contention more than parallelism.
 - **Portrait gains more:** 20.7 fps with two threads, 25.6 with one
   (measured a day apart, but `settings` doesn't depend on traffic).
-- Set in `sdkconfig.defaults.tab5`. **The 3.4C wasn't measured** and keeps
-  two.
+- Set in `sdkconfig.defaults.tab5`.
+
+#### The 3.4C (20 Oct 2026): two kept
+
+Debug builds of the same code differing only in
+`CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT`, flashed in turn (two, one, two, one),
+each settled 90 s, then `tools/bench.sh` with three runs of each mode:
+
+| Threads | `settings` | `scope` | `radar` | Internal RAM free |
+| --- | --- | --- | --- | --- |
+| 2 | 43–46 fps, 21 ms (worst 23–34 ms) | **18–21 fps, 46–56 ms** | 1.8–2.4 fps, 25–37 ms, 5–7% busy | 145, 152 KB |
+| 1 | **50–51 fps, 18 ms** (worst 21–27 ms) | 15–17 fps, 58–66 ms | 1.8–2.4 fps, 30–42 ms, 7% busy | 159, 147 KB |
+
+- **Scrolling** is 12% faster with one thread, as on the Tab5 (24% there),
+  but it is already well over 40 fps with two.
+- **A full scope redraw** is 15–25% slower with one (8% on the Tab5): the
+  3.4C's scope is the whole 800x800 screen, so a second thread has more to
+  share. In normal running (`radar`) there is no difference.
+- **Internal RAM** moved with other allocations by more than the 8 KB stack
+  in both directions between rounds, so it doesn't decide anything here.
+- **Kept two:** nothing a user sees gets better with one, and the full
+  redraw (ranges, panning, the first frame) gets slower. The Tab5 differs:
+  its scrolling was the slow case, at 17 fps.
 
 ### LVGL's PPA renderer (18 Oct 2026): rejected
 

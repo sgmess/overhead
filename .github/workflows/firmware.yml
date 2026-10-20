@@ -113,9 +113,20 @@ jobs:
           target: esp32p4
           command: idf.py -B build_${{ matrix.board }}_debug -D OVERHEAD_BOARD=${{ matrix.board }} -D OVERHEAD_DEBUG=1 build
 
+  # The logic that is easiest to get wrong in a rare case (credits, the
+  # flight cache, feed numbers, trails) built for the PC with sanitizers on;
+  # see tests/host/run.sh. A failure stops a release.
+  host-tests:
+    name: Host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run
+        run: tests/host/run.sh
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, host-tests]
     runs-on: ubuntu-latest
     permissions:
       contents: write

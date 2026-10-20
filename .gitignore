@@ -9,3 +9,4 @@ sdkconfig.p4_34c.debug
 build_*_debug/
 sdkconfig*.old
 __pycache__/
+tests/host/build/
