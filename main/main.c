@@ -69,7 +69,9 @@ static void on_settings_changed(const settings_t *old, const settings_t *now)
     }
     if (now->feed != old->feed) feed_reset();
     // A new centre, feed or interval: fetch now rather than at the old pace
-    if (moved || now->feed != old->feed || now->fetch_s != old->fetch_s) xTaskNotifyGive(s_fetch_task);
+    if (s_fetch_task && (moved || now->feed != old->feed || now->fetch_s != old->fetch_s)) {
+        xTaskNotifyGive(s_fetch_task);
+    }
 }
 
 // Until connected: say what we're joining, and how to reach the setup
@@ -95,8 +97,6 @@ static void wait_for_network(void)
             setup = now;
         }
     } while (!net_wait_connected(1000));
-    // On the network, so a just-installed update works well enough to keep
-    ota_mark_valid();
 
     char ip[16] = "";
     net_get_ip(ip, sizeof(ip));
@@ -116,9 +116,17 @@ static void fetch_task(void *arg)
     bool located = false;
     int64_t locate_us = 0;
 
+    bool confirmed = false;
     for (;;) {
         if (!net_is_connected()) {
             wait_for_network();
+        }
+        // On the network, so a just-installed update works well enough to
+        // keep. Here, not in wait_for_network(): WiFi can be up before this
+        // task first looks, and then that is never called.
+        if (!confirmed) {
+            ota_mark_valid();
+            confirmed = true;
         }
         // An update needs the link and the internal RAM to itself
         if (ota_installing()) {
@@ -223,7 +231,10 @@ void app_main(void)
     details_start();
     ota_start_auto_check();
     // TLS and JSON parsing buffers are in PSRAM; this is just call depth.
-    xTaskCreate(fetch_task, "fetch", FETCH_STACK, NULL, 5, &s_fetch_task);
+    if (xTaskCreate(fetch_task, "fetch", FETCH_STACK, NULL, 5, &s_fetch_task) != pdPASS) {
+        s_fetch_task = NULL;
+        ESP_LOGE(TAG, "no fetch task: out of internal RAM, so no traffic");
+    }
     // Last: a change can wake any of the above
     settings_start(on_settings_changed);
 }

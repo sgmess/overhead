@@ -1,5 +1,6 @@
 #include "settings_ui.h"
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -58,7 +59,7 @@
 #define C_WARN 0xffb020
 
 #define IDLE_CLOSE_MS 60000 // nobody touching it: back to the radar
-#define BIND_MAX 48
+#define BIND_MAX 64 // 43 in use
 
 typedef enum {
     B_BOOL,
@@ -78,6 +79,7 @@ typedef struct {
     int extra; // a value not in values[], offered as the last option; -1 none
     int bit;
     bool preview; // a brightness: show it on the backlight while dragging
+    bool touched; // changed on this screen, even if back to where it started
     lv_obj_t *value_label;
     lv_obj_t *name, *slider, *row; // a slider's
 } bind_t;
@@ -86,7 +88,6 @@ typedef struct {
 // internal RAM is what the Tab5 is short of at boot (see radar_ui_create())
 typedef struct {
     settings_t edit; // the screen's working copy
-    settings_t base; // the settings when the screen opened, to tell what it changed
     bind_t bind[BIND_MAX];
     int n_bind;
     int half_hours[48];
@@ -128,18 +129,19 @@ static void commit(void)
     const bool crossed = s_ui->edit.filter_min_ft >= s_ui->edit.filter_max_ft;
     if (s_filter_warn) lv_obj_set_hidden(s_filter_warn, !crossed);
     if (crossed) return;
-    // Everything changed here since the screen opened, over the running
-    // settings: the web page may have changed others meanwhile. Everything,
+    // Every setting touched here since the screen opened, over the running
+    // settings: the web page may have changed others meanwhile. Every one,
     // not just this change: an earlier one may still be waiting to be
-    // applied, and this one replaces it in the queue.
+    // applied, and this one replaces it in the queue. Touched, not changed:
+    // turned off and on again, a switch is back where it started but not
+    // where the running settings are.
     settings_t next = *settings();
     for (int i = 0; i < s_ui->n_bind; i++) {
         const bind_t *b = &s_ui->bind[i];
+        if (!b->touched) continue;
         const size_t at = (const char *)b->field - (const char *)&s_ui->edit;
         const size_t n = b->kind == B_BOOL ? sizeof(bool) : b->kind == B_TZ ? sizeof(next.tz) : sizeof(int);
-        if (memcmp((const char *)&s_ui->edit + at, (const char *)&s_ui->base + at, n) != 0) {
-            memcpy((char *)&next + at, (const char *)&s_ui->edit + at, n);
-        }
+        memcpy((char *)&next + at, (const char *)&s_ui->edit + at, n);
     }
     settings_change(&next, false);
 }
@@ -395,6 +397,7 @@ static void on_switch(lv_event_t *e)
 {
     bind_t *b = lv_event_get_user_data(e);
     *(bool *)b->field = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    b->touched = true;
     show_dependent();
     commit();
 }
@@ -415,6 +418,7 @@ static void on_bit(lv_event_t *e)
         return;
     }
     *field = bits;
+    b->touched = true;
     commit();
 }
 
@@ -432,10 +436,12 @@ static void on_slider(lv_event_t *e)
         bind_t *level = night ? s_night : s_day;
         const int kept = night ? v : (v < 5 ? 5 : v); // the day level's floor
         *(int *)level->field = kept;
+        level->touched = true;
         show_slider(level, kept);
         s_quick_night = night;
     } else {
         *(int *)b->field = v; // released: keep it
+        b->touched = true;
         // The quick slider shows this one while it is the level in use
         if (backlight_night() == (b == s_night)) show_slider(s_quick, v);
     }
@@ -462,11 +468,27 @@ static void on_choice(lv_event_t *e)
     if (b->kind == B_TZ) {
         if (i >= ZONE_COUNT) return; // the custom rule, unchanged
         strlcpy(s_ui->edit.tz, ZONES[i].posix, sizeof(s_ui->edit.tz));
+        b->touched = true;
         commit();
         return;
     }
     const int v = i < b->n_values ? b->values[i] : b->extra;
+    if (b->kind == B_ROTATION && s_ui->edit.filter_min_ft >= s_ui->edit.filter_max_ft) {
+        // Nothing can be saved while the altitude limits cross, so a restart
+        // wouldn't turn the screen: put the choice back, and scroll to the
+        // warning, which is further down with the limits, to say why
+        lv_obj_t *dd = lv_event_get_target(e);
+        lv_dropdown_set_selected(dd, s_ui->edit.rotation == 90 ? 1 : s_ui->edit.rotation == 270 ? 2 : 0);
+        lv_obj_invalidate(dd);
+        if (s_filter_warn) {
+            lv_obj_set_hidden(s_filter_warn, false);
+            lv_obj_update_layout(s_root);
+            lv_obj_scroll_to_view_recursive(s_filter_warn, LV_ANIM_ON);
+        }
+        return;
+    }
     *(int *)b->field = v;
+    b->touched = true;
     if (b->kind == B_ROTATION) {
         s_msgbox = dialog("Change orientation", "Overhead restarts to turn the screen.", "Restart", "Cancel",
                           on_rotation_answer);
@@ -480,6 +502,7 @@ static void on_choice(lv_event_t *e)
 
 static bind_t *new_bind(bind_kind_t kind, void *field)
 {
+    assert(s_ui->n_bind < BIND_MAX); // more settings on the screen: raise BIND_MAX
     bind_t *b = &s_ui->bind[s_ui->n_bind < BIND_MAX ? s_ui->n_bind++ : BIND_MAX - 1];
     *b = (bind_t){.kind = kind, .field = field, .extra = -1};
     return b;
@@ -868,7 +891,7 @@ void settings_ui_open(void)
     if (s_root) return;
     s_ui = heap_caps_calloc(1, sizeof(*s_ui), MALLOC_CAP_SPIRAM);
     if (!s_ui) return;
-    s_ui->edit = s_ui->base = *settings();
+    s_ui->edit = *settings();
 
     const int w = lv_display_get_horizontal_resolution(NULL), h = lv_display_get_vertical_resolution(NULL);
     s_root = lv_obj_create(lv_screen_active());

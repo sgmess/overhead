@@ -56,7 +56,7 @@ point on a radar scope.
 - UTC or local clock (or both), a sweep turning every 8 s, compass rose,
   range rings.
   On the Tab5 the clock, range, traffic count and battery sit in the corners
-  around the scope; the round panels have no corners, so they keep them along
+  around the scope; the round 3.4C has no corners, so it keeps them along
   the top and bottom of the scope.
 - Battery level, charging state and time left on the Tab5, with charging
   enabled and a clean power-off before the pack runs flat.
@@ -81,9 +81,9 @@ gives way at once to the WiFi setup portal.
 | Swipe up or down on the scope | Up or down a range: 5, 10, 25, 50, 100 NM |
 | A list row (Tab5) | Selects that aircraft (in the big view too, with the big view up); tap it again to clear |
 | Long press on the scope | Opens the settings screen |
-| Swipe left or right | The next view, or the one before: scope, big view, and on the round boards a list |
+| Swipe left or right | The next view, or the one before: scope, big view, and on the round 3.4C a list |
 | The big view | Selects the next nearest aircraft, back round to the nearest |
-| A row of the round boards' list | Selects that aircraft and opens it in the big view |
+| A row of the 3.4C's list | Selects that aircraft and opens it in the big view |
 
 The big view shows one aircraft in large type, for across the room: flag and
 logo, callsign, flight number and airline, altitude in its scope colour with
@@ -101,13 +101,15 @@ nearer, so a near tie doesn't flicker. On the Tab5 it fills
 the scope's square and the list stays beside it. Its route is looked up as
 the card's is, once per callsign.
 
-The round boards have no room for the Tab5's list beside the scope, so
-they get it as a third view: the nearest 10 in the middle of
+The round 3.4C has no room for the Tab5's list beside the scope, so
+it gets it as a third view: the nearest 10 in the middle of
 the circle, with the same columns, colours and count.
 
 ## Build and flash
 
-Needs ESP-IDF 6.1. Each board has its own build directory, `sdkconfig.<board>`
+Needs ESP-IDF 6.1.0 exactly for the Tab5: it builds a patched copy of IDF's
+PPA driver, which stops the build on any other version until it is checked
+against it (`boards/tab5/esp_driver_ppa/README.md`). Each board has its own build directory, `sdkconfig.<board>`
 and `dependencies.lock.<board>`, so building one never changes the other's
 settings or component versions. `managed_components/` is shared, though, so
 the first build after switching boards re-fetches the components it needs.
@@ -245,8 +247,8 @@ radar keeps the display busy about 12–15% of the time with the sweep off
 and about 25–29% with it on (a turn every 8 s, drawn in four segments);
 with the settings screen open, next to none.
 
-`/api/debug/bench?what=` (debug builds, with `CONFIG_LV_USE_SNAPSHOT` in a
-local sdkconfig) times the display for five seconds: `settings` scrolls the
+`/api/debug/bench?what=` (debug builds: `idf.py -B build_tab5_debug -D
+OVERHEAD_BOARD=tab5 -D OVERHEAD_DEBUG=1 build`, which CI builds too) times the display for five seconds: `settings` scrolls the
 settings screen, `scope` redraws the whole scope every frame, `radar` leaves
 it as it is, `big` the big view, and `covered` holds the settings screen
 still over it. It gives frames a second, the average and longest frame, the
@@ -390,9 +392,10 @@ LVGL's heap is in PSRAM too (`main/ui/lvgl_mem.c`, `LV_USE_CUSTOM_MALLOC`).
 With the C library's malloc, everything LVGL allocates of 1 KB or less went
 to internal RAM: the radar's objects took about 48 KB of it, and opening the
 settings screen another 36 KB in small pieces, after which esp_hosted
-couldn't get a 3.5 KB receive buffer and the network stopped (v0.2.5). Now
-about 120 KB of internal RAM stays free while running, with the settings
-screen open or not.
+couldn't get a 3.5 KB receive buffer and the network stopped (v0.2.5). Then
+about 120 KB of internal RAM stayed free while running, with the settings
+screen open or not; since the display adapter and one drawing thread
+(v1.0.2, v1.0.3), about 175 KB.
 
 **Code runs from PSRAM** (`SPIRAM_XIP_FROM_PSRAM`), as traffic-display found
 it must on the P4. Otherwise IDF disables the cache for every flash write and
@@ -477,7 +480,7 @@ so a file can move between folders without its users changing.
 | `radar_ui.c` | The radar screen's shared state, overlay (clock, status, alert banner), views and touch, and its API |
 | `radar_priv.h` | What the radar screen's parts share: per-board sizes, colours, state and functions |
 | `scope.c` | Aircraft projected onto the scope, airspace and airfields, trails, the drawing and the sweep |
-| `card.c`, `big_view.c`, `lists.c` | The card, the big view, and the Tab5's list and the round boards' list view |
+| `card.c`, `big_view.c`, `lists.c` | The card, the big view, and the Tab5's list and the 3.4C's list view |
 | `describe.c` | Text about an aircraft for all of those: route, airline, owner and age, altitude |
 | `settings_ui.c` | The on-device settings screen |
 | `splash.c` | The start-up screen |

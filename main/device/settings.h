@@ -66,8 +66,13 @@ typedef struct {
 // Read NVS over the defaults. Call after nvs_flash_init().
 void settings_load(void);
 
-// The settings this boot is running with.
+// The settings this boot is running with. Fine for reading a field or two;
+// to copy them whole, as a change starts from, use settings_copy().
 const settings_t *settings(void);
+
+// A copy of the running settings, taken under the display lock the settings
+// task swaps them under, so it can't be half the old and half the new.
+void settings_copy(settings_t *out);
 
 // The menuconfig defaults.
 void settings_defaults(settings_t *out);

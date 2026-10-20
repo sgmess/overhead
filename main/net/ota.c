@@ -101,6 +101,11 @@ static void check(void)
         .user_agent = USER_AGENT, // GitHub's API refuses requests without one
     };
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    if (!c) { // out of memory: IDF's calls below would dereference NULL
+        free(b.data);
+        fail("%s", "Out of memory");
+        return;
+    }
     esp_http_client_set_header(c, "Accept", "application/vnd.github+json");
     esp_err_t err = esp_http_client_perform(c);
     int status = esp_http_client_get_status_code(c);

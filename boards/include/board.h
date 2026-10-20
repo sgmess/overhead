@@ -5,8 +5,8 @@
 // Board bring-up. Each board has one implementation in boards/<board>/board/,
 // and CMakeLists.txt puts exactly one of them in the build.
 //
-// Each also defines one of OVERHEAD_BOARD_P4_34C, OVERHEAD_BOARD_S3_28C or
-// OVERHEAD_BOARD_TAB5 for code that lays out differently per board.
+// Each also defines OVERHEAD_BOARD_P4_34C or OVERHEAD_BOARD_TAB5 for code
+// that lays out differently per board.
 
 // What the board has, for the configuration page and the settings screen
 #if defined(OVERHEAD_BOARD_TAB5)
@@ -23,7 +23,7 @@
 
 // Panel, touch and the LVGL task, with the backlight on. rotation_deg is
 // clockwise from the panel's native orientation: 0, 90 or 270 on the Tab5;
-// the round boards ignore it.
+// the round 3.4C ignores it.
 void board_display_start(int rotation_deg);
 
 // Backlight, 0..100 percent. Safe from any task.
@@ -40,6 +40,7 @@ void board_wifi_power_on(void);
 void board_lock(void);
 void board_unlock(void);
 // The same, waiting at most timeout_ms: false, without it, if not had in time.
+// A negative timeout waits for ever, as board_lock() does.
 bool board_lock_timeout(int timeout_ms);
 
 // Battery, on boards with a monitor (only the Tab5 so far).

@@ -4,5 +4,8 @@ managed_components/
 # per machine; older ones may still hold a WiFi password
 sdkconfig.p4_34c
 sdkconfig.tab5
+sdkconfig.tab5.debug
+sdkconfig.p4_34c.debug
+build_*_debug/
 sdkconfig*.old
 __pycache__/

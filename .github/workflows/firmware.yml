@@ -52,6 +52,12 @@ jobs:
             idf.py -B build_${{ matrix.board }} merge-bin -o overhead-${{ matrix.board }}-full.bin &&
             python -m esp_idf_size --format json2 build_${{ matrix.board }}/overhead-${{ matrix.board }}.map > size.json
 
+      # The build re-solves components when a manifest no longer matches its
+      # lock, quietly picking whatever versions now fit: fail instead, so the
+      # lock is updated and committed on purpose
+      - name: Check the dependency lock is unchanged
+        run: git diff --exit-code dependencies.lock.${{ matrix.board }}
+
       # On the Tab5, esp_hosted's start-up allocations take most of the
       # internal RAM that static data leaves, before the scheduler starts.
       # With its 20-deep SDIO queues, v0.1.1 (122,222 bytes of static D/IRAM)
@@ -85,6 +91,27 @@ jobs:
         with:
           name: firmware-${{ matrix.board }}
           path: out/
+
+  # The debug endpoints and benchmarks are only compiled with
+  # OVERHEAD_DEBUG, which no release build sets: build them here too, so a
+  # change elsewhere can't break them unnoticed
+  debug:
+    name: Build ${{ matrix.board }} debug
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [tab5, p4_34c]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Build
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.1
+          target: esp32p4
+          command: idf.py -B build_${{ matrix.board }}_debug -D OVERHEAD_BOARD=${{ matrix.board }} -D OVERHEAD_DEBUG=1 build
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

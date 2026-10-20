@@ -251,8 +251,23 @@ static void load(const struct tm *tm)
 #endif
 }
 
+// One save at a time, held across the flash write too: a restart that came
+// mid-write would otherwise find nothing left unsaved (save() clears s_dirty
+// as it packs), skip its own save, and cut that write off
+static SemaphoreHandle_t s_save_lock;
+
+static void save_unlocked(void);
+
 // Write the counts to the next slot
 static void save(void)
+{
+    if (!s_save_lock) return;
+    xSemaphoreTake(s_save_lock, portMAX_DELAY);
+    save_unlocked();
+    xSemaphoreGive(s_save_lock);
+}
+
+static void save_unlocked(void)
 {
 #if CONFIG_SPIRAM_XIP_FROM_PSRAM
     const esp_partition_t *p = part();
@@ -305,13 +320,17 @@ static void save(void)
 // As the device restarts: an update, or a settings change that needs one
 static void save_at_restart(void)
 {
-    if (s_dirty) save();
+    // A save in progress takes well under a second; then save what it missed
+    if (!s_save_lock || xSemaphoreTake(s_save_lock, pdMS_TO_TICKS(2000)) != pdTRUE) return;
+    if (s_dirty) save_unlocked();
+    xSemaphoreGive(s_save_lock);
 }
 
 void stats_update(const aircraft_t *list, int n, double lat, double lon, int range_nm)
 {
     if (!s_lock) {
         s_lock = xSemaphoreCreateMutex();
+        s_save_lock = xSemaphoreCreateMutex();
         s_table = heap_caps_calloc(TABLE_N, sizeof(seen_t), MALLOC_CAP_SPIRAM);
         s_packed = heap_caps_malloc(TABLE_FULL * sizeof(uint32_t), MALLOC_CAP_SPIRAM);
         esp_register_shutdown_handler(save_at_restart);

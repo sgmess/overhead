@@ -557,9 +557,11 @@ static void cache_save(const settings_t *s, const aero_map_t *map)
     // The header last: cut off part way, the cache is just missing
     const size_t erase = (total + 4095) & ~(size_t)4095;
     esp_err_t err = esp_partition_erase_range(p, 0, erase);
-    if (err == ESP_OK) err = esp_partition_write(p, CACHE_DATA, map->spaces, sz_s);
-    if (err == ESP_OK) err = esp_partition_write(p, CACHE_DATA + sz_s, map->pts, sz_p);
-    if (err == ESP_OK) err = esp_partition_write(p, CACHE_DATA + sz_s + sz_p, map->fields, sz_f);
+    // A layer with nothing in range has no buffer at all, and IDF refuses a
+    // NULL one even for 0 bytes: then the whole cache went unsaved
+    if (err == ESP_OK && sz_s) err = esp_partition_write(p, CACHE_DATA, map->spaces, sz_s);
+    if (err == ESP_OK && sz_p) err = esp_partition_write(p, CACHE_DATA + sz_s, map->pts, sz_p);
+    if (err == ESP_OK && sz_f) err = esp_partition_write(p, CACHE_DATA + sz_s + sz_p, map->fields, sz_f);
     if (err == ESP_OK) err = esp_partition_write(p, 0, &h, sizeof(h));
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "map kept for the next boot (%u bytes)", (unsigned)total);

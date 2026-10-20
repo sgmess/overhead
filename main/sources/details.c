@@ -306,6 +306,13 @@ static bool wanted(state_t *st)
 static void want(const char *hex, const char *reg, bool owner, bool photo)
 {
     if (strcmp(s_want, hex) != 0) {
+        // One waiting at a time: the one this replaces was never asked for,
+        // so let it ask again at once rather than after RETRY_US
+        entry_t *gone = s_want[0] ? find(s_want) : NULL;
+        if (gone) {
+            if (s_want_owner && !gone->owner_state.done) gone->owner_state.failed_us = 0;
+            if (s_want_photo && !gone->photo_state.done) gone->photo_state.failed_us = 0;
+        }
         strlcpy(s_want, hex, sizeof(s_want));
         s_want_reg[0] = '\0';
         s_want_owner = s_want_photo = false;

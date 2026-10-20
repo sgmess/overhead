@@ -67,9 +67,13 @@ static void chime_task(void *arg)
     size_t bytes = 0;
     int16_t *pcm = make_chime(&bytes);
     if (!spk || !pcm) {
+        // Once is enough: free what was made and stay, so board_chime()
+        // neither starts this again for every alert nor notifies a task
+        // that has gone. A suspended task takes its notifications quietly.
         ESP_LOGE(TAG, "speaker not available, no chimes");
-        s_chime_task = NULL;
-        vTaskDelete(NULL);
+        if (spk) esp_codec_dev_delete(spk);
+        free(pcm);
+        vTaskSuspend(NULL);
     }
     esp_codec_dev_sample_info_t fs = {
         .sample_rate = CHIME_RATE,

@@ -123,7 +123,8 @@ bool geoloc_locate(void)
     if (!found) return false;
 
     // Chosen on the page while the request was out: that wins
-    settings_t s = *settings();
+    settings_t s;
+    settings_copy(&s);
     if (s.centre_set) return true;
     s.lat = p.lat;
     s.lon = p.lon;

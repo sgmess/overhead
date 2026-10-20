@@ -235,6 +235,10 @@ bool route_get(const char *callsign, double lat, double lon, route_t *out)
         *out = e->route;
     } else if ((!e || !e->failed_us || esp_timer_get_time() - e->failed_us > RETRY_US) &&
                strcmp(s_want, callsign) != 0) {
+        // One waiting at a time: the one this replaces was never asked for,
+        // so let it ask again at once rather than after RETRY_US
+        entry_t *gone = s_want[0] ? find(s_want) : NULL;
+        if (gone && !gone->done) gone->failed_us = 0;
         strlcpy(s_want, callsign, sizeof(s_want));
         s_want_lat = lat;
         s_want_lon = lon;

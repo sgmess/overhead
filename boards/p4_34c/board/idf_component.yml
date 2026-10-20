@@ -1,5 +1,5 @@
 dependencies:
-  idf: ">=5.5"
+  idf: ">=6.1"
   waveshare/esp32_p4_wifi6_touch_lcd_xc:
     version: "3.0.1"
     public: true

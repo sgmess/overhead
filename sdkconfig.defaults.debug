@@ -1,0 +1,4 @@
+# Debug builds only (-D OVERHEAD_DEBUG=1, see CMakeLists.txt): LVGL's
+# snapshot, and with it /api/debug/screen, /api/debug/settings,
+# /api/debug/select and /api/debug/bench (docs/PERFORMANCE.md).
+CONFIG_LV_USE_SNAPSHOT=y

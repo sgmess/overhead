@@ -5,7 +5,7 @@
 #include "sdkconfig.h"
 
 #if CONFIG_LV_USE_SNAPSHOT
-// For development, with LVGL's snapshot on in a local sdkconfig: what the
+// For development, in a debug build (-D OVERHEAD_DEBUG=1): what the
 // display did between start and stop. With the display lock held.
 typedef struct {
     int frames;

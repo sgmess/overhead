@@ -597,8 +597,10 @@ function preview(id) {
 function fillFields(j) {
   const s = j.settings;
   $('openaip_countries').value = s.openaip_countries;
-  $('lat').value = s.lat.toFixed(4);
-  $('lon').value = s.lon.toFixed(4);
+  // As stored: rounded, the next save would move the centre a few metres
+  // and fetch the airspace and traffic again
+  $('lat').value = s.lat.toFixed(6);
+  $('lon').value = s.lon.toFixed(6);
   for (const f of FIELDS) setSelect($(f), s[f]);
   for (const c of CHECKS) $(c).checked = s[c];
   for (const id of SLIDERS) { $(id).value = s[id]; showSlider(id); }

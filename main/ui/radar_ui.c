@@ -306,6 +306,7 @@ static void refresh(void)
     // Hidden, the rest is only drawing nobody sees. Closing the settings or
     // waking redraws the whole screen, from the next tick at the latest.
     if (radar_hidden()) return;
+    update_clock(); // here, so waking or closing the settings shows the time at once
 #ifdef HAS_LIST
     if (s_batt_pending) {
         apply_battery(&s_batt);
@@ -493,7 +494,6 @@ static void on_shield_pressed(lv_event_t *e)
 
 static void on_tick(lv_timer_t *t)
 {
-    if (!radar_hidden()) update_clock();
     if (s_count && esp_timer_get_time() - s_last_update_us > DROP_STALE_S * 1000000LL) {
         s_count = 0; // don't keep extrapolating ghosts forever
     }
@@ -682,10 +682,12 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     lv_obj_add_event_cb(s_scope, on_scope_long_press, LV_EVENT_LONG_PRESSED, NULL);
     lv_obj_add_event_cb(s_scope, on_press, LV_EVENT_PRESSED, NULL);
 
-    // Made whether it is on or not, so turning it on later keeps it under
-    // the card and the panel
+    // Made whether it is on or not, as the scope's first children, so it
+    // stays under everything else on the scope: the clock and range, the
+    // alert banner, the round boards' card and the WiFi setup QR code. The
+    // scope is at 0,0 and unpadded, so screen and scope positions agree.
     for (int i = 0; i < SWEEP_SEGS; i++) {
-        s_sweep[i] = lv_line_create(scr);
+        s_sweep[i] = lv_line_create(s_scope);
         lv_obj_set_style_line_color(s_sweep[i], lv_color_hex(C_SWEEP), 0);
         lv_obj_set_style_line_width(s_sweep[i], 3, 0);
         // Brighter towards the rim, like a phosphor trace

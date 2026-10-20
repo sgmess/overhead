@@ -1,5 +1,5 @@
 dependencies:
-  idf: ">=5.5"
+  idf: ">=6.1"
   # Detects all three panel revisions at boot: ILI9881C + GT911,
   # ST7123 (Oct 2025) and ST7121 (Apr 2026). The variant without the BSP's
   # own LVGL layer (esp_lvgl_port): the display goes through the adapter.

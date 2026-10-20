@@ -1,6 +1,6 @@
 #!/bin/bash
-# Time the display of a device running a debug build (CONFIG_LV_USE_SNAPSHOT=y
-# in its local sdkconfig), through /api/debug/bench. See docs/PERFORMANCE.md.
+# Time the display of a device running a debug build (-D OVERHEAD_DEBUG=1, see
+# CMakeLists.txt), through /api/debug/bench. See docs/PERFORMANCE.md.
 #
 #   tools/bench.sh [host] [runs]          every mode, 3 runs each
 #   MODES="settings scope" tools/bench.sh  just those
@@ -16,7 +16,7 @@ d = json.load(sys.stdin); s = d['settings']
 print('firmware', d['firmware'], '| up', d['uptime_s'], 's | rotation', s['rotation'], '| sweep', s['sweep'], '| trails', s['trail_s'])"
 for what in ${MODES:-settings scope radar big covered}; do
     for r in $(seq 1 "$RUNS"); do
-        curl -s -m 30 -X POST "http://$H/api/debug/bench?what=$what&ms=5000" | python3 -c "
+        curl -s -m 30 -X POST -H "Content-Type: application/json" "http://$H/api/debug/bench?what=$what&ms=5000" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)

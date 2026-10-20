@@ -43,6 +43,7 @@ enum { // errors
     ERROR_INVALID_RPC = 0x01,
     ERROR_UNKNOWN_RPC = 0x02,
     ERROR_UNABLE_TO_CONNECT = 0x03,
+    ERROR_UNKNOWN = 0xFF,
 };
 
 enum { // RPC commands
@@ -156,7 +157,13 @@ static void on_wifi_settings(const uint8_t *d, size_t len)
     // Kept from now on, and the running settings too: saved behind their
     // back, the next change from the page or the screen would store the old,
     // empty network over it
-    if (settings_change_network(ssid, password) != ESP_OK) ESP_LOGE(TAG, "network joined but not saved");
+    if (settings_change_network(ssid, password) != ESP_OK) {
+        // Joined, but gone at the next restart: not a success to report
+        ESP_LOGE(TAG, "network joined but not saved");
+        send_byte(TYPE_ERROR, ERROR_UNKNOWN);
+        send_byte(TYPE_STATE, STATE_READY);
+        return;
+    }
     send_provisioned(RPC_WIFI_SETTINGS);
 }
 

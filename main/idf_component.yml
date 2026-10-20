@@ -3,7 +3,9 @@ dependencies:
   # IDF 6 dropped its built-in json component; same cJSON, from the registry
   espressif/cjson: "^1.7"
   lvgl/lvgl:
-    version: "^9.*"
+    # 9.6: the custom allocator, the adapter's headers and the -Wno-error=cpp
+    # workaround are all tied to it, so a new minor is a deliberate change
+    version: "~9.6.0"
     public: true
   espressif/mdns: "^1.8"
   # Board support and WiFi bridges come from the board component in

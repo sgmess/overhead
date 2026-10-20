@@ -196,7 +196,7 @@ void update_big(void)
     set_text_if_changed(s_big_where, text);
     set_text_color_if_changed(s_big_where, lv_color_hex(a->emergency ? C_EMERG : C_TEXT));
 
-    char route[48], places[ROUTE_PLACES_MAX + 16];
+    char route[64], places[ROUTE_PLACES_MAX + 16]; // 64: a multi-stop route, as the card allows
     fmt_route(a, route, sizeof(route), places, sizeof(places));
     set_text_if_changed(s_big_route, route);
     lv_obj_set_hidden(s_big_route, !route[0]);

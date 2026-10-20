@@ -7,9 +7,17 @@ before reversing a decision: a newer component can change the answer.
 
 ## How to measure
 
-Build with LVGL's snapshot on in the local `sdkconfig.<board>` only
-(`CONFIG_LV_USE_SNAPSHOT=y`, never in the defaults). That adds the
-`/api/debug/*` endpoints, among them `/api/debug/bench`. Then run:
+Make a debug build, in a build directory of its own:
+
+```bash
+idf.py -B build_tab5_debug -D OVERHEAD_BOARD=tab5 -D OVERHEAD_DEBUG=1 build
+```
+
+That layers `sdkconfig.defaults.debug` (LVGL's snapshot) on top, in its own
+`sdkconfig.tab5.debug`, and adds the `/api/debug/*` endpoints, among them
+`/api/debug/bench`. (Before 20 Oct 2026 it meant setting
+`CONFIG_LV_USE_SNAPSHOT=y` by hand in the local sdkconfig.) Every POST needs
+`Content-Type: application/json`. Then run:
 
 ```bash
 tools/bench.sh 192.168.1.226
@@ -85,13 +93,13 @@ optimising either.
 
 ## Current figures (19 Oct 2026, v1.0.3 + changes)
 
-Since then the sweep takes the radar from 12–15% to 25–29% busy, not 55%:
-4 segments, a turn in 8 s (see "The sweep" below).
-
 Tab5, landscape (rotation 90), trails 120 s, about 80 aircraft. Sweep off
-and on, back to back:
+and on, back to back. **The "Sweep on" column is v1.0.4's sweep** (8
+segments, a turn in 4 s, a step every 33 ms). Since v1.0.5 (4 segments, a
+turn in 8 s, a step every 50 ms) the `radar` row with the sweep on is about
+25–29% busy; see "The sweep" below.
 
-| Mode | Sweep off | Sweep on |
+| Mode | Sweep off | Sweep on (v1.0.4's sweep) |
 | --- | --- | --- |
 | `settings` | 20.7 fps, 47 ms, busy 96% (flush 44%) | the same: no sweep while covered |
 | `scope` | 13–14 fps, 73 ms, busy 97% (flush 15%) | 9 fps, 108 ms, busy 98% (flush 10%) |
@@ -272,11 +280,13 @@ With sweep off, the radar's remaining cost is one full scope redraw a second
 ### The sweep (19 Oct 2026): the largest remaining cost
 
 The sweep is on by default (`settings_defaults()`), so a new device runs it.
-It moves eight short line segments every 33 ms (`SWEEP_TICK_MS`); eight
-keep each one's redraw area small, where one long diagonal line would ask
-for up to a quarter of the scope.
+It is short line segments (`SWEEP_SEGS`), moved every `SWEEP_TICK_MS`:
+segments keep each one's redraw area small, where one long diagonal line
+would ask for up to a quarter of the scope. **Now 4 segments, a step every
+50 ms and a turn in 8 s** (v1.0.5; see "Slower sweep" below); this section
+first measured v1.0.4's 8 segments every 33 ms and a turn in 4 s.
 
-- **Cost:** the radar goes from 12–15% busy to 55%, at about 51 frames a
+- **Cost (v1.0.4's sweep):** the radar goes from 12–15% busy to 55%, at about 51 frames a
   second of about 11 ms each. The full scope redraw also slows, from 73 to
   108 ms, with the segments in every frame.
 - **Already free:** it stops while the radar is hidden (settings screen or

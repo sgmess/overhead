@@ -28,6 +28,7 @@ static const char *TAG = "net";
 
 #define BIT_CONNECTED BIT0
 #define BIT_TRY_FAILED BIT1
+#define BIT_TRY_OK BIT2 // the network net_try_network() asked for answered, not the old one
 #define TRY_ATTEMPTS 3
 
 // While the portal is open each retry of the saved network scans every
@@ -183,6 +184,7 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         ESP_LOGI(TAG, "got IP " IPSTR ", settings at http://" IPSTR " or http://" NET_HOSTNAME ".local",
                  IP2STR(&ev->ip_info.ip), IP2STR(&ev->ip_info.ip));
         s_ever_connected = true;
+        if (s_trying) xEventGroupSetBits(s_events, BIT_TRY_OK);
         s_trying = false;
         esp_timer_stop(s_setup_timer);
         close_setup();
@@ -280,6 +282,8 @@ void net_start(void)
 
 bool net_is_connected(void)
 {
+    // Improv asks from early in boot, before net_start() makes the group
+    if (!s_events) return false;
     return xEventGroupGetBits(s_events) & BIT_CONNECTED;
 }
 
@@ -294,11 +298,13 @@ bool net_try_network(const char *ssid, const char *password, int timeout_ms)
     net_creds_t c;
     strlcpy(c.ssid, ssid, sizeof(c.ssid));
     strlcpy(c.password, password, sizeof(c.password));
-    xEventGroupClearBits(s_events, BIT_CONNECTED | BIT_TRY_FAILED);
+    xEventGroupClearBits(s_events, BIT_TRY_OK | BIT_TRY_FAILED);
     esp_event_post(NET_EVENT, NET_EV_TRY, &c, sizeof(c), portMAX_DELAY);
-    EventBits_t bits = xEventGroupWaitBits(s_events, BIT_CONNECTED | BIT_TRY_FAILED, pdFALSE, pdFALSE,
+    // Not BIT_CONNECTED: the old network's address, already queued, would set
+    // that before this one had even been tried
+    EventBits_t bits = xEventGroupWaitBits(s_events, BIT_TRY_OK | BIT_TRY_FAILED, pdFALSE, pdFALSE,
                                            pdMS_TO_TICKS(timeout_ms));
-    if (bits & BIT_CONNECTED) return true;
+    if (bits & BIT_TRY_OK) return true;
     if (!(bits & BIT_TRY_FAILED)) esp_event_post(NET_EVENT, NET_EV_RESTORE, NULL, 0, portMAX_DELAY);
     return false;
 }

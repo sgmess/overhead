@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 
 #include "backlight.h"
@@ -100,6 +101,25 @@ static esp_err_t send_result(httpd_req_t *req, esp_err_t result, const char *err
     return send_json(req, json);
 }
 
+// Every POST has to say it is JSON. A page on another site can post a form
+// or text/plain to this device without asking, but not application/json: the
+// browser asks first (a CORS preflight), and this server never says yes. So a
+// site visited from the same network can't change the settings or forget the
+// WiFi. The real handler is the URI's user_ctx.
+static esp_err_t json_only(httpd_req_t *req)
+{
+    char type[64] = "";
+    httpd_req_get_hdr_value_str(req, "Content-Type", type, sizeof(type));
+    if (strncasecmp(type, "application/json", 16) != 0) {
+        httpd_resp_set_status(req, "415 Unsupported Media Type");
+        cJSON *json = cJSON_CreateObject();
+        cJSON_AddBoolToObject(json, "ok", false);
+        cJSON_AddStringToObject(json, "error", "Send Content-Type: application/json");
+        return send_json(req, json);
+    }
+    return ((esp_err_t (*)(httpd_req_t *))req->user_ctx)(req);
+}
+
 // The request body as JSON, or NULL
 static cJSON *read_json(httpd_req_t *req)
 {
@@ -140,9 +160,10 @@ static void take_double(const cJSON *json, const char *key, double *v)
 // the pages send it back unchanged with everything else
 static void take_centre(const cJSON *json, settings_t *s)
 {
+    const double lat = s->lat, lon = s->lon; // s starts as a copy of the running ones
     take_double(json, "lat", &s->lat);
     take_double(json, "lon", &s->lon);
-    if (s->lat != settings()->lat || s->lon != settings()->lon) s->centre_set = true;
+    if (s->lat != lat || s->lon != lon) s->centre_set = true;
 }
 
 static void take_bool(const cJSON *json, const char *key, bool *v)
@@ -276,7 +297,9 @@ static esp_err_t on_not_found(httpd_req_t *req, httpd_err_code_t code)
 
 static esp_err_t on_state(httpd_req_t *req)
 {
-    const settings_t *s = settings();
+    settings_t now;
+    settings_copy(&now);
+    const settings_t *s = &now;
     const esp_app_desc_t *app = esp_app_get_description();
     cJSON *json = cJSON_CreateObject();
 
@@ -413,7 +436,8 @@ static esp_err_t on_wifi(httpd_req_t *req)
         cJSON_Delete(json);
         return send_result(req, ESP_ERR_INVALID_ARG, "Network name of 1-32 characters, password of up to 64");
     }
-    settings_t s = *settings();
+    settings_t s;
+    settings_copy(&s);
     strlcpy(s.ssid, ssid->valuestring, sizeof(s.ssid));
     strlcpy(s.password, pass ? pass->valuestring : "", sizeof(s.password));
     take_centre(json, &s);
@@ -429,7 +453,8 @@ static esp_err_t on_settings(httpd_req_t *req)
 {
     cJSON *json = read_json(req);
     if (!json) return send_result(req, ESP_ERR_INVALID_ARG, "Expected JSON");
-    settings_t s = *settings();
+    settings_t s;
+    settings_copy(&s);
     take_centre(json, &s);
     take_int(json, "range_idx", &s.range_idx);
     take_int(json, "feed", &s.feed);
@@ -515,8 +540,8 @@ static esp_err_t on_settings(httpd_req_t *req)
 }
 
 #if CONFIG_LV_USE_SNAPSHOT
-// For development, with LVGL's snapshot turned on in a local sdkconfig (it is
-// off in the defaults, so releases have none of this): the screen as raw
+// For development, in a debug build (-D OVERHEAD_DEBUG=1, which turns LVGL's
+// snapshot on; releases have none of this): the screen as raw
 // RGB565, X-Size giving width, height and stride, and the settings screen or
 // an aircraft's card (?hex=4010ee) opened without a finger; &emerg=1 makes
 // that aircraft squawk 7700, &emerg=0 stops it, and &view=radar, big or
@@ -664,7 +689,9 @@ static esp_err_t on_brightness(httpd_req_t *req)
     take_int(json, "percent", &percent);
     cJSON_Delete(json);
     if (percent < 1 || percent > 100) return send_result(req, ESP_ERR_INVALID_ARG, "Percent from 1 to 100");
+    board_lock(); // the display task sets the level too, every second
     backlight_preview(percent);
+    board_unlock();
     return send_result(req, ESP_OK, NULL);
 }
 
@@ -698,7 +725,8 @@ static esp_err_t on_ota_install(httpd_req_t *req)
 
 static esp_err_t on_forget(httpd_req_t *req)
 {
-    settings_t s = *settings();
+    settings_t s;
+    settings_copy(&s);
     s.ssid[0] = s.password[0] = '\0';
     ESP_LOGW(TAG, "network forgotten");
     return send_result(req, commit(&s), NULL);
@@ -755,6 +783,13 @@ void web_start(void)
         {.uri = "/api/ota/check", .method = HTTP_POST, .handler = on_ota_check},
         {.uri = "/api/ota/install", .method = HTTP_POST, .handler = on_ota_install},
     };
-    for (size_t i = 0; i < sizeof(URIS) / sizeof(URIS[0]); i++) httpd_register_uri_handler(server, &URIS[i]);
+    for (size_t i = 0; i < sizeof(URIS) / sizeof(URIS[0]); i++) {
+        httpd_uri_t u = URIS[i];
+        if (u.method == HTTP_POST) {
+            u.user_ctx = (void *)u.handler;
+            u.handler = json_only;
+        }
+        httpd_register_uri_handler(server, &u);
+    }
     httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, on_not_found);
 }

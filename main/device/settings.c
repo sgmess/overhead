@@ -18,6 +18,7 @@ static const char *TAG = "settings";
 #define NS "overhead"
 
 static settings_t s_settings;
+static SemaphoreHandle_t s_store_lock; // see store(); made in settings_load(), before any writer
 
 // Before anything is saved: no network (so the setup portal opens) and the
 // radar centred on Heathrow until, once connected, the internet address says
@@ -149,6 +150,7 @@ static void get_deg(nvs_handle_t h, const char *key, double *v)
 
 void settings_load(void)
 {
+    s_store_lock = xSemaphoreCreateMutex();
     settings_t s;
     settings_defaults(&s);
 
@@ -217,7 +219,7 @@ const settings_t *settings(void)
     return &s_settings;
 }
 
-static esp_err_t store(const settings_t *s)
+static esp_err_t store_unlocked(const settings_t *s)
 {
     nvs_handle_t h;
     esp_err_t err = nvs_open(NS, NVS_READWRITE, &h);
@@ -271,22 +273,47 @@ static esp_err_t store(const settings_t *s)
     return err;
 }
 
+// One writer at a time: the settings task stores changes, and a new
+// network or a reset is written from the web server's restart timer, so
+// their keys could interleave and leave a mix in flash
+static esp_err_t store(const settings_t *s)
+{
+    xSemaphoreTake(s_store_lock, portMAX_DELAY);
+    const esp_err_t err = store_unlocked(s);
+    xSemaphoreGive(s_store_lock);
+    return err;
+}
+
+void settings_copy(settings_t *out)
+{
+    board_lock();
+    *out = s_settings;
+    board_unlock();
+}
+
 esp_err_t settings_save(const settings_t *s)
 {
     if (!settings_valid(s)) return ESP_ERR_INVALID_ARG;
     esp_err_t err = store(s);
-    if (err == ESP_OK) s_settings = *s;
+    if (err == ESP_OK) {
+        board_lock(); // the display task reads them all the time
+        s_settings = *s;
+        board_unlock();
+    }
     return err;
 }
 
 esp_err_t settings_erase(void)
 {
+    xSemaphoreTake(s_store_lock, portMAX_DELAY);
     nvs_handle_t h;
     esp_err_t err = nvs_open(NS, NVS_READWRITE, &h);
-    if (err != ESP_OK) return err;
-    err = nvs_erase_all(h);
-    if (err == ESP_OK) err = nvs_commit(h);
-    nvs_close(h);
+    if (err == ESP_OK) {
+        err = nvs_erase_all(h);
+        if (err == ESP_OK) err = nvs_commit(h);
+        nvs_close(h);
+    }
+    xSemaphoreGive(s_store_lock);
     return err;
 }
 
@@ -345,6 +372,13 @@ static void settings_task(void *arg)
     static settings_t old;
     for (;;) {
         xQueueReceive(queue, &c, portMAX_DELAY);
+        if (!c.keep_running) {
+            // Only settings_change_network() changes the network this way;
+            // anything else carries the one running when it was copied, which
+            // a network Improv has just joined may have replaced since
+            strlcpy(c.s.ssid, s_settings.ssid, sizeof(c.s.ssid));
+            strlcpy(c.s.password, s_settings.password, sizeof(c.s.password));
+        }
         const settings_t *next = &c.s;
         if (memcmp(next, &s_settings, sizeof(*next)) == 0) {
             done(c.seq, ESP_OK);
@@ -444,9 +478,7 @@ esp_err_t settings_change_network(const char *ssid, const char *password)
     for (int i = 0; !s_queue && i < 100; i++) vTaskDelay(pdMS_TO_TICKS(100));
     if (!s_queue) return ESP_ERR_INVALID_STATE;
     xSemaphoreTake(s_net_lock, portMAX_DELAY);
-    board_lock(); // the settings task swaps them under it
-    s = s_settings;
-    board_unlock();
+    settings_copy(&s);
     strlcpy(s.ssid, ssid, sizeof(s.ssid));
     strlcpy(s.password, password, sizeof(s.password));
     const esp_err_t err = change(&s, true, true);
