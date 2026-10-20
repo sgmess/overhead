@@ -614,7 +614,9 @@ static esp_err_t on_debug_adb(httpd_req_t *req)
     const esp_err_t err = adb_debug_timing(n, atoi(keep_s) != 0, out, 512);
     if (err != ESP_OK) {
         free(out);
-        return send_result(req, err, "No key, or no answer");
+        return send_result(req, err,
+                           err == ESP_ERR_TIMEOUT ? "Still running; ask again when it has finished"
+                                                  : "No key, or a run is still going");
     }
     httpd_resp_set_type(req, "application/json");
     const esp_err_t r = httpd_resp_sendstr(req, out);

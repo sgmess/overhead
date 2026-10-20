@@ -238,8 +238,10 @@ The configuration page sets the most to spend a day (100 credits unless
 changed) and shows what has been spent. The count is stored in flash (NVS,
 its own namespace), so restarts, power cuts and a reset to the defaults
 don't start the day again. Each request's cost is stored before it is
-sent, and given back if no answer comes; if it can't be stored, nothing is
-asked. One HTTPS connection serves a tap's requests, kept until 10 s pass
+sent; if it can't be stored, nothing is asked. It is given back only when
+the request can't have been charged: no connection could be made, or the
+answer refused it (401, 403, 429). An answer cut off part way, a timeout
+once sent or a server error may have been charged, so those stay counted. One HTTPS connection serves a tap's requests, kept until 10 s pass
 without one, which saves about 1.2 s on each after the first (see
 [docs/PERFORMANCE.md](docs/PERFORMANCE.md)). Nothing is looked up before the clock is set, a
 refused key isn't tried again until another is entered, and "too many

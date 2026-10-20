@@ -466,7 +466,6 @@ static result_t get(const settings_t *s, const char *path, int cost, cJSON **roo
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     result_t res = NO_ANSWER;
-    bool spent = false;
     if (err != ESP_OK) {
         s_state = "error";
         snprintf(s_detail, sizeof(s_detail), "No answer (%s)", esp_err_to_name(err));
@@ -479,7 +478,6 @@ static result_t get(const settings_t *s, const char *path, int cost, cJSON **roo
         strlcpy(s_detail, "AeroDataBox asked to slow down, or the credits ran out", sizeof(s_detail));
         s_limit_us = esp_timer_get_time();
     } else if (status == 200 || status == 204 || status == 404) {
-        spent = true;
         s_lookups++;
         s_state = "ok";
         s_detail[0] = '\0';
@@ -493,9 +491,14 @@ static result_t get(const settings_t *s, const char *path, int cost, cJSON **roo
         s_state = "error";
         snprintf(s_detail, sizeof(s_detail), "HTTP %d", status);
     }
-    // Given back unless it was a new day by then; if storing that fails,
-    // the count stays high, which spends less, not more
-    const bool refund = !spent && s_day == reserved_day;
+    // Given back only when it can't have been charged: no connection made,
+    // or an answer refusing it. Cut off part way, a timeout once sent or a
+    // server error may have been charged, so it stays counted. Not given
+    // back on a new day either; if storing that fails, the count stays
+    // high, which spends less, not more.
+    const bool uncharged = err == ESP_OK ? status == 401 || status == 403 || status == 429
+                                         : err == ESP_ERR_HTTP_CONNECT || err == ESP_ERR_NO_MEM;
+    const bool refund = uncharged && s_day == reserved_day;
     if (refund) add_spent(-cost, &day, &used);
     xSemaphoreGive(s_lock);
     if (refund) store_spent(day, used);
@@ -649,8 +652,8 @@ static void lookup_aircraft(const settings_t *s, const char *hex)
 static SemaphoreHandle_t s_bench_done;
 static int s_bench_n;
 static bool s_bench_keep;
-static char *s_bench_out;
-static size_t s_bench_size;
+static bool s_bench_running; // under s_lock: until its result is in s_bench_out
+static char s_bench_out[512]; // its own: a caller can stop waiting, and free what it had
 
 static void bench_run(const settings_t *s)
 {
@@ -658,21 +661,21 @@ static void bench_run(const settings_t *s)
     s_keep = s_bench_keep;
     const size_t int0 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL), ps0 = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     size_t int_min = int0, ps_min = ps0;
-    int len = snprintf(s_bench_out, s_bench_size, "{\"keep\":%s,\"ms\":[", s_keep ? "true" : "false");
+    int len = snprintf(s_bench_out, sizeof(s_bench_out), "{\"keep\":%s,\"ms\":[", s_keep ? "true" : "false");
     int status = 0;
-    for (int i = 0; i < s_bench_n && len < (int)s_bench_size; i++) {
+    for (int i = 0; i < s_bench_n && len < (int)sizeof(s_bench_out); i++) {
         const int64_t t0 = esp_timer_get_time();
         fetch(s->adb_key, i % 2 ? "/health/services/airports/EGKK/feeds" : "/health/services/airports/EGLL/feeds",
               &status);
-        len += snprintf(s_bench_out + len, s_bench_size - len, "%s%d", i ? "," : "",
+        len += snprintf(s_bench_out + len, sizeof(s_bench_out) - len, "%s%d", i ? "," : "",
                         (int)((esp_timer_get_time() - t0) / 1000));
         const size_t fi = heap_caps_get_free_size(MALLOC_CAP_INTERNAL), fp = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
         if (fi < int_min) int_min = fi;
         if (fp < ps_min) ps_min = fp;
     }
     fetch_done();
-    if (len < (int)s_bench_size) {
-        snprintf(s_bench_out + len, s_bench_size - len,
+    if (len < (int)sizeof(s_bench_out)) {
+        snprintf(s_bench_out + len, sizeof(s_bench_out) - len,
                  "],\"status\":%d,\"held_internal\":%d,\"held_psram\":%d}", status, (int)(int0 - int_min),
                  (int)(ps0 - ps_min));
     }
@@ -682,16 +685,55 @@ static void bench_run(const settings_t *s)
 esp_err_t adb_debug_timing(int n, bool keep, char *out, size_t size)
 {
     if (!s_lock || !settings()->adb_key[0]) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
     if (!s_bench_done) s_bench_done = xSemaphoreCreateBinary();
-    if (!s_bench_done) return ESP_ERR_NO_MEM;
-    s_bench_out = out;
-    s_bench_size = size;
-    s_bench_keep = keep;
-    s_bench_n = n;
+    const bool busy = s_bench_running || !s_bench_done; // one a caller gave up on may still be going
+    if (!busy) {
+        xSemaphoreTake(s_bench_done, 0); // given by a run nobody waited for
+        s_bench_keep = keep;
+        s_bench_n = n;
+        s_bench_running = true;
+    }
+    xSemaphoreGive(s_lock);
+    if (busy) return ESP_ERR_INVALID_STATE;
     xTaskNotifyGive(s_task);
-    return xSemaphoreTake(s_bench_done, pdMS_TO_TICKS(120000)) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+    // Giving up leaves the run writing only its own buffer
+    if (xSemaphoreTake(s_bench_done, pdMS_TO_TICKS(120000)) != pdTRUE) return ESP_ERR_TIMEOUT;
+    strlcpy(out, s_bench_out, size);
+    return ESP_OK;
 }
 #endif
+
+// One wake-up's work: a benchmark, then what was asked for
+static void serve(settings_t *s)
+{
+#if CONFIG_LV_USE_SNAPSHOT
+    if (s_bench_n) {
+        settings_copy(s);
+        bench_run(s);
+        s_bench_n = 0;
+        // Given before it is free again, so the next run clears it first
+        xSemaphoreGive(s_bench_done);
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        s_bench_running = false;
+        xSemaphoreGive(s_lock);
+    }
+#endif
+    char callsign[10], cs_hex[8], hex[8];
+    double lat, lon;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    strlcpy(callsign, s_want_cs, sizeof(callsign));
+    strlcpy(cs_hex, s_want_cs_hex, sizeof(cs_hex));
+    strlcpy(hex, s_want_hex, sizeof(hex));
+    lat = s_want_lat;
+    lon = s_want_lon;
+    s_want_cs[0] = s_want_hex[0] = '\0';
+    xSemaphoreGive(s_lock);
+    settings_copy(s);
+    if (!s->adb_key[0]) return;
+    if (callsign[0]) lookup_flight(s, callsign, cs_hex, lat, lon);
+    if (hex[0]) lookup_aircraft(s, hex);
+}
 
 static void adb_task(void *arg)
 {
@@ -701,28 +743,7 @@ static void adb_task(void *arg)
             fetch_done(); // nothing more asked for a while
             continue;
         }
-#if CONFIG_LV_USE_SNAPSHOT
-        if (s_bench_n) {
-            settings_copy(&s);
-            bench_run(&s);
-            s_bench_n = 0;
-            xSemaphoreGive(s_bench_done);
-        }
-#endif
-        char callsign[10], cs_hex[8], hex[8];
-        double lat, lon;
-        xSemaphoreTake(s_lock, portMAX_DELAY);
-        strlcpy(callsign, s_want_cs, sizeof(callsign));
-        strlcpy(cs_hex, s_want_cs_hex, sizeof(cs_hex));
-        strlcpy(hex, s_want_hex, sizeof(hex));
-        lat = s_want_lat;
-        lon = s_want_lon;
-        s_want_cs[0] = s_want_hex[0] = '\0';
-        xSemaphoreGive(s_lock);
-        settings_copy(&s);
-        if (!s.adb_key[0]) continue;
-        if (callsign[0]) lookup_flight(&s, callsign, cs_hex, lat, lon);
-        if (hex[0]) lookup_aircraft(&s, hex);
+        serve(&s);
     }
 }
 
