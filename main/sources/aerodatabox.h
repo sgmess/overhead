@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "esp_err.h"
+
 #include "route.h"
 
 // Flight status and aircraft details from AeroDataBox's direct API, with the
@@ -59,3 +61,7 @@ typedef struct {
 } adb_status_t;
 
 void adb_get_status(adb_status_t *out);
+
+// For development, in a debug build: n requests to an endpoint that costs
+// nothing, on a new connection each or kept (keep), timed, as JSON into out
+esp_err_t adb_debug_timing(int n, bool keep, char *out, size_t size);

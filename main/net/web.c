@@ -599,6 +599,29 @@ static esp_err_t on_debug_settings(httpd_req_t *req)
 // time refreshing and of that in the flush and waiting (see bench.h), the
 // pixels drawn, the redraw requests, and internal RAM (now, and the least
 // since boot).
+// ?n=5&keep=1: AeroDataBox's free endpoint n times, on one connection
+// with keep=1, else a new one each; the times in ms and the heap held
+static esp_err_t on_debug_adb(httpd_req_t *req)
+{
+    char query[32], n_s[4] = "5", keep_s[4] = "0";
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        httpd_query_key_value(query, "n", n_s, sizeof(n_s));
+        httpd_query_key_value(query, "keep", keep_s, sizeof(keep_s));
+    }
+    const int n = atoi(n_s) > 0 && atoi(n_s) <= 20 ? atoi(n_s) : 5;
+    char *out = calloc(1, 512);
+    if (!out) return httpd_resp_send_500(req);
+    const esp_err_t err = adb_debug_timing(n, atoi(keep_s) != 0, out, 512);
+    if (err != ESP_OK) {
+        free(out);
+        return send_result(req, err, "No key, or no answer");
+    }
+    httpd_resp_set_type(req, "application/json");
+    const esp_err_t r = httpd_resp_sendstr(req, out);
+    free(out);
+    return r;
+}
+
 static esp_err_t on_debug_bench(httpd_req_t *req)
 {
     char query[48], ms_s[8] = "5000", what[12] = "settings";
@@ -795,6 +818,7 @@ void web_start(void)
         {.uri = "/api/debug/settings", .method = HTTP_POST, .handler = on_debug_settings},
         {.uri = "/api/debug/select", .method = HTTP_POST, .handler = on_debug_select},
         {.uri = "/api/debug/bench", .method = HTTP_POST, .handler = on_debug_bench},
+        {.uri = "/api/debug/adb", .method = HTTP_POST, .handler = on_debug_adb},
 #endif
         {.uri = "/api/defaults", .method = HTTP_POST, .handler = on_defaults},
         {.uri = "/api/ota", .method = HTTP_GET, .handler = on_ota_status},

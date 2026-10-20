@@ -405,6 +405,33 @@ Before the fix, it brought a frozen Tab5 back within 15–20 s every time.
 **Not needed after all:** other tear-avoid modes (`DOUBLE_PARTIAL` uses the
 same rotated partial flush, so the same PPA path).
 
+## AeroDataBox requests (20 Oct 2026): one connection, kept 10 s
+
+A tap on an aircraft makes two or three AeroDataBox requests: today's
+flights by its address (and by flight number or callsign if none of those
+is flying about now), then the aircraft. Each new HTTPS connection to
+`api.aerodatabox.com` costs most of a second before anything is asked.
+
+Measured on the Tab5 with the debug build's `/api/debug/adb?n=5&keep=0|1`,
+which times requests to AeroDataBox's free `/health/services/airports/…/feeds`
+endpoint (no credits), alternating two paths:
+
+| | Request times (ms) | Internal RAM held |
+| --- | --- | --- |
+| New connection each | 921, 829, 914, 923, 920 / 872, 832, 909, 825, 830 | none between requests |
+| One connection | 1003, 94, 57, 52, 101 / 886, 207, 58, 143, 208 | about 2.6 KB while open |
+
+The server answers `Connection: keep-alive` with chunked bodies, and
+ESP-IDF's client keeps the connection across them. A real tap still opened
+a second connection at first: the flight and the aircraft reach the task as
+two wake-ups, and closing after each threw it away. So the connection is
+kept until 10 s pass with no request (`KEEP_MS`), or the key changes.
+
+A real tap afterwards: the flight by address 1547 ms (connecting), the
+aircraft 256 ms on the same connection, against 1277–1509 ms for the
+aircraft on a new one. About 1.2 s off each tap's second and third
+requests, for about 3 KB of internal RAM for 10 s after a lookup: kept.
+
 ## Memory decisions (from earlier versions)
 
 Covered in the README's Tab5 notes; listed here so they aren't undone:

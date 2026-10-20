@@ -225,16 +225,23 @@ up, never the lists or the big view stepping to the nearest:
   under, or for a callsign that isn't one (BAW21V), by the callsign, which
   AeroDataBox only links to a flight once it has seen it. With no date it
   answers for the nearest day with one, which can be yesterday's, so the
-  date is always given. Of what comes back, the flight in the
-  air that fits where the aircraft is wins; nothing is shown if none is
-  within three hours of now. Its times are asked for again after 15
-  minutes if it is still being looked at.
+  date is always given. Of what comes back, only flights within three hours
+  of now count; of those, the one in the air that fits where the aircraft
+  is wins. An answer is kept for that aircraft and that day only, since a
+  callsign is flown again the next day, often by another aircraft. Its
+  times are asked for again after 15 minutes if it is still being looked
+  at, or 3 hours once it has landed. "Departed" comes from the flight's
+  status, not its runway time, which can be an estimate.
 - The aircraft, 1 credit, kept until a restart.
 
 The configuration page sets the most to spend a day (100 credits unless
 changed) and shows what has been spent. The count is stored in flash (NVS,
 its own namespace), so restarts, power cuts and a reset to the defaults
-don't start the day again. Nothing is looked up before the clock is set, a
+don't start the day again. Each request's cost is stored before it is
+sent, and given back if no answer comes; if it can't be stored, nothing is
+asked. One HTTPS connection serves a tap's requests, kept until 10 s pass
+without one, which saves about 1.2 s on each after the first (see
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md)). Nothing is looked up before the clock is set, a
 refused key isn't tried again until another is entered, and "too many
 requests" holds off for 10 minutes. Without a key, adsb.im's routes and the
 feed's details are shown as before.
