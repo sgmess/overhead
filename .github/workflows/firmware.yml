@@ -157,9 +157,11 @@ jobs:
 
             Both builds expect esp_hosted 2.x on the board's ESP32-C6.
 
+  # Only once the release is out, which needs the host tests to pass: the
+  # flasher never serves firmware that wasn't released
   pages:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, release]
     runs-on: ubuntu-latest
     permissions:
       pages: write
