@@ -153,8 +153,10 @@ async function load() {
   try {
     const j = await getJSON('/api/state');
     if (j.settings.centre_set) {
-      $('lat').value = j.settings.lat.toFixed(4);
-      $('lon').value = j.settings.lon.toFixed(4);
+      // As stored, up to six places (config.html's deg()): rounded, saving
+      // the network would move the centre too
+      $('lat').value = String(+j.settings.lat.toFixed(6));
+      $('lon').value = String(+j.settings.lon.toFixed(6));
     }
     if (j.settings.ssid) $('ssid').value = j.settings.ssid;
     if (j.setup_ssid) $('done-ap').textContent = j.setup_ssid;

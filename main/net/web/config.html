@@ -541,9 +541,15 @@ function placePin() {
   if (pin && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) pin.setLatLng([lat, lon]);
 }
 
+// Degrees as stored, to six places, without trailing zeros: a click on the
+// map (four places, about 10 m) reads the same after a reload
+function deg(v) {
+  return String(+v.toFixed(6));
+}
+
 function setLatLon(p) {
-  $('lat').value = p.lat.toFixed(4);
-  $('lon').value = p.lng.toFixed(4);
+  $('lat').value = deg(+p.lat.toFixed(4));
+  $('lon').value = deg(+p.lng.toFixed(4));
   dirty = true;
 }
 
@@ -634,8 +640,8 @@ function fillFields(j) {
   $('openaip_countries').value = s.openaip_countries;
   // As stored: rounded, the next save would move the centre a few metres
   // and fetch the airspace and traffic again
-  $('lat').value = s.lat.toFixed(6);
-  $('lon').value = s.lon.toFixed(6);
+  $('lat').value = deg(s.lat);
+  $('lon').value = deg(s.lon);
   for (const f of FIELDS) setSelect($(f), s[f]);
   for (const c of CHECKS) $(c).checked = s[c];
   for (const id of SLIDERS) { $(id).value = s[id]; showSlider(id); }
