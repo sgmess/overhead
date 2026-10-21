@@ -179,10 +179,33 @@ jobs:
           merge-multiple: true
           path: out
 
+      # ESP Web Tools built from source: its latest release (10.4.0) bundles
+      # esptool-js 0.6, which can't flash an ESP32-P4 of revision v3.1 or
+      # later (the 3.4C's): those boot with the flash powered off, and 0.7.0
+      # powers it on and detects them. The bump is merged but not released.
+      # Pinned; back to the published package once a release has esptool-js
+      # 0.7.0 or later.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Build ESP Web Tools
+        env:
+          EWT_COMMIT: cddb12e246be67e556559f900599b1a84deabfa8 # "Bump esptool-js to 0.7.0 (#737)"
+        run: |
+          git clone --quiet https://github.com/esphome/esp-web-tools.git ewt
+          cd ewt
+          git checkout --quiet "$EWT_COMMIT"
+          npm ci --no-audit --no-fund
+          npm pkg set version="10.4.0+${EWT_COMMIT:0:7}"
+          script/build
+          grep -q getSecurityInfo dist/web/install-dialog-*.js # esptool-js 0.7.0 is in
+
       - name: Assemble the flasher
         run: |
-          mkdir -p site
+          mkdir -p site/esp-web-tools
           cp web/flash/* site/
+          cp ewt/dist/web/* site/esp-web-tools/
           cp out/*-full.bin site/
           # The flasher shows, and esp-web-tools reports, the release's version
           sed -i "s/__VERSION__/${GITHUB_REF_NAME}/g" site/*.html site/*.json

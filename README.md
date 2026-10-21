@@ -160,6 +160,10 @@ That makes a GitHub release holding, for each board,
 `overhead-<board>-ota.bin` (the app alone). It also deploys the web flasher
 (`web/flash/`, using [ESP Web Tools](https://esphome.github.io/esp-web-tools/))
 to GitHub Pages at https://sgmess.github.io/overhead/, serving that release.
+ESP Web Tools is built from a pinned commit in that job: its latest release
+bundles esptool-js 0.6, which can't flash a P4 of revision v3.1 or later,
+as the 3.4C's is (its flash starts powered off). The update to esptool-js
+0.7.0 is merged but not yet released.
 Release builds start from the `sdkconfig.defaults*` files, never a local
 `sdkconfig`, so they contain no WiFi network and open the setup portal on
 first boot.
