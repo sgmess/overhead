@@ -455,7 +455,7 @@ requests, for about 3 KB of internal RAM for 10 s after a lookup: kept.
 
 ## Memory decisions (from earlier versions)
 
-Covered in the README's Tab5 notes; listed here so they aren't undone:
+Covered in [TAB5.md](TAB5.md); listed here so they aren't undone:
 
 - **Internal RAM at boot is the Tab5's tightest constraint.** esp_hosted
   allocates its SDIO buffers before `app_main`. Its queues went from 20 to 12
