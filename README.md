@@ -92,7 +92,7 @@ gives way at once to the WiFi setup portal.
 
 | Tap | Does |
 | --- | --- |
-| An aircraft | Opens its card: flag, flight number, airline and logo, registration, type, route, altitude, V/S, speed, track, squawk, range and bearing |
+| An aircraft | Opens its card: flag, flight number, airline and logo, registration, type, route, altitude, V/S, speed, track, squawk, and range with where to look (or the bearing, by a setting) |
 | The alert banner | Opens the card of the nearest aircraft that set it off |
 | The card | Opens that aircraft in the big view |
 | Empty scope, card open | Closes the card |
@@ -106,18 +106,19 @@ gives way at once to the WiFi setup portal.
 The big view shows one aircraft in large type, for across the room: flag and
 logo, callsign, flight number and airline, altitude in its scope colour with
 which way it is going, speed with an arrow along its track (north up, as on
-the scope), then distance, bearing and squawk, the route with the airports'
-towns ("SDF > CGN", "Louisville > Cologne") and how far along it is,
-registration and type, the owner and age, and a photo. The card
-only shows with the scope, and whatever the big view or a list picks stays
-selected there when you swipe back. An aircraft that has just started an
-emergency or come overhead takes the big view over until it stops or a tap
-moves on; otherwise it shows the selection, or with none the nearest airborne
+the scope), then the distance with where to look (or the bearing) and the
+squawk, the route with the airports' towns ("SDF > CGN", "Louisville >
+Cologne") and how far along it is, registration and type, the owner and age,
+and a photo. The card only shows with the scope, and whatever the big view or
+a list picks stays selected there when you swipe back. An aircraft that has
+just started an emergency, come overhead or come into range on the watchlist
+takes the big view over (in that order) until it stops or a tap moves on;
+otherwise it shows the selection, or with none the nearest airborne
 (not counting aircraft sitting on the ground without saying so: no altitude
 and under 50 kt). The nearest stays shown until another is half a mile
 nearer, so a near tie doesn't flicker. On the Tab5 it fills
 the scope's square and the list stays beside it. Its route is looked up as
-the card's is, once per callsign.
+the card's is.
 
 The round 3.4C has no room for the Tab5's list beside the scope, so
 it gets it as a third view: the nearest 10 in the middle of

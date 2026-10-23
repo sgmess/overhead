@@ -1,3 +1,5 @@
+[← Overhead](../README.md)
+
 # Where the data comes from
 
 Everything Overhead shows beyond the feed's positions, and how each source
@@ -7,8 +9,9 @@ fails; neither needs a key.
 
 ## Routes, owners, photos, airlines and flags
 
-Routes are looked up only for the aircraft whose card is open, one request
-per callsign per session, and sent with its position so adsb.im can say
+Routes are looked up only for the aircraft in the card or the big view, the
+answers kept for the last 32 callsigns, each sent with the aircraft's
+position so adsb.im can say
 whether the route fits (a "?" after it when not). How far along it is
 comes from the airports' positions in the same answer: the share of the leg
 it is on that it has flown, great circle, and in the big view the miles to

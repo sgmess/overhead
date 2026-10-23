@@ -1,3 +1,5 @@
+[← Overhead](../README.md)
+
 # Clock, dimming, alerts and statistics
 
 The clock and night dimming, the screen off overnight, the overhead,
@@ -6,14 +8,15 @@ overhead log on the configuration page.
 
 ## Clock and dimming
 
-The timezone is a POSIX TZ string, because that is what newlib understands.
+The timezone is a POSIX TZ string, because that is what the C library
+(picolibc) understands.
 The page lists common zones, suggests the browser's own when none is saved,
 and takes any other rule typed in (`GMT0BST,M3.5.0/1,M10.5.0`). Night
 dimming either follows the sun's elevation at the radar centre (below
 -0.833°, which is sunset and sunrise with refraction) or local clock times.
 Moving a brightness slider on the page shows that level for 8 seconds without
-saving. While an overhead or emergency alert is active the screen comes back
-to full brightness. Each aircraft chimes once and again only after it has been
+saving. While an overhead, emergency or watchlist alert is active the screen
+comes back to full brightness. Each aircraft chimes once and again only after it has been
 out of the alert for two minutes; overhead, emergency and watchlist alerts
 keep separate lists, so one doesn't silence another.
 

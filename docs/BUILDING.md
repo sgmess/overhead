@@ -1,3 +1,5 @@
+[← Overhead](../README.md)
+
 # Building, releases and tests
 
 How to build and flash Overhead, how releases and the web flasher are made,
@@ -29,8 +31,10 @@ The logic that is easiest to get wrong in a rare case (AeroDataBox's
 credits and flight cache, feed numbers, trails across boot and the 180th
 meridian, the watchlist, METARs and the runway in use, the overhead log in
 flash) also has host tests: built for the PC with stand-ins for ESP-IDF
-and the address and undefined-behaviour sanitizers on. They need only gcc,
-and CI runs them before a release:
+and the address and undefined-behaviour sanitizers on. They need Bash and a
+GCC with those sanitizers (not ESP-IDF), and curl the first time on a fresh
+checkout, to fetch cJSON 1.7.19 when there is no ESP-IDF build's copy in
+`managed_components/`. CI runs them before a release:
 
 ```bash
 tests/host/run.sh
