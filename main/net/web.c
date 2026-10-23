@@ -811,22 +811,20 @@ static esp_err_t on_passes(httpd_req_t *req)
     const int days = atoi(days_s) < 0 ? 1 : atoi(days_s);
     pass_t *p = heap_caps_malloc(PASSES_JSON_MAX * sizeof(*p), MALLOC_CAP_SPIRAM);
     if (!p) return httpd_resp_send_500(req);
-    int n;
-    if (days == 1) {
-        n = passes_get(p, PASSES_JSON_MAX);
-    } else {
-        time_t since = 0;
-        if (days > 0) {
-            const time_t now = time(NULL);
-            struct tm tm;
-            localtime_r(&now, &tm);
-            tm.tm_hour = tm.tm_min = tm.tm_sec = 0;
-            tm.tm_mday -= days - 1;
-            tm.tm_isdst = -1;
-            since = mktime(&tm);
-        }
-        n = passes_since(since, p, PASSES_JSON_MAX);
+    // From midnight days - 1 days ago; 0 for all. From the flash log when
+    // there is one (today's too: RAM holds only the last PASSES_MAX), else
+    // today's from RAM
+    time_t since = 0;
+    if (days > 0) {
+        const time_t now = time(NULL);
+        struct tm tm;
+        localtime_r(&now, &tm);
+        tm.tm_hour = tm.tm_min = tm.tm_sec = 0;
+        tm.tm_mday -= days - 1;
+        tm.tm_isdst = -1;
+        since = mktime(&tm);
     }
+    const int n = passes_since(since, p, PASSES_JSON_MAX);
     cJSON *list = cJSON_CreateArray();
     char day[32];
     for (int k = 0; k < n; k++) {

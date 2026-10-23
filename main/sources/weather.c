@@ -189,6 +189,63 @@ static bool fetch(const char *station, double lat, double lon, weather_t *w, dou
     return false;
 }
 
+// What was last asked for: the station set, or for the nearest, the centre
+static char s_asked[48];
+
+// Forget the station: its weather and its runway samples. With the lock held.
+static void forget_station(void)
+{
+    s_wx = (weather_t){0};
+    s_st_known = false;
+    memset(s_arr, 0, SAMPLES * sizeof(*s_arr));
+    memset(s_dep, 0, SAMPLES * sizeof(*s_dep));
+}
+
+// One fetch for the settings s; whether a METAR came
+static bool update(const settings_t *s)
+{
+    // Another station, or the nearest to another centre: the old one's
+    // weather mustn't stand in for it, even if this fetch fails
+    char asked[sizeof(s_asked)];
+    if (s->wx_station[0]) {
+        snprintf(asked, sizeof(asked), "%s", s->wx_station);
+    } else {
+        snprintf(asked, sizeof(asked), "near %.3f %.3f", s->lat, s->lon);
+    }
+    if (strcmp(asked, s_asked) != 0) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        forget_station();
+        xSemaphoreGive(s_lock);
+        strlcpy(s_asked, asked, sizeof(s_asked));
+    }
+    weather_t w = {0};
+    double lat = 0, lon = 0;
+    int elev = 0;
+    const bool ok = fetch(s->wx_station, s->lat, s->lon, &w, &lat, &lon, &elev);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    if (ok) {
+        // The nearest can change too: a new station's runway samples are
+        // another airfield's
+        const bool same = s_st_known && strcmp(w.station, s_wx.station) == 0;
+        if (!same) {
+            memset(s_arr, 0, SAMPLES * sizeof(*s_arr));
+            memset(s_dep, 0, SAMPLES * sizeof(*s_dep));
+        }
+        w.landing = same ? s_wx.landing : 0;
+        w.departing = same ? s_wx.departing : 0;
+        s_wx = w;
+        s_st_lat = lat;
+        s_st_lon = lon;
+        s_st_elev_ft = elev;
+        s_st_known = true;
+        ESP_LOGI(TAG, "%s", s_wx.raw);
+    } else if (!s_wx.valid) {
+        strlcpy(s_wx.detail, w.detail[0] ? w.detail : "No answer from aviationweather.gov", sizeof(s_wx.detail));
+    }
+    xSemaphoreGive(s_lock);
+    return ok;
+}
+
 static void weather_task(void *arg)
 {
     settings_t *s = arg; // too big for its stack; in PSRAM
@@ -197,34 +254,11 @@ static void weather_task(void *arg)
         bool ok = false;
         if (!s->show_weather) {
             xSemaphoreTake(s_lock, portMAX_DELAY);
-            s_wx = (weather_t){0};
-            s_st_known = false;
+            forget_station();
             xSemaphoreGive(s_lock);
+            s_asked[0] = '\0';
         } else if (net_is_connected()) {
-            weather_t w = {0};
-            double lat = 0, lon = 0;
-            int elev = 0;
-            ok = fetch(s->wx_station, s->lat, s->lon, &w, &lat, &lon, &elev);
-            xSemaphoreTake(s_lock, portMAX_DELAY);
-            if (ok) {
-                // A new station's runway samples are another airfield's
-                if (strcmp(w.station, s_wx.station) != 0) {
-                    memset(s_arr, 0, SAMPLES * sizeof(*s_arr));
-                    memset(s_dep, 0, SAMPLES * sizeof(*s_dep));
-                }
-                w.landing = s_wx.landing;
-                w.departing = s_wx.departing;
-                s_wx = w;
-                s_st_lat = lat;
-                s_st_lon = lon;
-                s_st_elev_ft = elev;
-                s_st_known = true;
-                ESP_LOGI(TAG, "%s", s_wx.raw);
-            } else if (!s_wx.valid) {
-                strlcpy(s_wx.detail, w.detail[0] ? w.detail : "No answer from aviationweather.gov",
-                        sizeof(s_wx.detail));
-            }
-            xSemaphoreGive(s_lock);
+            ok = update(s);
         }
         const int wait_s = ok || !s->show_weather ? WEATHER_EVERY_S : net_is_connected() ? RETRY_S : 10;
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(wait_s * 1000));

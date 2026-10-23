@@ -73,8 +73,9 @@ int main(void)
     passes_log_info(&log);
     CHECK(log.count == 1 && log.capacity == SMALL / 32, "logged: %d of %d", log.count, log.capacity);
     reboot();
-    pass_t p[PASSES_MAX];
-    int n = passes_get(p, PASSES_MAX);
+    static pass_t p[3000];
+    const time_t midnight = g_now - g_now % 86400;
+    int n = passes_since(midnight, p, 3000);
     CHECK(n == 1 && strcmp(p[0].name, "BAW1") == 0 && strcmp(p[0].reg, "G-XLEA") == 0 && p[0].alt_ft == 3000 &&
               strcmp(p[0].type, "A388") == 0,
           "today's back after it: %d, %s %s %s", n, n ? p[0].name : "", n ? p[0].reg : "", n ? p[0].type : "");
@@ -83,13 +84,14 @@ int main(void)
     passes_update(&a, 1, 51.5, -0.1);
     g_shutdown();
     reboot();
-    n = passes_get(p, PASSES_MAX);
+    n = passes_since(midnight, p, 3000);
     CHECK(n == 2 && strcmp(p[0].name, "BAW2") == 0, "one overhead at the restart is logged too (%d)", n);
     // The next day starts empty, the log keeps both
     g_now += 86400;
     reboot();
     passes_log_info(&log);
-    CHECK(passes_get(p, PASSES_MAX) == 0 && log.count == 2, "the next day: none today, %d in the log", log.count);
+    CHECK(passes_since(midnight + 86400, p, 3000) == 0 && log.count == 2, "the next day: none today, %d in the log",
+          log.count);
     n = passes_since(g_now - 2 * 86400, p, PASSES_MAX);
     CHECK(n == 2 && strcmp(p[0].name, "BAW2") == 0, "the last two days: %d, newest first", n);
 
@@ -123,9 +125,76 @@ int main(void)
     pass_over("400003", "BAW3");
     reboot();
     passes_log_info(&log);
-    n = passes_since(0, p, 1);
-    CHECK(n == 1 && strcmp(p[0].name, "BAW3") == 0 && log.count >= before - PER_SECTOR,
-          "and logs on: %s, %d", n ? p[0].name : "", log.count);
+    n = passes_since(0, p, 3000);
+    bool found3 = false;
+    for (int k = 0; k < n; k++) found3 |= strcmp(p[k].name, "BAW3") == 0;
+    CHECK(found3 && log.count >= before - PER_SECTOR, "and logs on: BAW3 among %d, %d logged", n, log.count);
+
+    printf("Gaps, late passes and a full ring (the second review)\n");
+    memset(flash, 0xff, SMALL);
+    reboot();
+    const time_t t0 = g_now;
+    pass_t q = {.alt_ft = 1000, .dist_nm = 0.5f};
+    for (int k = 0; k < 3; k++) {
+        q.at = t0 + k;
+        snprintf(q.name, sizeof(q.name), "G%d", k % 10);
+        log_write(&q);
+    }
+    flash[s_head * 32] = 0x12; // a power cut part way through the fourth
+    reboot();
+    q.at = t0 + 10;
+    strcpy(q.name, "G3");
+    log_write(&q);
+    n = passes_since(0, p, 3000);
+    CHECK(n == 4 && strcmp(p[0].name, "G3") == 0 && strcmp(p[3].name, "G0") == 0,
+          "a gap from a power cut hides nothing: %d of 4", n);
+    each_n = 0;
+    passes_each(each, NULL);
+    CHECK(each_n == 4, "nor from the download: %d", each_n);
+
+    // Logged as they end, timed at their closest: A, then B from earlier, then C
+    memset(flash, 0xff, SMALL);
+    reboot();
+    const time_t t1 = g_now + 1000;
+    const struct {
+        const char *name;
+        int dt;
+    } LATE[] = {{"A", 50}, {"B", 10}, {"C", 60}};
+    for (int k = 0; k < 3; k++) {
+        q.at = t1 + LATE[k].dt;
+        strcpy(q.name, LATE[k].name);
+        log_write(&q);
+    }
+    n = passes_since(t1 + 40, p, 3000);
+    CHECK(n == 2 && strcmp(p[0].name, "C") == 0 && strcmp(p[1].name, "A") == 0,
+          "since a time: one logged after an earlier one isn't missed (%d), newest first", n);
+
+    // More than RAM's 200 today
+    memset(flash, 0xff, SMALL);
+    reboot();
+    for (int k = 0; k < 201; k++) {
+        q.at = midnight + 3600 + k;
+        snprintf(q.name, sizeof(q.name), "D%d", k % 1000);
+        log_write(&q);
+    }
+    n = passes_since(midnight, p, 3000);
+    CHECK(n == 201, "today: all %d from flash, not RAM's 200", n);
+
+    // A full ring with the next write exactly on a sector boundary: the
+    // sector there holds the oldest
+    memset(flash, 0xff, SMALL);
+    reboot();
+    for (int k = 0; k < SMALL / 32; k++) {
+        q.at = t0 + k;
+        snprintf(q.name, sizeof(q.name), "R%d", k % 100000);
+        log_write(&q);
+    }
+    CHECK(s_head % PER_SECTOR == 0, "the next write on a sector boundary (%d)", s_head);
+    sorted_ok = 1;
+    each_n = 0;
+    each_last = 0;
+    passes_each(each, NULL);
+    CHECK(sorted_ok && each_n == SMALL / 32, "the download still oldest first: %d", each_n);
 
     printf("In the end of the OpenAIP cache\n");
     const size_t aip = AIPCACHE_LOG_AT + SMALL;

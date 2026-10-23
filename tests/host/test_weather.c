@@ -56,6 +56,29 @@ int main(void)
     g_http = (struct fake_http){.status = 500};
     CHECK(!fetch("EGLL", 0, 0, &w, &lat, &lon, &elev), "an error: none");
 
+    printf("Changing station (the second review)\n");
+    settings_t set = {.show_weather = true, .lat = 51.47, .lon = -0.45};
+    strcpy(set.wx_station, "EGLL");
+    g_http = (struct fake_http){.body = NEAR, .status = 200};
+    CHECK(update(&set) && strcmp(s_wx.station, "EGLL") == 0, "EGLL");
+    s_wx.landing = 27; // as the traffic left it
+    strcpy(set.wx_station, "EGKK");
+    g_http = (struct fake_http){.status = 500};
+    CHECK(!update(&set) && !s_wx.valid && s_wx.detail[0] && !s_wx.landing,
+          "a new station that fails: not the old one's weather, but \"%s\"", s_wx.detail);
+    g_http = (struct fake_http){.body = NEAR, .status = 200};
+    strcpy(set.wx_station, "EGLL");
+    update(&set);
+    s_wx.landing = 27;
+    set.wx_station[0] = '\0'; // the nearest, which is London City from there
+    set.lat = 51.51;
+    set.lon = 0.06;
+    CHECK(update(&set) && strcmp(s_wx.station, "EGLC") == 0 && !s_wx.landing,
+          "a new station that comes: not the old one's runway (%d)", s_wx.landing);
+    g_http = (struct fake_http){.status = 500};
+    CHECK(!update(&set) && s_wx.valid && strcmp(s_wx.station, "EGLC") == 0,
+          "the same station failing once: its last report stays");
+
     printf("The runway in use\n");
     s_st_known = true;
     s_st_lat = 51.477;

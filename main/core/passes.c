@@ -1,6 +1,7 @@
 #include "passes.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "esp_heap_caps.h"
@@ -169,6 +170,22 @@ static void log_open(void)
              (long long)s_oldest);
 }
 
+// The earliest time in the log, or 0; with the lock held. A scan of it all:
+// passes are written as they end, not in the order of their times, and a
+// power cut can leave gaps. Only after an erase, every 128 passes.
+static time_t oldest_at(void)
+{
+    time_t oldest = 0;
+    for (int sct = 0; sct < s_recs / PER_SECTOR; sct++) {
+        if (read_sector(sct, s_sector) != ESP_OK) continue;
+        for (int k = 0; k < PER_SECTOR; k++) {
+            const rec_t *r = &s_sector[k];
+            if (rec_ok(r) && (!oldest || (time_t)r->at < oldest)) oldest = r->at;
+        }
+    }
+    return oldest;
+}
+
 // p into the log; with the lock held
 static void log_write(const pass_t *p)
 {
@@ -181,12 +198,7 @@ static void log_write(const pass_t *p)
             for (int k = 0; k < PER_SECTOR; k++) s_count -= rec_ok(&s_sector[k]);
         }
         if (esp_partition_erase_range(s_part, s_base + (size_t)sector * SECTOR, SECTOR) != ESP_OK) return;
-        rec_t first;
-        const int next = (sector + 1) % (s_recs / PER_SECTOR);
-        if (s_count > 0 && esp_partition_read(s_part, s_base + (size_t)next * SECTOR, &first, sizeof(first)) == ESP_OK &&
-            rec_ok(&first)) {
-            s_oldest = first.at;
-        }
+        s_oldest = oldest_at();
     }
     rec_t r;
     to_rec(p, &r);
@@ -229,33 +241,11 @@ static void finish(active_t *a)
     a->hex[0] = '\0';
 }
 
-// A new day: today's starts again, from the log's when it has some (so a
-// restart carries on). With the lock held.
-static void start_day(time_t midnight)
+// A new day: today's in RAM starts again. With a flash log, today's are
+// read from it, so nothing is lost at a restart. With the lock held.
+static void start_day(void)
 {
     s_n = s_next = 0;
-    if (!s_recs || !s_count) return;
-    // Back from the newest until a pass from before today, then forward
-    int k = 0, first = s_head;
-    for (; k < s_recs && k < PASSES_MAX; k++) {
-        const int idx = (s_head - 1 - k + s_recs) % s_recs;
-        if (idx % PER_SECTOR == PER_SECTOR - 1 || k == 0) {
-            if (read_sector(idx / PER_SECTOR, s_sector) != ESP_OK) break;
-        }
-        const rec_t *r = &s_sector[idx % PER_SECTOR];
-        if (!rec_ok(r) || (time_t)r->at < midnight) break;
-        first = idx;
-    }
-    for (int j = 0; j < k; j++) {
-        const int idx = (first + j) % s_recs;
-        if (j == 0 || idx % PER_SECTOR == 0) {
-            if (read_sector(idx / PER_SECTOR, s_sector) != ESP_OK) break;
-        }
-        pass_t p;
-        to_pass(&s_sector[idx % PER_SECTOR], &p);
-        remember(&p);
-    }
-    if (s_n) ESP_LOGI(TAG, "%d overhead today, from before the restart", s_n);
 }
 
 // As the device restarts: those overhead now are passes too
@@ -300,10 +290,7 @@ void passes_update(const aircraft_t *list, int n, double lat, double lon)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     if (tm.tm_yday != s_day) {
         s_day = tm.tm_yday;
-        struct tm m = tm;
-        m.tm_hour = m.tm_min = m.tm_sec = 0;
-        m.tm_isdst = -1;
-        start_day(mktime(&m));
+        start_day();
     }
     for (int i = 0; i < n; i++) {
         const aircraft_t *a = &list[i];
@@ -377,26 +364,71 @@ void passes_log_info(passes_log_t *out)
     xSemaphoreGive(s_lock);
 }
 
+// A logged pass: its time, and where it is
+typedef struct {
+    uint32_t at;
+    uint16_t idx;
+} found_t;
+
+static int newest_first(const void *a, const void *b)
+{
+    const found_t *x = a, *y = b;
+    return x->at != y->at ? (x->at < y->at ? 1 : -1) : (x->idx < y->idx ? 1 : -1);
+}
+
+static int oldest_first(const void *a, const void *b)
+{
+    return newest_first(b, a);
+}
+
+// Every logged pass from since on, into found (s_recs long); how many.
+// Every slot is looked at: a power cut leaves a gap, and passes are written
+// as they end, so neither the slots nor their order say where to stop. The
+// lock is held a sector at a time.
+static int scan(time_t since, found_t *found, rec_t *buf)
+{
+    int n = 0;
+    for (int sct = 0; sct < s_recs / PER_SECTOR; sct++) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        const esp_err_t err = read_sector(sct, buf);
+        xSemaphoreGive(s_lock);
+        if (err != ESP_OK) continue;
+        for (int k = 0; k < PER_SECTOR; k++) {
+            const rec_t *r = &buf[k];
+            if (rec_ok(r) && (time_t)r->at >= since) found[n++] = (found_t){r->at, (uint16_t)(sct * PER_SECTOR + k)};
+        }
+    }
+    return n;
+}
+
+// The record at idx; false if it has gone meanwhile
+static bool read_rec(int idx, rec_t *r)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    const bool ok = esp_partition_read(s_part, s_base + (size_t)idx * sizeof(*r), r, sizeof(*r)) == ESP_OK && rec_ok(r);
+    xSemaphoreGive(s_lock);
+    return ok;
+}
+
 int passes_since(time_t since, pass_t *out, int max)
 {
     if (!s_lock) return 0;
     if (!s_recs) return passes_get(out, max); // no log: today's
+    found_t *found = heap_caps_malloc(s_recs * sizeof(found_t), MALLOC_CAP_SPIRAM);
     rec_t *buf = heap_caps_malloc(SECTOR, MALLOC_CAP_SPIRAM);
-    if (!buf) return 0;
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    int n = add_active(out, max);
-    const int head = s_head;
-    // Back from the newest, a sector at a time
-    for (int k = 0; k < s_recs && n < max; k++) {
-        const int idx = (head - 1 - k + s_recs) % s_recs;
-        if (k == 0 || idx % PER_SECTOR == PER_SECTOR - 1) {
-            if (read_sector(idx / PER_SECTOR, buf) != ESP_OK) break;
+    int n = 0;
+    if (found && buf) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        n = add_active(out, max);
+        xSemaphoreGive(s_lock);
+        const int f = scan(since, found, buf);
+        qsort(found, f, sizeof(*found), newest_first);
+        rec_t r;
+        for (int k = 0; k < f && n < max; k++) {
+            if (read_rec(found[k].idx, &r)) to_pass(&r, &out[n++]);
         }
-        const rec_t *r = &buf[idx % PER_SECTOR];
-        if (!rec_ok(r) || (time_t)r->at < since) break;
-        to_pass(r, &out[n++]);
     }
-    xSemaphoreGive(s_lock);
+    heap_caps_free(found);
     heap_caps_free(buf);
     return n;
 }
@@ -404,25 +436,19 @@ int passes_since(time_t since, pass_t *out, int max)
 void passes_each(void (*each)(const pass_t *p, void *ctx), void *ctx)
 {
     if (!s_lock || !s_recs) return;
+    found_t *found = heap_caps_malloc(s_recs * sizeof(found_t), MALLOC_CAP_SPIRAM);
     rec_t *buf = heap_caps_malloc(SECTOR, MALLOC_CAP_SPIRAM);
-    if (!buf) return;
-    xSemaphoreTake(s_lock, portMAX_DELAY);
-    const int head = s_head, sectors = s_recs / PER_SECTOR;
-    xSemaphoreGive(s_lock);
-    // From the sector after the head's, the oldest, round to the head's own
-    const int first = head / PER_SECTOR;
-    for (int j = 1; j <= sectors; j++) {
-        const int sct = (first + j) % sectors;
-        xSemaphoreTake(s_lock, portMAX_DELAY);
-        const esp_err_t err = read_sector(sct, buf);
-        xSemaphoreGive(s_lock);
-        if (err != ESP_OK) continue;
-        for (int k = 0; k < PER_SECTOR; k++) {
-            if (!rec_ok(&buf[k])) continue;
+    if (found && buf) {
+        const int f = scan(0, found, buf);
+        qsort(found, f, sizeof(*found), oldest_first);
+        rec_t r;
+        for (int k = 0; k < f; k++) {
+            if (!read_rec(found[k].idx, &r)) continue;
             pass_t p;
-            to_pass(&buf[k], &p);
+            to_pass(&r, &p);
             each(&p, ctx);
         }
     }
+    heap_caps_free(found);
     heap_caps_free(buf);
 }
