@@ -462,6 +462,9 @@ static aero_map_t *fetch(const settings_t *s, bool *rejected)
 // Up when what a fetch keeps changes (types, MIN_STEP_NM, the structs)
 #define CACHE_VERSION 1
 #define CACHE_DATA 4096 // the header has the first sector to itself
+// The map stays below this: above it is passes.c's log, on a device without
+// its own partition for it. GB at 107 NM is 185 KB.
+#define CACHE_MAX (640 * 1024)
 
 typedef struct {
     uint32_t magic, version;
@@ -496,7 +499,7 @@ static aero_map_t *cache_load(const settings_t *s, cache_hdr_t *hdr)
     if (!p || esp_partition_read(p, 0, hdr, sizeof(*hdr)) != ESP_OK || !cache_matches(hdr, s)) return NULL;
     const size_t sz_s = hdr->n_spaces * sizeof(aero_space_t), sz_p = hdr->n_pts * sizeof(aero_pt_t),
                  sz_f = hdr->n_fields * sizeof(aero_field_t);
-    if (CACHE_DATA + sz_s + sz_p + sz_f > p->size) return NULL;
+    if (CACHE_DATA + sz_s + sz_p + sz_f > (p->size < CACHE_MAX ? p->size : CACHE_MAX)) return NULL;
 
     aero_map_t *map = heap_caps_calloc(1, sizeof(*map), MALLOC_CAP_SPIRAM);
     if (!map) return NULL;
@@ -535,7 +538,7 @@ static void cache_save(const settings_t *s, const aero_map_t *map)
     const size_t sz_s = map->n_spaces * sizeof(aero_space_t), sz_p = map->n_pts * sizeof(aero_pt_t),
                  sz_f = map->n_fields * sizeof(aero_field_t);
     const size_t total = CACHE_DATA + sz_s + sz_p + sz_f;
-    if (total > p->size) {
+    if (total > (p->size < CACHE_MAX ? p->size : CACHE_MAX)) {
         ESP_LOGW(TAG, "map of %u bytes is bigger than the cache", (unsigned)total);
         return;
     }

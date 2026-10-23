@@ -39,6 +39,7 @@ typedef struct {
     int trail_s;        // trail length in seconds, 0 (off)..600
     bool show_military;
     bool show_route;    // origin and destination in the card, from adsb.im
+    bool card_look;     // the card's and big view's range as where to look ("SE ▲5°"); false: the bearing
     bool alert;         // flag aircraft within alert_nm10 and below alert_ft
     int alert_nm10;     // tenths of a NM, 2..100
     int alert_ft;       // 500..20000
@@ -53,6 +54,11 @@ typedef struct {
     int sleep_from, sleep_to; // minutes after local midnight, 0..1439
     char adb_key[65];   // AeroDataBox, direct; empty: no flight times or aircraft details
     int adb_daily;      // AeroDataBox credits to spend a day at most, ADB_DAILY_MIN..ADB_DAILY_MAX
+    char watch[100];    // watchlist: types, registrations, callsigns or addresses, "A388, G-XLEA, RRR*"
+    bool watch_military; // and every military aircraft
+    bool watch_new_type; // and any type first seen today (see stats_new_type())
+    bool show_weather;  // the METAR and runway in use near the centre
+    char wx_station[5]; // ICAO code of the station; empty: the nearest
 } settings_t;
 
 #define ADB_DAILY_MIN 10

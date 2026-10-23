@@ -31,6 +31,11 @@ static inline int fake_take(int *s)
 #define vSemaphoreDelete(s) free(s)
 void notify_hook(void);
 #define xTaskNotifyGive(t) notify_hook()
-#define ulTaskNotifyTake(a, b) 1
+static inline uint32_t ulTaskNotifyTake(int clear, uint32_t wait)
+{
+    (void)clear;
+    (void)wait;
+    return 1;
+}
 #define xTaskCreateWithCaps(f, n, s, a, p, h, c) ((void)(f), *(h) = (void *)1, pdPASS)
 #define xTaskCreate(f, n, s, a, p, h) ((void)(f), *(h) = (void *)1, pdPASS)

@@ -124,7 +124,14 @@ void update_card(void)
     snprintf(v, sizeof(v), "%s\n%s\n%s%s", alt, gs, a->squawk[0] ? a->squawk : "-",
              a->emergency ? "  " LV_SYMBOL_WARNING : "");
     set_text_if_changed(s_card_v1, v);
-    snprintf(v, sizeof(v), "%s\n%s\n%.1f NM  %03.0f\xC2\xB0", vs, trk, s->dist_nm, s->brg_deg);
+    // Where to look for it, or (settings) its bearing
+    char look[40];
+    if (settings()->card_look) {
+        fmt_look(a, s, true, look, sizeof(look));
+    } else {
+        snprintf(look, sizeof(look), "%.1f NM  %03.0f\xC2\xB0", s->dist_nm, s->brg_deg);
+    }
+    snprintf(v, sizeof(v), "%s\n%s\n%s", vs, trk, look);
     set_text_if_changed(s_card_v2, v);
     lv_obj_set_hidden(s_card, false);
 }

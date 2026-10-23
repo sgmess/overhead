@@ -14,3 +14,8 @@ aipcache, data, 0x40,    ,        1M,
 # eight slots written in turn, to spread the wear. Added 14 October 2026,
 # likewise only on devices flashed over USB or from the web flasher since.
 stats,    data, 0x41,    ,        256K,
+# Every aircraft that passed overhead (main/core/passes.c): 32-byte records
+# in a ring of 4 KB sectors, about 16,000. Added 23 October 2026, likewise
+# only on devices flashed over USB or from the web flasher since; the others
+# keep it in the end of aipcache.
+passes,   data, 0x42,    ,        512K,

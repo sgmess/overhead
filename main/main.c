@@ -24,7 +24,9 @@
 #include "details.h"
 #include "route.h"
 #include "settings.h"
+#include "passes.h"
 #include "stats.h"
+#include "weather.h"
 
 static const char *TAG = "overhead";
 
@@ -69,6 +71,9 @@ static void on_settings_changed(const settings_t *old, const settings_t *now)
         openaip_restart();
     }
     if (now->feed != old->feed) feed_reset();
+    if (moved || now->show_weather != old->show_weather || strcmp(now->wx_station, old->wx_station) != 0) {
+        weather_refresh();
+    }
     // A new centre, feed or interval: fetch now rather than at the old pace
     if (s_fetch_task && (moved || now->feed != old->feed || now->fetch_s != old->fetch_s)) {
         xTaskNotifyGive(s_fetch_task);
@@ -176,7 +181,11 @@ static void fetch_task(void *arg)
             radar_ui_set_status("Feed error, retrying");
         }
         board_unlock();
-        if (err == ESP_OK && !moved) stats_update(buf, n, lat, lon, range);
+        if (err == ESP_OK && !moved) {
+            stats_update(buf, n, lat, lon, range);
+            passes_update(buf, n, lat, lon);
+            weather_traffic(buf, n);
+        }
 
         // Internal RAM is the constraint, the Tab5's above all. The IDF low-water mark is
         // not logged: it misreads the DMA reserve pool as once full.
@@ -231,6 +240,7 @@ void app_main(void)
     route_start();
     details_start();
     adb_start();
+    weather_start();
     ota_start_auto_check();
     // TLS and JSON parsing buffers are in PSRAM; this is just call depth.
     if (xTaskCreate(fetch_task, "fetch", FETCH_STACK, NULL, 5, &s_fetch_task) != pdPASS) {

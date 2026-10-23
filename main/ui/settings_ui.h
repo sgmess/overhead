@@ -22,4 +22,6 @@ void settings_ui_debug_scroll_start(void);
 void settings_ui_debug_scroll_stop(void);
 // Close it, as its Done button does
 void settings_ui_debug_close(void);
+// Scroll it to y pixels down, for a look at what is further down
+void settings_ui_debug_scroll_to(int y);
 #endif

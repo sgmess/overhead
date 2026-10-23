@@ -44,6 +44,15 @@ point on a radar scope.
 - An emergency alert: any aircraft in range squawking 7700, 7600 or 7500, or
   reporting an emergency over ADS-B (medical, low fuel), gets a red banner
   ("7700 EMERGENCY BAW123 12.3 NM") ahead of any overhead alert, and a chime.
+- A watchlist: types, registrations, callsigns or addresses ("A388, G-XLEA,
+  RRR*"), and if wanted every military aircraft or any type never seen here
+  before. One in range gets a violet ring and banner, and a chime.
+- Where to look: the card and the big view give the compass point and the
+  height above the horizon ("13.8 NM SE ▲5°"), allowing for the Earth's curve;
+  a setting shows the bearing in both instead, as before.
+- The weather at the airfield nearest the centre, or one chosen, from its
+  METAR (wind, temperature, pressure), and the runway in use there, from
+  which way the traffic low over it is landing and taking off.
 - A filter by kind of aircraft (airliners, light aircraft, helicopters,
   other, from the transponder's emitter category) and altitude band. The
   count then reads "12 of 30 aircraft"; emergencies always show.
@@ -51,9 +60,12 @@ point on a radar scope.
   between set times, and the screen fully off overnight if wanted: a touch
   wakes it (and does nothing else), and it goes off again two minutes later.
 - Traffic stats on the configuration page: today's aircraft seen, military,
-  the busiest hour, the highest and fastest, the top airlines and a bar chart
-  by hour; and over the days, the average day of the last week, the most in
-  a day and the running total, kept through restarts.
+  the busiest hour, the highest and fastest, the top airlines and types (by
+  name, "Boeing 787-8 Dreamliner"), the rarest types here and a bar chart by
+  hour; every aircraft that passed
+  overhead, at its closest, for today, the last week or month or all kept
+  (about 16,000), with a CSV download; and over the days, the average day of
+  the last week, the most in a day and the running total, kept through restarts.
 - Positions are moved forward between polls using ground speed and track, so
   traffic moves smoothly instead of jumping every few seconds.
 - Emergency squawks (7500/7600/7700) are drawn red and circled.
@@ -134,7 +146,8 @@ idf.py -B build_tab5 -D OVERHEAD_BOARD=tab5 build flash monitor
 
 The logic that is easiest to get wrong in a rare case (AeroDataBox's
 credits and flight cache, feed numbers, trails across boot and the 180th
-meridian) also has host tests: built for the PC with stand-ins for ESP-IDF
+meridian, the watchlist, METARs and the runway in use, the overhead log in
+flash) also has host tests: built for the PC with stand-ins for ESP-IDF
 and the address and undefined-behaviour sanitizers on. They need only gcc,
 and CI runs them before a release:
 
@@ -262,6 +275,21 @@ refused key isn't tried again until another is entered, and "too many
 requests" holds off for 10 minutes. Without a key, adsb.im's routes and the
 feed's details are shown as before.
 
+### Weather
+
+`main/sources/weather.c` fetches the METAR from
+[aviationweather.gov](https://aviationweather.gov)'s API every 15 minutes,
+and at once when the station or the centre changes: the station set on the
+configuration page, or else the one nearest the centre among those within
+about 24 NM, then 72 NM. The Tab5 shows it in the radar's bottom-left
+corner, the 3.4C under the title of its list view, and the page shows the
+METAR itself. The runway in use comes from the traffic: aircraft within
+6 NM of the station and below 3,000 ft above it, at 80 to 250 kt, climbing
+or descending at 300 fpm or more, one sample each over the last 20 minutes.
+When at least two agree closely, their mean track gives the runway number.
+It is a true track, where runways are named by magnetic heading, so it can
+be one out where the variation is large.
+
 ### Airspace and airfields
 
 With an [OpenAIP](https://www.openaip.net) API key entered on the
@@ -329,8 +357,18 @@ dimming either follows the sun's elevation at the radar centre (below
 Moving a brightness slider on the page shows that level for 8 seconds without
 saving. While an overhead or emergency alert is active the screen comes back
 to full brightness. Each aircraft chimes once and again only after it has been
-out of the alert for two minutes; overhead and emergency alerts keep separate
-lists, so one doesn't silence the other.
+out of the alert for two minutes; overhead, emergency and watchlist alerts
+keep separate lists, so one doesn't silence another.
+
+The watchlist (`main/core/watch.c`) matches each entry against an
+aircraft's type, registration (with or without its dash), callsign and
+address, in any case; a trailing `*` matches the start. It can also take
+every military aircraft, and any type first seen here today: the statistics
+keep every type ever seen, with the days it was seen on, and a type only
+counts as new once that list is three days old, so a new device doesn't
+alert for everything. A watched aircraft shows whatever the display filter
+says, as an emergency does; its banner comes after an emergency's and an
+overhead alert's, since it can stay in range for many minutes.
 
 With "Screen off overnight", the backlight goes off between the set times
 once nobody has touched the screen for two minutes (LVGL's own idle time).
@@ -353,7 +391,28 @@ history are saved to a `stats` partition (eight 32 KB slots written in turn,
 to spread the wear), so a restart or an update carries on with the day; a
 day that ended while the device was off is added to the history at the next
 start. A device that has only ever been updated over WiFi has no such
-partition and starts again at each restart. The chime is the Tab5's ES8388 and speaker, or
+partition and starts again at each restart. Since v1.0.11 each save also
+holds today's aircraft by type and the book of every type seen (320 at
+most), after the packed aircraft (save version 3); a version 2 save still
+loads, without them.
+
+The overhead list (`main/core/passes.c`) uses the overhead alert's distance
+and ceiling, whether the alert is on or not. Each pass is written to flash
+as it ends, a 32-byte record (CRC-16 checked) in a ring of 4 KB sectors, the
+oldest sector erased as the ring comes round to it, and those overhead as
+the device restarts are written then; at boot the newest record says where
+it got to, and today's are read back. It has a `passes` partition of its
+own (512 KB, 16,384 passes), added in v1.0.11 after `stats` without moving
+anything, so only on devices flashed over USB or from the web flasher since.
+A device updated over WiFi keeps it in the end of `aipcache` instead
+(384 KB, 12,288 passes), which the OpenAIP map, at most 640 KB, leaves
+free; without either, today's are in RAM alone. The page shows today's, the
+last 7 or 30 days' or all of them (the newest 3,000), and
+`/api/passes.csv` downloads every one, oldest first, then those overhead
+now as far as they have got (a pass ends a minute after the aircraft leaves
+the circle, and is only logged then).
+
+The chime is the Tab5's ES8388 and speaker, or
 the 3.4C's ES8311 and a speaker on its header, opened for each chime so the
 amplifier is off between them.
 
@@ -522,12 +581,16 @@ so a file can move between folders without its users changing.
 | `main/main.c` | Starts the display, WiFi and the fetch task |
 | `main/aircraft.h` | An aircraft as the feed gives it |
 | **`main/core/`** | **The logic, without the network or the screen** |
-| `stats.c` | Today's counts and the days before, for the configuration page, saved to flash |
+| `stats.c` | Today's counts and the days before, and every type seen, for the configuration page, saved to flash |
+| `passes.c` | The aircraft overhead, each at its closest, logged in flash |
+| `watch.c` | Which aircraft a watchlist matches |
+| `types.c` | Aircraft types' names by ICAO designator, made by `tools/make_types.py` |
 | `trails.c` | Position history per aircraft for the trails |
 | `airlines.c`, `countries.c` | Airline and flight number by callsign; country by ICAO address |
 | **`main/sources/`** | **What is fetched** |
 | `feed.c` | HTTPS poll and readsb JSON parsing (buffers in PSRAM) |
 | `route.c` | Origin and destination by callsign from adsb.im, cached, and how far along it is |
+| `weather.c` | The METAR near the centre from aviationweather.gov, and the runway in use from the traffic |
 | `details.c` | The registered owner from adsbdb.com and a photo from planespotters.net, by ICAO address |
 | `aerodatabox.c` | Optional flight times and aircraft details from AeroDataBox, for the picked aircraft only, within a daily credit limit |
 | `openaip.c` | OpenAIP airspace and airfields: fetch by country, trim to range, project to NM |
@@ -554,7 +617,7 @@ so a file can move between folders without its users changing.
 | `battery.c` | Battery state, charge estimate, time left, low-voltage power-off |
 | `display_watch.c` | Restarts the device if the display stays frozen |
 | `main/third_party/` | stb_image, the JPEG decoder for the photos |
-| `tools/` | `make_flags.py` and `make_logos.py`, which build `main/ui/flags.bin` and `main/ui/logos.bin`; `bench.sh`, which times the display |
+| `tools/` | `make_flags.py` and `make_logos.py`, which build `main/ui/flags.bin` and `main/ui/logos.bin`; `make_types.py`, which builds `main/core/types.c`; `bench.sh`, which times the display |
 | `tests/host/` | Host tests of the firmware's logic, with stand-ins for ESP-IDF (`run.sh`) |
 | `docs/PERFORMANCE.md` | The benchmarks run, their results, and what was decided |
 | `web/flash/`, `.github/workflows/` | Web flasher page and the build, release and Pages workflow |
@@ -577,6 +640,8 @@ down for the screen. The airline logos in `main/ui/logos.bin` are trademarks of
 their airlines and are not covered by this licence. The licence covers this code only: aircraft data from
 adsb.fi and adsb.lol, routes from adsb.im, owners from adsbdb.com, photos
 from planespotters.net (each its photographer's), flight and aircraft details
-from AeroDataBox, airspace from OpenAIP and the
+from AeroDataBox, weather from aviationweather.gov, aircraft type names from
+ICAO Doc 8643 by way of [tar1090-db](https://github.com/wiedehopf/tar1090-db),
+airspace from OpenAIP and the
 IP-location answers from ipinfo.io and ipwho.is are under those services'
 own terms.

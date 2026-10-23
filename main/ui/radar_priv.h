@@ -30,7 +30,11 @@
 #include "settings.h"
 #include "settings_ui.h"
 #include "splash.h"
+#include "stats.h"
 #include "trails.h"
+#include "types.h"
+#include "watch.h"
+#include "weather.h"
 
 // The scope is the top SCR_W x SCR_W square: the whole panel on the round
 // boards, the upper part of the Tab5's portrait 720x1280 with the traffic
@@ -185,6 +189,7 @@ static const range_t RANGES[] = {{5, 1}, {10, 2}, {25, 5}, {50, 10}, {100, 25}};
 #define C_FIELD 0x8fb8e8
 #define C_MIL 0xff6ad5
 #define C_ALERT_INK 0x1a1000
+#define C_WATCH 0xb58cff // the watchlist
 
 typedef struct {
     int16_t x, y;
@@ -193,6 +198,7 @@ typedef struct {
     bool visible;
     bool labelled;
     bool alert;         // within the overhead alert's radius and ceiling
+    bool watch;         // on the watchlist
     uint8_t trail_n;    // points in s_trail_xy, oldest first
     lv_area_t trail_box; // around the trail, for skipping it outside the clip
 } ac_screen_t;
@@ -246,13 +252,16 @@ extern volatile int s_range_idx;
 extern char s_sel_hex[8];
 extern int s_view;
 extern char s_big_auto[8]; // just started alerting: the big view shows it first
-extern bool s_big_auto_emerg;
+// Why the big view moved to s_big_auto
+enum { AUTO_OVERHEAD, AUTO_EMERG, AUTO_WATCH };
+extern int s_big_auto_kind;
 extern char s_big_hex[8]; // the one the big view shows
 extern int64_t s_last_update_us;
 extern int s_alert_n, s_alert_best; // aircraft alerting, and the nearest
 extern int s_emerg_n, s_emerg_best; // in an emergency, and the nearest
+extern int s_watch_n, s_watch_best; // on the watchlist, and the nearest
 extern bool s_blink;
-extern alert_memory_t s_alerted[ALERT_MEMORY], s_emerg_alerted[ALERT_MEMORY];
+extern alert_memory_t s_alerted[ALERT_MEMORY], s_emerg_alerted[ALERT_MEMORY], s_watch_alerted[ALERT_MEMORY];
 #ifdef HAS_LIST
 extern const panel_layout_t *s_panel;
 #endif
@@ -278,7 +287,7 @@ int find_aircraft(const char *hex);
 bool is_selected(const aircraft_t *a);
 bool is_military(const aircraft_t *a);
 bool note_alert(alert_memory_t *mem, const aircraft_t *a, int64_t now);
-void big_auto(const char *hex, bool emerg);
+void big_auto(const char *hex, int kind);
 bool filtered_out(const aircraft_t *a, const settings_t *set);
 void set_text_if_changed(lv_obj_t *label, const char *text);
 void set_text_color_if_changed(lv_obj_t *obj, lv_color_t color);
@@ -313,6 +322,9 @@ void fmt_info(const aircraft_t *a, const airline_t *al, char *out, size_t n);
 const airline_t *fmt_airline(const aircraft_t *a, const country_t *country, char *out, size_t n);
 void fmt_sub(const aircraft_t *a, bool hex, char *sub, size_t n);
 void fmt_alt(const aircraft_t *a, char *out, size_t n);
+void fmt_look(const aircraft_t *a, const ac_screen_t *s, bool brief, char *out, size_t n);
+bool watched(const aircraft_t *a, const settings_t *set, char *why, size_t n);
+bool fmt_weather(char *l1, size_t n1, char *l2, size_t n2);
 void fmt_vs(const aircraft_t *a, char *out, size_t n);
 
 // card.c

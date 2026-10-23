@@ -22,20 +22,24 @@ int s_view = VIEW_RADAR;
 // One that has just started alerting, which the big view shows ahead of the
 // selection until it stops or a tap moves on
 char s_big_auto[8];
-bool s_big_auto_emerg;
+int s_big_auto_kind;
 char s_big_hex[8]; // the one it shows
 int64_t s_last_update_us;
 static char s_feed[16];
 static char s_status[64];
 int s_alert_n, s_alert_best; // aircraft alerting, and the nearest
 int s_emerg_n, s_emerg_best; // in an emergency, and the nearest
+int s_watch_n, s_watch_best; // on the watchlist, and the nearest
 bool s_blink;                // flips every second, for the alert ring
 // Recently alerting, so each chimes once: overhead and emergency apart, so
 // one doesn't silence the other
-alert_memory_t s_alerted[ALERT_MEMORY], s_emerg_alerted[ALERT_MEMORY];
+alert_memory_t s_alerted[ALERT_MEMORY], s_emerg_alerted[ALERT_MEMORY], s_watch_alerted[ALERT_MEMORY];
 static void (*s_on_range_change)(void);
 
 static lv_obj_t *s_scope, *s_clock, *s_clock2, *s_range_lbl, *s_status_lbl, *s_alert_lbl;
+#ifdef HAS_LIST
+static lv_obj_t *s_wx1, *s_wx2; // the weather, above the range in the bottom-left corner
+#endif
 static lv_obj_t *s_setup, *s_setup_text;
 static lv_obj_t *s_sleep_shield; // over everything while the screen is off: takes the waking touch
 #if LV_USE_QRCODE
@@ -124,10 +128,10 @@ bool note_alert(alert_memory_t *mem, const aircraft_t *a, int64_t now)
 }
 
 // The big view moves to an aircraft that has just started alerting
-void big_auto(const char *hex, bool emerg)
+void big_auto(const char *hex, int kind)
 {
     strlcpy(s_big_auto, hex, sizeof(s_big_auto));
-    s_big_auto_emerg = emerg;
+    s_big_auto_kind = kind;
 }
 
 // Hidden by the display filter: not one of the kinds chosen, or airborne
@@ -257,7 +261,7 @@ static const char *emerg_name(uint8_t e)
 }
 
 // The banner over the top of the scope: an emergency anywhere in range, in
-// red, before anything overhead, in amber
+// red, before anything overhead, in amber, before the watchlist, in violet
 static void update_alert(void)
 {
     char more[16] = "", text[96];
@@ -279,12 +283,35 @@ static void update_alert(void)
                  s_scr[s_alert_best].dist_nm, more);
         set_bg_color_if_changed(s_alert_lbl, lv_color_hex(C_WARN));
         set_text_color_if_changed(s_alert_lbl, lv_color_hex(C_ALERT_INK));
+    } else if (s_watch_best >= 0) {
+        const aircraft_t *a = &s_ac[s_watch_best];
+        char why[24];
+        watched(a, settings(), why, sizeof(why));
+        if (s_watch_n > 1) snprintf(more, sizeof(more), "  +%d", s_watch_n - 1);
+        snprintf(text, sizeof(text), LV_SYMBOL_EYE_OPEN "  %s  %s  %.1f NM%s", why, ac_name(a),
+                 s_scr[s_watch_best].dist_nm, more);
+        set_bg_color_if_changed(s_alert_lbl, lv_color_hex(C_WATCH));
+        set_text_color_if_changed(s_alert_lbl, lv_color_hex(C_ALERT_INK));
     } else {
         lv_obj_set_hidden(s_alert_lbl, true);
         return;
     }
     set_text_if_changed(s_alert_lbl, text);
     lv_obj_set_hidden(s_alert_lbl, false);
+}
+
+// The weather in the bottom-left corner, on the Tab5; the round boards show
+// it in their list view
+static void update_weather(void)
+{
+#ifdef HAS_LIST
+    char l1[48], l2[64];
+    const bool shown = fmt_weather(l1, sizeof(l1), l2, sizeof(l2));
+    set_text_if_changed(s_wx1, l1);
+    set_text_if_changed(s_wx2, l2);
+    lv_obj_set_hidden(s_wx1, !shown);
+    lv_obj_set_hidden(s_wx2, !shown || !l2[0]);
+#endif
 }
 
 // ---------------------------------------------------------------- views and touch
@@ -320,6 +347,7 @@ static void refresh(void)
     update_list();
 #endif
     update_status_label();
+    update_weather();
     update_alert();
 #ifndef HAS_LIST
     update_rlist();
@@ -404,9 +432,11 @@ void show_view(int view)
     s_big_hex[0] = s_big_auto[0] = '\0';
     // Anything alerting is the first thing the big view shows
     if (s_emerg_best >= 0) {
-        big_auto(s_ac[s_emerg_best].hex, true);
+        big_auto(s_ac[s_emerg_best].hex, AUTO_EMERG);
     } else if (s_alert_best >= 0) {
-        big_auto(s_ac[s_alert_best].hex, false);
+        big_auto(s_ac[s_alert_best].hex, AUTO_OVERHEAD);
+    } else if (s_watch_best >= 0) {
+        big_auto(s_ac[s_watch_best].hex, AUTO_WATCH);
     }
     lv_obj_set_hidden(s_big, view != VIEW_BIG);
     lv_obj_set_hidden(s_scope, view != VIEW_RADAR); // and its drawing, every second, with it
@@ -472,14 +502,15 @@ void on_gesture(lv_event_t *e)
 static void on_alert_click(lv_event_t *e)
 {
     if (swiped()) return;
-    const int i = s_emerg_best >= 0 ? s_emerg_best : s_alert_best;
+    const int i = s_emerg_best >= 0 ? s_emerg_best : s_alert_best >= 0 ? s_alert_best : s_watch_best;
     if (i >= 0) select_aircraft(s_ac[i].hex);
 }
 
 // The level for now, and the shield over the screen while it is off
 static void update_backlight(void)
 {
-    const bool asleep = backlight_update(s_alert_n > 0 || s_emerg_n > 0, lv_display_get_inactive_time(NULL));
+    const bool asleep =
+        backlight_update(s_alert_n > 0 || s_emerg_n > 0 || s_watch_n > 0, lv_display_get_inactive_time(NULL));
     const bool woke = !asleep && !lv_obj_is_hidden(s_sleep_shield);
     lv_obj_set_hidden(s_sleep_shield, !asleep);
     if (woke) refresh(); // skipped while asleep: up to date before it shows
@@ -712,6 +743,13 @@ void radar_ui_create(double center_lat, double center_lon, void (*on_range_chang
     lv_obj_align(s_clock, LV_ALIGN_TOP_LEFT, CORNER_X, CORNER_Y);
     lv_obj_align(s_clock2, LV_ALIGN_TOP_LEFT, CORNER_X, CORNER_Y + clock_h + 2);
     lv_obj_align(s_range_lbl, LV_ALIGN_BOTTOM_LEFT, CORNER_X, -CORNER_Y);
+    const int range_h = lv_font_get_line_height(&F_RANGE), status_h = lv_font_get_line_height(&F_STATUS);
+    s_wx2 = make_label(s_scope, &F_STATUS, C_DIM);
+    lv_obj_align(s_wx2, LV_ALIGN_BOTTOM_LEFT, CORNER_X, -(CORNER_Y + range_h + 2));
+    s_wx1 = make_label(s_scope, &F_STATUS, C_TEXT);
+    lv_obj_align(s_wx1, LV_ALIGN_BOTTOM_LEFT, CORNER_X, -(CORNER_Y + range_h + 2 + status_h));
+    lv_obj_set_hidden(s_wx1, true);
+    lv_obj_set_hidden(s_wx2, true);
     s_feed_lbl = make_label(s_scope, &F_STATUS, C_DIM);
     lv_obj_align(s_feed_lbl, LV_ALIGN_BOTTOM_RIGHT, -CORNER_X, -CORNER_Y);
     s_count_lbl = make_label(s_scope, &F_CLOCK, C_TEXT);

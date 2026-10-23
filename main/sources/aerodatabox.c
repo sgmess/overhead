@@ -737,13 +737,13 @@ static void serve(settings_t *s)
 
 static void adb_task(void *arg)
 {
-    static settings_t s; // one task, and too big for its stack
+    settings_t *s = arg; // too big for its stack; in PSRAM
     for (;;) {
         if (!ulTaskNotifyTake(pdTRUE, s_client ? pdMS_TO_TICKS(KEEP_MS) : portMAX_DELAY)) {
             fetch_done(); // nothing more asked for a while
             continue;
         }
-        serve(&s);
+        serve(s);
     }
 }
 
@@ -763,16 +763,18 @@ void adb_start(void)
     s_flights = heap_caps_calloc(FLIGHTS_N, sizeof(flight_entry_t), MALLOC_CAP_SPIRAM);
     s_aircraft = heap_caps_calloc(AIRCRAFT_N, sizeof(aircraft_entry_t), MALLOC_CAP_SPIRAM);
     s_resp = heap_caps_malloc(sizeof(resp_t), MALLOC_CAP_SPIRAM);
+    settings_t *set = heap_caps_malloc(sizeof(settings_t), MALLOC_CAP_SPIRAM); // the task's copy
     SemaphoreHandle_t lock = xSemaphoreCreateMutex();
     // TLS and the request are on the heap; this is call depth, as for route.c
-    if (s_flights && s_aircraft && s_resp && lock &&
-        (xTaskCreateWithCaps(adb_task, "adb", 8192, NULL, 3, &s_task, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) == pdPASS ||
-         xTaskCreate(adb_task, "adb", 8192, NULL, 3, &s_task) == pdPASS)) {
+    if (s_flights && s_aircraft && s_resp && set && lock &&
+        (xTaskCreateWithCaps(adb_task, "adb", 8192, set, 3, &s_task, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) == pdPASS ||
+         xTaskCreate(adb_task, "adb", 8192, set, 3, &s_task) == pdPASS)) {
         s_lock = lock; // last: lookups take it as everything ready; the task waits for one first
         return;
     }
     ESP_LOGE(TAG, "not started: no memory");
     if (lock) vSemaphoreDelete(lock);
+    heap_caps_free(set);
     heap_caps_free(s_flights);
     heap_caps_free(s_aircraft);
     heap_caps_free(s_resp);

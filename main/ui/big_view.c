@@ -57,8 +57,13 @@ static int big_target(char *why, size_t n)
 {
     if (s_big_auto[0]) {
         const int i = find_aircraft(s_big_auto);
-        if (i >= 0 && s_scr[i].visible && (s_big_auto_emerg ? s_ac[i].emergency : s_scr[i].alert)) {
-            snprintf(why, n, "%s  " LV_SYMBOL_BULLET "  tap for the next", s_big_auto_emerg ? "Emergency" : "Overhead");
+        static const char *const WHY[] = {[AUTO_OVERHEAD] = "Overhead", [AUTO_EMERG] = "Emergency",
+                                          [AUTO_WATCH] = "On the watchlist"};
+        const bool still = i >= 0 && s_scr[i].visible &&
+                           (s_big_auto_kind == AUTO_EMERG ? s_ac[i].emergency
+                            : s_big_auto_kind == AUTO_WATCH ? s_scr[i].watch : s_scr[i].alert);
+        if (still) {
+            snprintf(why, n, "%s  " LV_SYMBOL_BULLET "  tap for the next", WHY[s_big_auto_kind]);
             return i;
         }
         s_big_auto[0] = '\0'; // it has passed
@@ -187,8 +192,13 @@ void update_big(void)
         lv_obj_invalidate(s_big_pointer);
     }
 
-    // Where it is from here, and its squawk
-    snprintf(text, sizeof(text), "%.1f NM  " LV_SYMBOL_BULLET "  bearing %03.0f\xC2\xB0", s->dist_nm, s->brg_deg);
+    // Where it is from here: where to look for it, or (settings) its
+    // bearing; and its squawk
+    if (settings()->card_look) {
+        fmt_look(a, s, false, text, sizeof(text));
+    } else {
+        snprintf(text, sizeof(text), "%.1f NM  " LV_SYMBOL_BULLET "  bearing %03.0f\xC2\xB0", s->dist_nm, s->brg_deg);
+    }
     if (a->squawk[0]) {
         snprintf(num, sizeof(num), "  " LV_SYMBOL_BULLET "  squawk %s", a->squawk);
         strlcat(text, num, sizeof(text));

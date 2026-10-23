@@ -48,6 +48,14 @@ a{color:var(--accent)}
 .bars{display:flex;align-items:flex-end;gap:2px;height:64px;margin-top:14px}
 .bars i{flex:1;min-height:1px;background:var(--accent);opacity:.75;border-radius:2px 2px 0 0}
 .bars i.now{opacity:1;box-shadow:0 0 6px rgba(70,255,168,.6)}
+.passes{width:100%;margin-top:8px;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+.passes th{text-align:left;font-weight:400;color:var(--dim);padding:0 8px 4px 0}
+.passes td{padding:3px 8px 3px 0;border-top:1px solid var(--line)}
+.passes .num{text-align:right}
+.ranges{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center}
+.ranges .ghost{padding:5px 10px;font-size:14px}
+.ranges .ghost.on{background:var(--accent);color:var(--ink)}
+.ranges a{margin-left:auto;font-size:14px;color:var(--accent)}
 h3{margin:18px 0 0;font-size:11px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim)}
 .hours{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-top:4px}
 .legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:13px;color:var(--dim)}
@@ -89,6 +97,33 @@ h3{margin:18px 0 0;font-size:11px;font-weight:600;letter-spacing:1.2px;text-tran
   <div id="airlines-box" class="hidden">
     <h3>Top airlines</h3>
     <dl id="airlines"></dl>
+  </div>
+  <div id="types-box" class="hidden">
+    <h3>Top types</h3>
+    <dl id="types"></dl>
+  </div>
+  <div id="rare-box" class="hidden">
+    <h3>Rarest here</h3>
+    <dl id="rare"></dl>
+    <p class="hint" id="rare-hint"></p>
+  </div>
+  <div id="passes-box">
+    <h3 id="passes-title">Overhead today</h3>
+    <div class="ranges" id="pass-ranges">
+      <button type="button" class="ghost on" data-days="1">Today</button>
+      <button type="button" class="ghost" data-days="7">7 days</button>
+      <button type="button" class="ghost" data-days="30">30 days</button>
+      <button type="button" class="ghost" data-days="0">All</button>
+      <a href="/api/passes.csv" download>Download CSV</a>
+    </div>
+    <p class="hint hidden" id="passes-none"></p>
+    <table class="passes" id="passes-table">
+      <thead><tr><th class="pass-day hidden">Date</th><th>Time</th><th>Aircraft</th><th>Type</th><th class="num">Height</th>
+        <th class="num">Closest</th></tr></thead>
+      <tbody id="passes"></tbody>
+    </table>
+    <p class="hint">Each aircraft that came within the overhead alert's distance and below its height (set under
+      Alerts, whether the alert is on or not), at its closest. <span id="passes-kept"></span></p>
   </div>
   <h3>All days</h3>
   <dl id="history"></dl>
@@ -140,6 +175,8 @@ h3{margin:18px 0 0;font-size:11px;font-weight:600;letter-spacing:1.2px;text-tran
     <label class="check"><input type="checkbox" id="show_ground"> Show aircraft on the ground</label>
     <label class="check"><input type="checkbox" id="show_military"> Highlight military aircraft</label>
     <label class="check"><input type="checkbox" id="show_route"> Origin and destination in the aircraft card</label>
+    <label class="check"><input type="checkbox" id="card_look"> Where to look, in the aircraft card and the big view: the
+      direction and height above the horizon (13.8 NM SE ▲5°) instead of the bearing (13.8 NM 135°)</label>
     <p class="hint">Military aircraft get a pink diamond. Routes come from <a href="https://adsb.im" target="_blank" rel="noopener">adsb.im</a>,
       which is sent the callsign of the aircraft you tap; a question mark means the route doesn't fit where it is.
       The flight number, airline and flag of the country of registration need no lookup. Helicopters are always drawn with a rotor.</p>
@@ -194,6 +231,16 @@ h3{margin:18px 0 0;font-size:11px;font-weight:600;letter-spacing:1.2px;text-tran
     <label class="check"><input type="checkbox" id="emerg_alert"> Emergency: alert when any aircraft in range is in an emergency</label>
     <p class="hint">Squawk 7700 (emergency), 7600 (radio failure) or 7500 (hijack), or an emergency the aircraft reports
       over ADS-B (medical, low fuel). A red banner gives the code and the aircraft, ahead of any overhead alert.</p>
+    <label for="watch">Watchlist</label>
+    <input id="watch" maxlength="99" autocomplete="off" autocapitalize="characters" spellcheck="false"
+      placeholder="A388, B748, G-XLEA, RRR*">
+    <p class="hint">Alert when one of these comes into range: aircraft types (A388), registrations (G-XLEA),
+      callsigns (RRR1) or ICAO addresses, separated by commas; a * at the end matches anything starting with it (RRR*).
+      A violet ring marks it on the radar and a violet banner names it, after any emergency or aircraft overhead.</p>
+    <label class="check"><input type="checkbox" id="watch_military"> Also every military aircraft</label>
+    <label class="check"><input type="checkbox" id="watch_new_type"> Also any type seen here for the first time</label>
+    <p class="hint">Overhead keeps a list of every aircraft type it has seen. Types count as new once that list is
+      three days old, so the first days don't alert for everything.</p>
     <label class="check hidden" id="alert-sound-row"><input type="checkbox" id="alert_sound"> Chime</label>
     <p class="hint">Each aircraft chimes once. The screen comes up to full brightness at night while an alert lasts.</p>
   </section>
@@ -225,6 +272,20 @@ h3{margin:18px 0 0;font-size:11px;font-weight:600;letter-spacing:1.2px;text-tran
       <span><i style="border-color:#c8783c"></i>Danger</span>
       <span><i style="border-color:#8a72c8"></i>RMZ, TMZ</span>
     </div>
+  </section>
+
+  <section class="card">
+    <h2>Weather</h2>
+    <label class="check"><input type="checkbox" id="show_weather"> Weather and runway in use</label>
+    <p class="hint">The latest METAR from an airfield near the centre, from
+      <a href="https://aviationweather.gov" target="_blank" rel="noopener">aviationweather.gov</a>, every 15 minutes:
+      wind, temperature and pressure in the radar's bottom-left corner (on the 3.4C, in the list view). The runway in
+      use comes from the traffic: which way aircraft low over the airfield are landing and taking off, from their
+      tracks (true, so it can be one out where the magnetic variation is large).</p>
+    <label for="wx_station">Station</label>
+    <input id="wx_station" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <p class="hint">An ICAO code, e.g. EGLL. Left empty, the station nearest the centre.</p>
+    <p class="hint" id="wx-state"></p>
   </section>
 
   <section class="card">
@@ -363,7 +424,7 @@ const $ = id => document.getElementById(id);
 const FIELDS = ['range_idx', 'max_labels', 'feed', 'fetch_s', 'rotation', 'batt_shutdown_mv', 'dim_mode', 'clock',
                 'trail_s', 'alert_nm10', 'alert_ft', 'filter_min_ft', 'filter_max_ft', 'adb_daily'];
 const CHECKS = ['sleep', 'sweep', 'show_ground', 'batt_auto_off', 'show_airspace', 'show_airfields', 'show_military', 'show_route',
-                'alert', 'alert_sound', 'show_vector', 'emerg_alert', 'show_centrelines'];
+                'alert', 'alert_sound', 'show_vector', 'emerg_alert', 'show_centrelines', 'watch_military', 'watch_new_type', 'show_weather', 'card_look'];
 const SLIDERS = ['brightness', 'dim_brightness'];
 let map, pin, keyCleared = false, adbKeyCleared = false;
 // The fields follow the device (a change on its own settings screen, say)
@@ -471,6 +532,47 @@ function fillList(dl, rows) {
   }
 }
 
+// The aircraft overhead, from their own request: today, or more days from
+// the device's log
+let passDays = 1;
+const PASS_RANGE = {1: 'today', 7: 'in the last 7 days', 30: 'in the last 30 days', 0: 'since the log began'};
+async function loadPasses() {
+  try {
+    const days = passDays, j = await api('/api/passes?days=' + days), p = j.passes;
+    if (days !== passDays) return; // another range was picked meanwhile
+    $('passes-table').classList.toggle('hidden', !p.length);
+    $('passes-none').classList.toggle('hidden', !!p.length);
+    $('passes-none').textContent = 'Nothing overhead ' + PASS_RANGE[days] + ' (within ' + j.within_nm + ' NM, below ' +
+      j.below_ft.toLocaleString('en-GB') + ' ft).';
+    $('passes-title').textContent = 'Overhead ' + (days === 1 ? 'today' : PASS_RANGE[days].replace(/^in /, '')) +
+      (p.length ? ' (' + p.length.toLocaleString('en-GB') + (j.capped ? ', the newest' : '') + ')' : '');
+    const log = j.log;
+    $('passes-kept').textContent = log.capacity
+      ? 'Kept on the device through restarts: ' + log.count.toLocaleString('en-GB') + ' so far' +
+        (log.since ? ', since ' + log.since : '') + ', with room for ' + log.capacity.toLocaleString('en-GB') +
+        ' before the oldest go. The CSV has every one.'
+      : 'Kept until midnight; a restart starts it again (this device has no room in flash for a log).';
+    for (const th of document.querySelectorAll('.pass-day')) th.classList.toggle('hidden', days === 1);
+    const body = $('passes');
+    body.textContent = '';
+    for (const x of p) {
+      const tr = document.createElement('tr');
+      const name = x.name + (x.reg && x.reg !== x.name ? ' ' + x.reg : '');
+      const cells = [[x.at], [name], [x.type || '–', '', x.type_name],
+                     [x.alt.toLocaleString('en-GB') + ' ft', 'num'], [x.dist.toFixed(1) + ' NM', 'num']];
+      if (days !== 1) cells.unshift([x.day]);
+      for (const [v, cls, title] of cells) {
+        const td = document.createElement('td');
+        td.textContent = v;
+        if (cls) td.className = cls;
+        if (title) td.title = title; // the type's name, on hover
+        tr.append(td);
+      }
+      body.append(tr);
+    }
+  } catch (e) {}
+}
+
 function showToday(st) {
   $('today-card').classList.toggle('hidden', !st);
   if (!st) return;
@@ -488,6 +590,21 @@ function showToday(st) {
   const al = st.airlines || [];
   $('airlines-box').classList.toggle('hidden', !al.length);
   fillList($('airlines'), al.map(a => [a.name, n(a.count)]));
+
+  const ty = st.types || [];
+  $('types-box').classList.toggle('hidden', !ty.length);
+  // "Boeing 787-8 Dreamliner (B788)", or the code alone when it has no name
+  const typeName = t => t.name ? t.name + ' (' + t.type + ')' : t.type;
+  fillList($('types'), ty.map(t => [typeName(t), n(t.count)]));
+  // Of today's types, those seen here on the fewest days
+  // While learning, everything is "first seen today": just the note
+  const rare = st.learning ? [] : st.rare || [];
+  $('rare-box').classList.toggle('hidden', !st.types_today);
+  fillList($('rare'), rare.map(t => [typeName(t), t.days === 1 ? 'first seen today' + (t.count > 1 ? ', ' + t.count + ' of them' : '')
+                                                         : 'seen on ' + t.days + ' days since ' + t.first]));
+  $('rare-hint').textContent = n(st.types_today) + ' types today, ' + n(st.types_known) + ' since counting began' +
+    (st.learning ? '. Still learning what is usual here, so nothing counts as new yet.'
+                 : st.new_today ? ', ' + st.new_today + ' new today.' : '.');
 
   const days = d => d === 1 ? '1 day' : d + ' days';
   const hist = [];
@@ -534,6 +651,18 @@ function showAdb(j) {
     : a.state === 'ok' ? (a.lookups ? used + ', ' + a.lookups + ' lookups since the restart.' : 'Nothing looked up yet: tap an aircraft.')
     : a.state === 'limit' ? a.detail + '. ' + used + '.'
     : a.state === 'error' ? 'Last lookup failed: ' + a.detail + '.' : '';
+}
+
+function showWeather(j) {
+  const w = j.weather, s = j.settings;
+  $('wx_station').placeholder = 'Nearest' + (w.valid && !s.wx_station ? ' (' + w.station + ')' : '');
+  const rw = w.landing && w.landing === w.departing ? 'runway ' + String(w.landing).padStart(2, '0')
+    : [w.landing ? 'landing ' + String(w.landing).padStart(2, '0') : '',
+       w.departing ? 'departing ' + String(w.departing).padStart(2, '0') : ''].filter(Boolean).join(', ');
+  $('wx-state').textContent = !s.show_weather ? ''
+    : w.valid ? w.name + ': ' + w.raw + (w.age_min !== undefined ? ' (' + ago(w.age_min * 60) + ')' : '') +
+                (rw ? '. In use: ' + rw + '.' : '. In use: not enough traffic low over it yet.')
+    : w.detail ? w.detail + '.' : 'Waiting for the first report…';
 }
 
 function placePin() {
@@ -638,6 +767,8 @@ function preview(id) {
 function fillFields(j) {
   const s = j.settings;
   $('openaip_countries').value = s.openaip_countries;
+  $('watch').value = s.watch;
+  $('wx_station').value = s.wx_station;
   // As stored: rounded, the next save would move the centre a few metres
   // and fetch the airspace and traffic again
   $('lat').value = deg(s.lat);
@@ -668,6 +799,7 @@ async function load() {
   showStatus(j);
   showOpenaip(j);
   showAdb(j);
+  showWeather(j);
   fillFields(j);
   $('rotation-row').classList.toggle('hidden', !j.can_rotate);
   $('alert-sound-row').classList.toggle('hidden', !j.has_speaker);
@@ -843,6 +975,8 @@ $('form').onsubmit = async e => {
   const adbKey = $('adb_key').value.trim();
   if (adbKey || adbKeyCleared) body.adb_key = adbKey;
   body.openaip_countries = $('openaip_countries').value;
+  body.watch = $('watch').value.trim();
+  body.wx_station = $('wx_station').value.trim();
   $('save').disabled = true;
   msg.textContent = '';
   try {
@@ -892,6 +1026,7 @@ async function poll() {
     showStatus(j);
     showOpenaip(j);
     showAdb(j);
+    showWeather(j);
     if (JSON.stringify(j.settings) !== shown) {
       if (dirty) {
         $('stale').classList.remove('hidden');
@@ -913,6 +1048,15 @@ async function poll() {
   polling = false;
 }
 setInterval(poll, 5000);
+for (const b of $('pass-ranges').querySelectorAll('button')) {
+  b.onclick = () => {
+    passDays = +b.dataset.days;
+    for (const o of $('pass-ranges').querySelectorAll('button')) o.classList.toggle('on', o === b);
+    loadPasses();
+  };
+}
+loadPasses();
+setInterval(() => { if (!document.hidden) loadPasses(); }, 60000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 $('form').addEventListener('input', () => { dirty = true; });
 $('form').addEventListener('change', () => { dirty = true; });

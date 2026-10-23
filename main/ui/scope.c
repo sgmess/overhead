@@ -201,12 +201,14 @@ void layout(void)
     s_alert_best = -1;
     s_emerg_n = 0;
     s_emerg_best = -1;
+    s_watch_n = 0;
+    s_watch_best = -1;
     if (s_segs_range != s_range_idx) build_aero_segments();
 
     for (int i = 0; i < s_count; i++) {
         const aircraft_t *a = &s_ac[i];
         ac_screen_t *s = &s_scr[i];
-        s->visible = s->labelled = s->alert = false;
+        s->visible = s->labelled = s->alert = s->watch = false;
         s->trail_n = 0;
         if (a->on_ground && !set->show_ground) continue;
 
@@ -229,8 +231,9 @@ void layout(void)
         s->brg_deg = (float)fmod(atan2(dx, dy) * 180.0 / M_PI + 360.0, 360.0);
         if (s->dist_nm > r->nm) continue;
         s_in_range++;
-        // An emergency shows whatever the filter says
-        if (!a->emergency && filtered_out(a, set)) continue;
+        // An emergency, or one on the watchlist, shows whatever the filter says
+        s->watch = watched(a, set, NULL, 0);
+        if (!a->emergency && !s->watch && filtered_out(a, set)) continue;
 
         s->x = (int16_t)lroundf(CX + dx * ppn);
         s->y = (int16_t)lroundf(CY - dy * ppn);
@@ -243,15 +246,23 @@ void layout(void)
             if (s_alert_best < 0 || s->dist_nm < s_scr[s_alert_best].dist_nm) s_alert_best = i;
             s_alert_n++;
             // A new emergency on the big view isn't pushed aside by traffic overhead
-            if (note_alert(s_alerted, a, now) && !(s_big_auto_emerg && s_big_auto[0])) big_auto(a->hex, false);
+            if (note_alert(s_alerted, a, now) && !(s_big_auto_kind == AUTO_EMERG && s_big_auto[0])) {
+                big_auto(a->hex, AUTO_OVERHEAD);
+            }
         }
         if (a->emergency && set->emerg_alert) {
             if (s_emerg_best < 0 || s->dist_nm < s_scr[s_emerg_best].dist_nm) s_emerg_best = i;
             s_emerg_n++;
-            if (note_alert(s_emerg_alerted, a, now)) big_auto(a->hex, true);
+            if (note_alert(s_emerg_alerted, a, now)) big_auto(a->hex, AUTO_EMERG);
+        }
+        if (s->watch) {
+            if (s_watch_best < 0 || s->dist_nm < s_scr[s_watch_best].dist_nm) s_watch_best = i;
+            s_watch_n++;
+            // Nor either of those by the watchlist
+            if (note_alert(s_watch_alerted, a, now) && !s_big_auto[0]) big_auto(a->hex, AUTO_WATCH);
         }
 
-        bool flagged = is_selected(a) || a->emergency || s->alert;
+        bool flagged = is_selected(a) || a->emergency || s->alert || s->watch;
         s->labelled = flagged;
         // Ground traffic would swamp an airport-centred view, so it only
         // gets a tag or a list row at the closest range
@@ -272,7 +283,7 @@ void layout(void)
             const int i = s_order[k];
             const aircraft_t *a = &s_ac[i];
             if (a->on_ground) continue;
-            const bool flagged = is_selected(a) || a->emergency || s_scr[i].alert;
+            const bool flagged = is_selected(a) || a->emergency || s_scr[i].alert || s_scr[i].watch;
             if (drawn >= TRAIL_MAX_AC && !flagged) continue;
             layout_trail(i, ppn);
             drawn++;
@@ -557,6 +568,7 @@ static void draw_aircraft(lv_layer_t *layer)
             draw_ring(layer, s->x, s->y, SEL_RING, lv_color_hex(sel ? C_SELECT : C_EMERG), 2);
         }
         if (s->alert && s_blink) draw_ring(layer, s->x, s->y, SEL_RING + 6, lv_color_hex(C_WARN), 3);
+        if (s->watch && !s->alert && !sel) draw_ring(layer, s->x, s->y, SEL_RING + 3, lv_color_hex(C_WATCH), 2);
 
         if (s->labelled) {
             format_tag(a, buf, sizeof(buf));

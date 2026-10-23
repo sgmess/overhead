@@ -55,6 +55,7 @@ void settings_defaults(settings_t *out)
         .trail_s = 120,
         .show_military = true,
         .show_route = true,
+        .card_look = true,
         .alert = false, // near an airport it would never stop
         .alert_nm10 = 20,
         .alert_ft = 5000,
@@ -69,6 +70,7 @@ void settings_defaults(settings_t *out)
         .sleep_from = 23 * 60,
         .sleep_to = 7 * 60,
         .adb_daily = 100,
+        .show_weather = true,
     };
 }
 
@@ -79,6 +81,26 @@ static bool valid_tz(const char *s)
     for (; *s; s++) {
         if (!((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z') || (*s >= '0' && *s <= '9') ||
               strchr("<>+-,:./", *s))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// An ICAO station, "EGLL": upper case letters and digits, or nothing
+static bool valid_station(const char *s)
+{
+    for (; *s; s++) {
+        if (!((*s >= 'A' && *s <= 'Z') || (*s >= '0' && *s <= '9'))) return false;
+    }
+    return true;
+}
+
+// Letters, digits, '-' and '*', separated by commas or spaces
+static bool valid_watch(const char *s)
+{
+    for (; *s; s++) {
+        if (!((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z') || (*s >= '0' && *s <= '9') || strchr("-*, ", *s))) {
             return false;
         }
     }
@@ -122,7 +144,9 @@ bool settings_valid(const settings_t *s)
            s->filter_min_ft < s->filter_max_ft &&
            s->show_kinds >= 1 && s->show_kinds <= AC_KIND_ALL &&
            s->sleep_from >= 0 && s->sleep_from < 24 * 60 && s->sleep_to >= 0 && s->sleep_to < 24 * 60 &&
-           strlen(s->adb_key) < sizeof(s->adb_key) && s->adb_daily >= ADB_DAILY_MIN && s->adb_daily <= ADB_DAILY_MAX;
+           strlen(s->adb_key) < sizeof(s->adb_key) && s->adb_daily >= ADB_DAILY_MIN && s->adb_daily <= ADB_DAILY_MAX &&
+           strlen(s->watch) < sizeof(s->watch) && valid_watch(s->watch) &&
+           strlen(s->wx_station) < sizeof(s->wx_station) && valid_station(s->wx_station);
 }
 
 // Each getter leaves *v alone when the key is missing, so it keeps its default
@@ -191,6 +215,7 @@ void settings_load(void)
         get_int(h, "trail", &s.trail_s);
         get_bool(h, "military", &s.show_military);
         get_bool(h, "route", &s.show_route);
+        get_bool(h, "card_look", &s.card_look);
         get_bool(h, "alert", &s.alert);
         get_int(h, "alert_nm10", &s.alert_nm10);
         get_int(h, "alert_ft", &s.alert_ft);
@@ -206,6 +231,11 @@ void settings_load(void)
         get_int(h, "sleep_to", &s.sleep_to);
         get_str(h, "adb_key", s.adb_key, sizeof(s.adb_key));
         get_int(h, "adb_daily", &s.adb_daily);
+        get_str(h, "watch", s.watch, sizeof(s.watch));
+        get_bool(h, "watch_mil", &s.watch_military);
+        get_bool(h, "watch_new", &s.watch_new_type);
+        get_bool(h, "wx_show", &s.show_weather);
+        get_str(h, "wx_station", s.wx_station, sizeof(s.wx_station));
         nvs_close(h);
     }
 
@@ -260,6 +290,7 @@ static esp_err_t store_unlocked(const settings_t *s)
     if (err == ESP_OK) err = nvs_set_i32(h, "trail", s->trail_s);
     if (err == ESP_OK) err = nvs_set_u8(h, "military", s->show_military);
     if (err == ESP_OK) err = nvs_set_u8(h, "route", s->show_route);
+    if (err == ESP_OK) err = nvs_set_u8(h, "card_look", s->card_look);
     if (err == ESP_OK) err = nvs_set_u8(h, "alert", s->alert);
     if (err == ESP_OK) err = nvs_set_i32(h, "alert_nm10", s->alert_nm10);
     if (err == ESP_OK) err = nvs_set_i32(h, "alert_ft", s->alert_ft);
@@ -275,6 +306,11 @@ static esp_err_t store_unlocked(const settings_t *s)
     if (err == ESP_OK) err = nvs_set_i32(h, "sleep_to", s->sleep_to);
     if (err == ESP_OK) err = nvs_set_str(h, "adb_key", s->adb_key);
     if (err == ESP_OK) err = nvs_set_i32(h, "adb_daily", s->adb_daily);
+    if (err == ESP_OK) err = nvs_set_str(h, "watch", s->watch);
+    if (err == ESP_OK) err = nvs_set_u8(h, "watch_mil", s->watch_military);
+    if (err == ESP_OK) err = nvs_set_u8(h, "watch_new", s->watch_new_type);
+    if (err == ESP_OK) err = nvs_set_u8(h, "wx_show", s->show_weather);
+    if (err == ESP_OK) err = nvs_set_str(h, "wx_station", s->wx_station);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     return err;

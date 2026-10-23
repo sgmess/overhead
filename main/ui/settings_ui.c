@@ -10,6 +10,7 @@
 #include "battery.h"
 #include "aircraft.h"
 #include "board.h"
+#include "weather.h"
 #include "bsp/display.h"
 #include "esp_app_desc.h"
 #include "esp_heap_caps.h"
@@ -59,7 +60,7 @@
 #define C_WARN 0xffb020
 
 #define IDLE_CLOSE_MS 60000 // nobody touching it: back to the radar
-#define BIND_MAX 64 // 43 in use
+#define BIND_MAX 64 // 47 in use
 
 typedef enum {
     B_BOOL,
@@ -794,6 +795,7 @@ static void build(void)
     add_switch("Aircraft on the ground", &s_ui->edit.show_ground);
     add_switch("Highlight military", &s_ui->edit.show_military);
     add_switch("Routes in the card", &s_ui->edit.show_route);
+    add_switch("Where to look, not the bearing", &s_ui->edit.card_look);
 
     section("FILTER");
     add_bits("Show", &s_ui->edit.show_kinds, KINDS, 4);
@@ -808,6 +810,15 @@ static void build(void)
     add_choice("Within", &s_ui->edit.alert_nm10, NM10_V, NM10_N, 6, "");
     add_choice("Below", &s_ui->edit.alert_ft, FT_V, FT_N, 8, " ft");
     add_switch("Emergency alert", &s_ui->edit.emerg_alert);
+    add_switch("Watch military aircraft", &s_ui->edit.watch_military);
+    add_switch("Watch types new here", &s_ui->edit.watch_new_type);
+    char watch[sizeof(s_ui->edit.watch) + 32];
+    snprintf(watch, sizeof(watch), s_ui->edit.watch[0] ? "Watchlist: %s. Set it on the web page."
+                                                       : "%sThe watchlist itself is set on the web page.",
+             s_ui->edit.watch);
+    lv_obj_t *wl = label(s_col, watch, &F_HEAD, C_DIM);
+    lv_label_set_long_mode(wl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(wl, LV_PCT(100));
 #if BOARD_HAS_SPEAKER
     add_switch("Chime", &s_ui->edit.alert_sound);
 #endif
@@ -817,6 +828,21 @@ static void build(void)
     add_switch("Airfields", &s_ui->edit.show_airfields);
     add_switch("Runway centrelines", &s_ui->edit.show_centrelines);
     if (!s_ui->edit.openaip_key[0]) label(s_col, "These need an OpenAIP key, set on the web page.", &F_HEAD, C_DIM);
+
+    section("WEATHER");
+    add_switch("Weather and runway in use", &s_ui->edit.show_weather);
+    weather_t wx;
+    weather_get(&wx);
+    char station[96];
+    if (s_ui->edit.wx_station[0]) {
+        snprintf(station, sizeof(station), "Station %s; another can be set on the web page.", s_ui->edit.wx_station);
+    } else {
+        snprintf(station, sizeof(station), "The nearest station%s%s%s; another can be set on the web page.",
+                 wx.valid ? " (" : "", wx.valid ? wx.station : "", wx.valid ? ")" : "");
+    }
+    lv_obj_t *st = label(s_col, station, &F_HEAD, C_DIM);
+    lv_label_set_long_mode(st, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(st, LV_PCT(100));
 
     section("TRAFFIC FEED");
     add_choice("Primary feed", &s_ui->edit.feed, FEED_V, FEED_N, 2, "");
@@ -971,5 +997,10 @@ void settings_ui_debug_scroll_stop(void)
 void settings_ui_debug_close(void)
 {
     close_screen();
+}
+
+void settings_ui_debug_scroll_to(int y)
+{
+    if (s_root) lv_obj_scroll_to_y(s_root, y, LV_ANIM_OFF);
 }
 #endif

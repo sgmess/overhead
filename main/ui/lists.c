@@ -33,14 +33,15 @@ static void fmt_row(const aircraft_t *a, const ac_screen_t *s, char cells[6][16]
 }
 
 // A list row's colours, set only when they change (shown keeps them): an
-// emergency red and anything overhead amber all the way across, or else the
-// callsign picked out, military, or by altitude
+// emergency red, anything overhead amber and the watchlist violet all the
+// way across, or else the callsign picked out, military, or by altitude
 static void color_row(lv_obj_t *const cells[6], lv_color_t shown[2], const aircraft_t *a, const ac_screen_t *s,
                       bool sel)
 {
     lv_color_t c[2] = {sel ? lv_color_hex(C_SELECT) : is_military(a) ? lv_color_hex(C_MIL) : alt_color(a),
                        lv_color_hex(C_TEXT)};
     if (a->emergency || s->alert) c[0] = c[1] = lv_color_hex(a->emergency ? C_EMERG : C_WARN);
+    else if (s->watch) c[0] = c[1] = lv_color_hex(C_WATCH);
     for (int p = 0; p < 2; p++) {
         if (lv_color_eq(c[p], shown[p])) continue;
         for (int k = p; k < (p ? 6 : 1); k++) lv_obj_set_style_text_color(cells[k], c[p], 0);
@@ -95,7 +96,7 @@ void update_list(void)
 // Within the middle of the circle, where it is widest.
 
 lv_obj_t *s_rlist;
-static lv_obj_t *s_rl_title, *s_rl_rows[RL_ROWS], *s_rl_cells[RL_ROWS][6];
+static lv_obj_t *s_rl_title, *s_rl_wx, *s_rl_rows[RL_ROWS], *s_rl_cells[RL_ROWS][6];
 static char s_rl_hex[RL_ROWS][8];
 
 void update_rlist(void)
@@ -106,6 +107,12 @@ void update_rlist(void)
     char cells[6][16], title[48];
     format_count(title, sizeof(title));
     set_text_if_changed(s_rl_title, s_last_update_us ? title : "Waiting for data");
+    // The weather near the centre on one line under the title
+    char l1[48], l2[64], wx[120];
+    const bool wx_shown = fmt_weather(l1, sizeof(l1), l2, sizeof(l2));
+    snprintf(wx, sizeof(wx), "%s%s%s", l1, l2[0] ? "  " LV_SYMBOL_BULLET "  " : "", l2);
+    set_text_if_changed(s_rl_wx, wx);
+    lv_obj_set_hidden(s_rl_wx, !wx_shown);
     for (int r = 0; r < RL_ROWS; r++) {
         if (r >= s_order_n) {
             s_rl_hex[r][0] = '\0';
@@ -158,6 +165,9 @@ void create_rlist(lv_obj_t *scr)
 
     s_rl_title = big_label(s_rlist, &F_CLOCK, C_TEXT);
     lv_obj_set_style_margin_bottom(s_rl_title, CARD_PAD / 2, 0);
+    s_rl_wx = big_label(s_rlist, &F_STATUS, C_DIM);
+    lv_obj_set_style_margin_bottom(s_rl_wx, CARD_PAD / 2, 0);
+    lv_obj_set_hidden(s_rl_wx, true);
     lv_obj_t *head = lv_obj_create(s_rlist);
     lv_obj_remove_style_all(head);
     lv_obj_set_size(head, RL_W, lv_font_get_line_height(&F_RL_HEAD) + 6);

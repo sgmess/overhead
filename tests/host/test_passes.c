@@ -1,0 +1,149 @@
+// main/core/passes.c on the PC: the log of aircraft overhead in a fake
+// flash partition, through restarts, round its ring, over another's data,
+// and after a write a power cut stopped.
+
+#include "fake.h"
+#define time(x) fake_time(x)
+#define CONFIG_SPIRAM_XIP_FROM_PSRAM 1 // so it uses flash
+#include "passes.c"
+
+#include <stdlib.h>
+
+#define SMALL (16 * SECTOR) // 2,048 passes
+
+// As at boot: the module's state gone, the flash as it was
+static void reboot(void)
+{
+    s_lock = NULL;
+    s_part = NULL;
+    s_base = 0;
+    s_recs = s_head = s_count = 0;
+    s_seq = 0;
+    s_oldest = 0;
+    s_day = -1;
+    s_n = s_next = 0;
+    passes_update(NULL, 0, 51.5, -0.1); // opens the log and reloads today's
+}
+
+static aircraft_t over(const char *hex, const char *callsign, int alt)
+{
+    aircraft_t a = {.lat = 51.5, .lon = -0.1, .alt_ft = alt};
+    strcpy(a.hex, hex);
+    strcpy(a.callsign, callsign);
+    strcpy(a.type, "A388");
+    strcpy(a.reg, "G-XLEA");
+    return a;
+}
+
+// One aircraft passes overhead, then is gone a while
+static void pass_over(const char *hex, const char *callsign)
+{
+    aircraft_t a = over(hex, callsign, 3000);
+    passes_update(&a, 1, 51.5, -0.1);
+    g_now += 120;
+    g_now_us += 120 * 1000000LL;
+    passes_update(NULL, 0, 51.5, -0.1);
+}
+
+static int sorted_ok, each_n;
+static time_t each_last;
+static void each(const pass_t *p, void *ctx)
+{
+    (void)ctx;
+    if (p->at < each_last) sorted_ok = 0;
+    each_last = p->at;
+    each_n++;
+}
+
+int main(void)
+{
+    setenv("TZ", "UTC0", 1);
+    tzset();
+    g_set.alert_nm10 = 20;
+    g_set.alert_ft = 5000;
+    g_now = 1792800000; // 23 Oct 2026, 00:00 UTC
+    uint8_t *flash = malloc(SMALL);
+    memset(flash, 0xff, SMALL);
+    g_parts[0] = (esp_partition_t){.label = "passes", .size = SMALL, .mem = flash};
+
+    printf("Through a restart\n");
+    reboot();
+    pass_over("400001", "BAW1");
+    passes_log_t log;
+    passes_log_info(&log);
+    CHECK(log.count == 1 && log.capacity == SMALL / 32, "logged: %d of %d", log.count, log.capacity);
+    reboot();
+    pass_t p[PASSES_MAX];
+    int n = passes_get(p, PASSES_MAX);
+    CHECK(n == 1 && strcmp(p[0].name, "BAW1") == 0 && strcmp(p[0].reg, "G-XLEA") == 0 && p[0].alt_ft == 3000 &&
+              strcmp(p[0].type, "A388") == 0,
+          "today's back after it: %d, %s %s %s", n, n ? p[0].name : "", n ? p[0].reg : "", n ? p[0].type : "");
+    // Overhead as it restarts: logged by the shutdown handler
+    aircraft_t a = over("400002", "BAW2", 2500);
+    passes_update(&a, 1, 51.5, -0.1);
+    g_shutdown();
+    reboot();
+    n = passes_get(p, PASSES_MAX);
+    CHECK(n == 2 && strcmp(p[0].name, "BAW2") == 0, "one overhead at the restart is logged too (%d)", n);
+    // The next day starts empty, the log keeps both
+    g_now += 86400;
+    reboot();
+    passes_log_info(&log);
+    CHECK(passes_get(p, PASSES_MAX) == 0 && log.count == 2, "the next day: none today, %d in the log", log.count);
+    n = passes_since(g_now - 2 * 86400, p, PASSES_MAX);
+    CHECK(n == 2 && strcmp(p[0].name, "BAW2") == 0, "the last two days: %d, newest first", n);
+
+    printf("Round the ring\n");
+    for (int k = 0; k < SMALL / 32 + 300; k++) {
+        pass_t q = {.alt_ft = 1000, .dist_nm = 0.5f, .at = g_now + k};
+        snprintf(q.name, sizeof(q.name), "T%d", k % 100000);
+        log_write(&q);
+    }
+    passes_log_info(&log);
+    CHECK(log.count <= log.capacity && log.count >= log.capacity - PER_SECTOR, "full: %d of %d", log.count,
+          log.capacity);
+    sorted_ok = 1;
+    each_n = 0;
+    each_last = 0;
+    passes_each(each, NULL);
+    CHECK(each_n == log.count && sorted_ok, "the download: %d, oldest first", each_n);
+    reboot();
+    passes_log_info(&log);
+    CHECK(log.count == each_n, "after a restart: %d", log.count);
+    n = passes_since(0, p, 3);
+    CHECK(n == 3 && strcmp(p[0].name, "T2347") == 0, "the newest first: %s", n ? p[0].name : "");
+
+    printf("A power cut part way through a write\n");
+    const int head = s_head;
+    flash[head * 32] = 0x12; // a record begun and never finished
+    flash[head * 32 + 4] = 0x00;
+    reboot();
+    CHECK(s_head % PER_SECTOR == 0 && s_head != head, "it starts on the next sector (%d, not %d)", s_head, head);
+    const int before = s_count;
+    pass_over("400003", "BAW3");
+    reboot();
+    passes_log_info(&log);
+    n = passes_since(0, p, 1);
+    CHECK(n == 1 && strcmp(p[0].name, "BAW3") == 0 && log.count >= before - PER_SECTOR,
+          "and logs on: %s, %d", n ? p[0].name : "", log.count);
+
+    printf("In the end of the OpenAIP cache\n");
+    const size_t aip = AIPCACHE_LOG_AT + SMALL;
+    uint8_t *aipmem = malloc(aip);
+    srand(1);
+    for (size_t k = 0; k < aip; k++) aipmem[k] = (uint8_t)rand(); // the map's old data
+    g_parts[0].size = 0;
+    g_parts[1] = (esp_partition_t){.label = "aipcache", .size = aip, .mem = aipmem};
+    uint8_t *map = malloc(AIPCACHE_LOG_AT);
+    memcpy(map, aipmem, AIPCACHE_LOG_AT);
+    reboot();
+    passes_log_info(&log);
+    CHECK(log.count == 0 && log.capacity == SMALL / 32, "nothing read from the map's data: %d", log.count);
+    pass_over("400004", "BAW4");
+    pass_over("400005", "BAW5");
+    reboot();
+    passes_log_info(&log);
+    CHECK(log.count == 2, "logged after it: %d", log.count);
+    CHECK(memcmp(map, aipmem, AIPCACHE_LOG_AT) == 0, "the map's part untouched");
+    return fake_done();
+}

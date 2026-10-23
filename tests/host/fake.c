@@ -4,6 +4,8 @@
 #include <string.h>
 
 #include "esp_http_client.h"
+#include "esp_partition.h"
+#include "esp_system.h"
 #include "nvs.h"
 
 #ifndef VERBOSE_DEFAULT
@@ -19,6 +21,39 @@ int g_fails;
 int g_nvs_fail, g_nvs_writes;
 int32_t g_nvs_day = -1, g_nvs_spent;
 struct fake_http g_http = {.status = 200};
+esp_partition_t g_parts[2];
+shutdown_handler_t g_shutdown;
+
+const esp_partition_t *esp_partition_find_first(esp_partition_type_t type, int subtype, const char *label)
+{
+    (void)type;
+    (void)subtype;
+    for (int k = 0; k < 2; k++) {
+        if (g_parts[k].size && g_parts[k].label && strcmp(g_parts[k].label, label) == 0) return &g_parts[k];
+    }
+    return NULL;
+}
+
+esp_err_t esp_partition_read(const esp_partition_t *p, size_t at, void *out, size_t n)
+{
+    if (at + n > p->size) return ESP_ERR_INVALID_ARG;
+    memcpy(out, p->mem + at, n);
+    return ESP_OK;
+}
+
+esp_err_t esp_partition_write(const esp_partition_t *p, size_t at, const void *in, size_t n)
+{
+    if (at + n > p->size) return ESP_ERR_INVALID_ARG;
+    for (size_t k = 0; k < n; k++) p->mem[at + k] &= ((const uint8_t *)in)[k]; // bits only clear
+    return ESP_OK;
+}
+
+esp_err_t esp_partition_erase_range(const esp_partition_t *p, size_t at, size_t n)
+{
+    if (at % 4096 || n % 4096 || at + n > p->size) return ESP_ERR_INVALID_ARG;
+    memset(p->mem + at, 0xff, n);
+    return ESP_OK;
+}
 
 time_t fake_time(time_t *t)
 {

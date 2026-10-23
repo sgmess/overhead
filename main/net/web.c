@@ -23,7 +23,10 @@
 #include "openaip.h"
 #include "ota.h"
 #include "settings.h"
+#include "passes.h"
 #include "stats.h"
+#include "types.h"
+#include "weather.h"
 #include "zones.h"
 
 static const char *TAG = "web";
@@ -245,6 +248,34 @@ static void add_stats(cJSON *json)
         cJSON_AddItemToArray(airlines, al);
     }
 
+    // Types: the most today, and today's seen here on the fewest days
+    cJSON *types = cJSON_AddArrayToObject(o, "types");
+    for (int k = 0; k < 5 && st.types[k].count; k++) {
+        cJSON *t = cJSON_CreateObject();
+        cJSON_AddStringToObject(t, "type", st.types[k].type);
+        const char *name = type_name(st.types[k].type);
+        if (name) cJSON_AddStringToObject(t, "name", name);
+        cJSON_AddNumberToObject(t, "count", st.types[k].count);
+        cJSON_AddItemToArray(types, t);
+    }
+    char first[32];
+    cJSON *rare = cJSON_AddArrayToObject(o, "rare");
+    for (int k = 0; k < STATS_RARE_TYPES && st.rare[k].days; k++) {
+        cJSON *t = cJSON_CreateObject();
+        cJSON_AddStringToObject(t, "type", st.rare[k].type);
+        const char *name = type_name(st.rare[k].type);
+        if (name) cJSON_AddStringToObject(t, "name", name);
+        cJSON_AddNumberToObject(t, "count", st.rare[k].count);
+        cJSON_AddNumberToObject(t, "days", st.rare[k].days);
+        fmt_day(st.rare[k].first, first, sizeof(first));
+        cJSON_AddStringToObject(t, "first", first);
+        cJSON_AddItemToArray(rare, t);
+    }
+    cJSON_AddNumberToObject(o, "types_today", st.types_today);
+    cJSON_AddNumberToObject(o, "types_known", st.types_known);
+    cJSON_AddNumberToObject(o, "new_today", st.new_today);
+    cJSON_AddBoolToObject(o, "learning", st.learning);
+
     // The days before
     if (st.week_days) {
         cJSON_AddNumberToObject(o, "week_avg", st.week_avg);
@@ -375,6 +406,7 @@ static esp_err_t on_state(httpd_req_t *req)
     cJSON_AddNumberToObject(set, "trail_s", s->trail_s);
     cJSON_AddBoolToObject(set, "show_military", s->show_military);
     cJSON_AddBoolToObject(set, "show_route", s->show_route);
+    cJSON_AddBoolToObject(set, "card_look", s->card_look);
     cJSON_AddBoolToObject(set, "alert", s->alert);
     cJSON_AddNumberToObject(set, "alert_nm10", s->alert_nm10);
     cJSON_AddNumberToObject(set, "alert_ft", s->alert_ft);
@@ -390,6 +422,11 @@ static esp_err_t on_state(httpd_req_t *req)
     cJSON_AddNumberToObject(set, "sleep_to", s->sleep_to);
     cJSON_AddBoolToObject(set, "has_adb_key", s->adb_key[0] != '\0'); // nor this one
     cJSON_AddNumberToObject(set, "adb_daily", s->adb_daily);
+    cJSON_AddStringToObject(set, "watch", s->watch);
+    cJSON_AddBoolToObject(set, "watch_military", s->watch_military);
+    cJSON_AddBoolToObject(set, "watch_new_type", s->watch_new_type);
+    cJSON_AddBoolToObject(set, "show_weather", s->show_weather);
+    cJSON_AddStringToObject(set, "wx_station", s->wx_station);
 
     openaip_status_t oa;
     openaip_get_status(&oa);
@@ -408,6 +445,20 @@ static esp_err_t on_state(httpd_req_t *req)
     cJSON_AddStringToObject(ad, "detail", adb.detail);
     cJSON_AddNumberToObject(ad, "used_today", adb.used_today);
     cJSON_AddNumberToObject(ad, "lookups", adb.lookups);
+
+    weather_t wx;
+    weather_get(&wx);
+    cJSON *wo = cJSON_AddObjectToObject(json, "weather");
+    cJSON_AddBoolToObject(wo, "valid", wx.valid);
+    if (wx.valid) {
+        cJSON_AddStringToObject(wo, "station", wx.station);
+        cJSON_AddStringToObject(wo, "name", wx.name);
+        cJSON_AddStringToObject(wo, "raw", wx.raw);
+        if (wx.obs) cJSON_AddNumberToObject(wo, "age_min", (double)((time(NULL) - wx.obs) / 60));
+        cJSON_AddNumberToObject(wo, "landing", wx.landing);
+        cJSON_AddNumberToObject(wo, "departing", wx.departing);
+    }
+    cJSON_AddStringToObject(wo, "detail", wx.detail);
     return send_json(req, json);
 }
 
@@ -499,6 +550,7 @@ static esp_err_t on_settings(httpd_req_t *req)
     take_int(json, "trail_s", &s.trail_s);
     take_bool(json, "show_military", &s.show_military);
     take_bool(json, "show_route", &s.show_route);
+    take_bool(json, "card_look", &s.card_look);
     take_bool(json, "alert", &s.alert);
     take_int(json, "alert_nm10", &s.alert_nm10);
     take_int(json, "alert_ft", &s.alert_ft);
@@ -513,6 +565,34 @@ static esp_err_t on_settings(httpd_req_t *req)
     take_int(json, "sleep_from", &s.sleep_from);
     take_int(json, "sleep_to", &s.sleep_to);
     take_int(json, "adb_daily", &s.adb_daily);
+    take_bool(json, "watch_military", &s.watch_military);
+    take_bool(json, "watch_new_type", &s.watch_new_type);
+    take_bool(json, "show_weather", &s.show_weather);
+    const cJSON *station = cJSON_GetObjectItemCaseSensitive(json, "wx_station");
+    if (cJSON_IsString(station)) {
+        // Upper case, as stations are written, without spaces
+        char up[sizeof(s.wx_station)] = "";
+        size_t k = 0;
+        bool ok = true;
+        for (const char *c = station->valuestring; *c && ok; c++) {
+            if (*c == ' ') continue;
+            ok = k + 1 < sizeof(up);
+            if (ok) up[k++] = (*c >= 'a' && *c <= 'z') ? *c - 32 : *c;
+        }
+        if (!ok) {
+            cJSON_Delete(json);
+            return send_result(req, ESP_ERR_INVALID_ARG, "A weather station is its four-letter ICAO code, e.g. EGLL");
+        }
+        strlcpy(s.wx_station, up, sizeof(s.wx_station));
+    }
+    const cJSON *watch = cJSON_GetObjectItemCaseSensitive(json, "watch");
+    if (cJSON_IsString(watch)) {
+        if (strlen(watch->valuestring) >= sizeof(s.watch)) {
+            cJSON_Delete(json);
+            return send_result(req, ESP_ERR_INVALID_ARG, "The watchlist is up to 99 characters");
+        }
+        strlcpy(s.watch, watch->valuestring, sizeof(s.watch));
+    }
     const cJSON *tz = cJSON_GetObjectItemCaseSensitive(json, "tz");
     if (cJSON_IsString(tz)) {
         if (strlen(tz->valuestring) >= sizeof(s.tz)) {
@@ -544,7 +624,8 @@ static esp_err_t on_settings(httpd_req_t *req)
     if (!settings_valid(&s)) {
         return send_result(req, ESP_ERR_INVALID_ARG,
                            "A value is out of range (countries are two-letter codes, up to four; a timezone is a "
-                           "POSIX TZ string such as GMT0BST,M3.5.0/1,M10.5.0)");
+                           "POSIX TZ string such as GMT0BST,M3.5.0/1,M10.5.0; the watchlist is letters, digits, "
+                           "- and *, separated by commas)");
     }
     // Applied at once, except the orientation, which restarts. Waits until
     // applied, so the page's next look at the state shows it.
@@ -582,23 +663,17 @@ static esp_err_t on_debug_screen(httpd_req_t *req)
     lv_draw_buf_destroy(b);
     return err;
 }
+// The settings screen open, and with ?y= scrolled that many pixels down
 static esp_err_t on_debug_settings(httpd_req_t *req)
 {
+    char query[24], y[8] = "";
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) httpd_query_key_value(query, "y", y, sizeof(y));
     board_lock();
     settings_ui_open();
+    if (y[0]) settings_ui_debug_scroll_to(atoi(y));
     board_unlock();
     return send_result(req, ESP_OK, NULL);
 }
-// Times the display for ?ms= (5 s) doing one of (?what=):
-//   settings  scrolling the settings screen up and down
-//   scope     the radar, its whole scope redrawn every frame
-//   radar     the radar as it is, with nothing forced
-//   big       the big view as it is
-//   covered   the settings screen open and still, over the radar
-// Then frames a second, the average and longest refresh, the share of the
-// time refreshing and of that in the flush and waiting (see bench.h), the
-// pixels drawn, the redraw requests, and internal RAM (now, and the least
-// since boot).
 // ?n=5&keep=1: AeroDataBox's free endpoint n times, on one connection
 // with keep=1, else a new one each; the times in ms and the heap held
 static esp_err_t on_debug_adb(httpd_req_t *req)
@@ -624,6 +699,16 @@ static esp_err_t on_debug_adb(httpd_req_t *req)
     return r;
 }
 
+// Times the display for ?ms= (5 s) doing one of (?what=):
+//   settings  scrolling the settings screen up and down
+//   scope     the radar, its whole scope redrawn every frame
+//   radar     the radar as it is, with nothing forced
+//   big       the big view as it is
+//   covered   the settings screen open and still, over the radar
+// Then frames a second, the average and longest refresh, the share of the
+// time refreshing and of that in the flush and waiting (see bench.h), the
+// pixels drawn, the redraw requests, and internal RAM (now, and the least
+// since boot).
 static esp_err_t on_debug_bench(httpd_req_t *req)
 {
     char query[48], ms_s[8] = "5000", what[12] = "settings";
@@ -711,6 +796,149 @@ static esp_err_t on_debug_select(httpd_req_t *req)
 #endif
 
 // The timezone list, shared with the settings screen
+#define PASSES_JSON_MAX 3000 // rows the page shows at most; the CSV has every one
+
+// Aircraft overhead (passes.h), newest first: ?days=1 today (the default),
+// 7 or 30 those days, today's included, 0 every one kept, up to
+// PASSES_JSON_MAX. Apart from the state, which the page asks for every few
+// seconds, as this can be thousands of rows.
+static esp_err_t on_passes(httpd_req_t *req)
+{
+    char query[16], days_s[6] = "1";
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        httpd_query_key_value(query, "days", days_s, sizeof(days_s));
+    }
+    const int days = atoi(days_s) < 0 ? 1 : atoi(days_s);
+    pass_t *p = heap_caps_malloc(PASSES_JSON_MAX * sizeof(*p), MALLOC_CAP_SPIRAM);
+    if (!p) return httpd_resp_send_500(req);
+    int n;
+    if (days == 1) {
+        n = passes_get(p, PASSES_JSON_MAX);
+    } else {
+        time_t since = 0;
+        if (days > 0) {
+            const time_t now = time(NULL);
+            struct tm tm;
+            localtime_r(&now, &tm);
+            tm.tm_hour = tm.tm_min = tm.tm_sec = 0;
+            tm.tm_mday -= days - 1;
+            tm.tm_isdst = -1;
+            since = mktime(&tm);
+        }
+        n = passes_since(since, p, PASSES_JSON_MAX);
+    }
+    cJSON *list = cJSON_CreateArray();
+    char day[32];
+    for (int k = 0; k < n; k++) {
+        cJSON *o = cJSON_CreateObject();
+        cJSON_AddStringToObject(o, "name", p[k].name);
+        cJSON_AddStringToObject(o, "type", p[k].type);
+        const char *name = type_name(p[k].type);
+        if (name) cJSON_AddStringToObject(o, "type_name", name);
+        cJSON_AddStringToObject(o, "reg", p[k].reg);
+        cJSON_AddNumberToObject(o, "alt", p[k].alt_ft);
+        cJSON_AddNumberToObject(o, "dist", (int)(p[k].dist_nm * 10 + 0.5f) / 10.0);
+        if (days != 1) {
+            fmt_day(p[k].at, day, sizeof(day));
+            cJSON_AddStringToObject(o, "day", day);
+        }
+        add_time(o, "at", p[k].at);
+        cJSON_AddItemToArray(list, o);
+    }
+    heap_caps_free(p);
+    cJSON *json = cJSON_CreateObject();
+    cJSON_AddItemToObject(json, "passes", list);
+    cJSON_AddBoolToObject(json, "capped", n == PASSES_JSON_MAX);
+    // What counts as overhead: the overhead alert's distance and ceiling
+    cJSON_AddNumberToObject(json, "within_nm", settings()->alert_nm10 / 10.0);
+    cJSON_AddNumberToObject(json, "below_ft", settings()->alert_ft);
+    passes_log_t log;
+    passes_log_info(&log);
+    cJSON *l = cJSON_AddObjectToObject(json, "log");
+    cJSON_AddNumberToObject(l, "count", log.count);
+    cJSON_AddNumberToObject(l, "capacity", log.capacity);
+    if (log.count) {
+        fmt_day(log.oldest, day, sizeof(day));
+        cJSON_AddStringToObject(l, "since", day);
+    }
+    return send_json(req, json);
+}
+
+// The CSV: a buffer of rows, sent a chunk at a time
+typedef struct {
+    httpd_req_t *req;
+    char buf[4096];
+    size_t len;
+    esp_err_t err;
+} csv_t;
+
+static void csv_flush(csv_t *c)
+{
+    if (c->len && c->err == ESP_OK) c->err = httpd_resp_send_chunk(c->req, c->buf, c->len);
+    c->len = 0;
+}
+
+// s as a quoted CSV field: quotes doubled
+static void csv_field(char *out, size_t n, const char *s)
+{
+    size_t k = 0;
+    if (k + 1 < n) out[k++] = '"';
+    for (; *s && k + 3 < n; s++) {
+        if (*s == '"') out[k++] = '"';
+        out[k++] = *s;
+    }
+    if (k + 1 < n) out[k++] = '"';
+    out[k] = '\0';
+}
+
+static void csv_row(const pass_t *p, void *ctx)
+{
+    csv_t *c = ctx;
+    struct tm tm;
+    localtime_r(&p->at, &tm);
+    char when[24], name[24], reg[28], type[16], tname[96];
+    strftime(when, sizeof(when), "%Y-%m-%d,%H:%M", &tm);
+    csv_field(name, sizeof(name), p->name);
+    csv_field(reg, sizeof(reg), p->reg);
+    csv_field(type, sizeof(type), p->type);
+    const char *tn = type_name(p->type);
+    csv_field(tname, sizeof(tname), tn ? tn : "");
+    char row[200];
+    const int len = snprintf(row, sizeof(row), "%s,%s,%s,%s,%s,%d,%.1f\r\n", when, name, reg, type, tname, p->alt_ft,
+                             p->dist_nm);
+    if (len <= 0 || len >= (int)sizeof(row)) return;
+    if (c->len + len > sizeof(c->buf)) csv_flush(c);
+    memcpy(c->buf + c->len, row, len);
+    c->len += len;
+}
+
+// Every pass kept, oldest first, then those overhead now (as far as they
+// have got: the table shows them too), as a CSV download
+static esp_err_t on_passes_csv(httpd_req_t *req)
+{
+    csv_t *c = heap_caps_calloc(1, sizeof(*c), MALLOC_CAP_SPIRAM);
+    if (!c) return httpd_resp_send_500(req);
+    c->req = req;
+    httpd_resp_set_type(req, "text/csv");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"overhead-passes.csv\"");
+    static const char HEAD[] = "date,time,aircraft,registration,type,type_name,altitude_ft,closest_nm\r\n";
+    memcpy(c->buf, HEAD, sizeof(HEAD) - 1);
+    c->len = sizeof(HEAD) - 1;
+    passes_each(csv_row, c);
+    pass_t *p = heap_caps_malloc(PASSES_MAX * sizeof(*p), MALLOC_CAP_SPIRAM);
+    passes_log_t log;
+    passes_log_info(&log);
+    // Without a flash log, today's from RAM (overhead now first in it); with
+    // one, those overhead now, which aren't in it yet
+    const int n = !p ? 0 : log.capacity ? passes_active(p, PASSES_MAX) : passes_get(p, PASSES_MAX);
+    for (int k = n - 1; k >= 0; k--) csv_row(&p[k], c);
+    heap_caps_free(p);
+    csv_flush(c);
+    const esp_err_t err = c->err == ESP_OK ? httpd_resp_send_chunk(req, NULL, 0) : c->err;
+    heap_caps_free(c);
+    return err;
+}
+
 static esp_err_t on_zones(httpd_req_t *req)
 {
     cJSON *list = cJSON_CreateArray();
@@ -794,7 +1022,7 @@ void web_start(void)
 #if CONFIG_SPIRAM && CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
     cfg.task_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT; // see commit_and_restart()
 #endif
-    cfg.max_uri_handlers = 20;
+    cfg.max_uri_handlers = 24;
     cfg.max_open_sockets = 5;
     // A phone opens several connections at once and leaves them open
     cfg.lru_purge_enable = true;
@@ -815,6 +1043,8 @@ void web_start(void)
         {.uri = "/api/forget", .method = HTTP_POST, .handler = on_forget},
         {.uri = "/api/brightness", .method = HTTP_POST, .handler = on_brightness},
         {.uri = "/api/zones", .method = HTTP_GET, .handler = on_zones},
+        {.uri = "/api/passes", .method = HTTP_GET, .handler = on_passes},
+        {.uri = "/api/passes.csv", .method = HTTP_GET, .handler = on_passes_csv},
 #if CONFIG_LV_USE_SNAPSHOT
         {.uri = "/api/debug/screen", .method = HTTP_GET, .handler = on_debug_screen},
         {.uri = "/api/debug/settings", .method = HTTP_POST, .handler = on_debug_settings},
