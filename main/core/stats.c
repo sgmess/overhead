@@ -64,7 +64,7 @@ typedef struct {
 typedef struct {
     char type[4];
     uint16_t days;  // days it was seen on
-    uint16_t first; // the day first seen, as day_no()
+    uint16_t first; // the day first seen, as day_no(): a local date
     uint16_t last;  // and last
 } book_entry_t;
 
@@ -171,10 +171,26 @@ static bool count_airline(const char *callsign)
     return true; // full: uncounted
 }
 
-// A local day as a number: days since 1970, from its midnight
-static uint16_t day_no(time_t midnight_t)
+// A local date as a number: days since 1 Jan 1970, from the calendar, so
+// each date has its own whatever the clocks do (from its midnight, two
+// days in New Zealand's change of UTC offset came out as one). For the UK
+// the same numbers as before, which were midnight's UTC day.
+static uint16_t day_no(const struct tm *tm)
 {
-    return (uint16_t)((midnight_t + 43200) / 86400); // noon: a clock change can't move it a day
+    int y = tm->tm_year + 1900;
+    const int m = tm->tm_mon + 1, d = tm->tm_mday;
+    y -= m <= 2;
+    const int era = (y >= 0 ? y : y - 399) / 400;
+    const int yoe = y - era * 400;
+    const int doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+    return (uint16_t)(era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468);
+}
+
+// Noon on day n, local time, for showing its date
+static time_t day_noon(uint16_t n)
+{
+    struct tm tm = {.tm_year = 70, .tm_mon = 0, .tm_mday = 1 + n, .tm_hour = 12, .tm_isdst = -1};
+    return mktime(&tm); // mktime() puts the 1st + n days right
 }
 
 static bool same_type(const char a[4], const char *b)
@@ -185,7 +201,7 @@ static bool same_type(const char a[4], const char *b)
 // The feed's types for airport vehicles and towers, which aren't aircraft
 static bool not_aircraft(const char *type)
 {
-    return strncmp(type, "GND", 4) == 0 || strncmp(type, "TWR", 4) == 0;
+    return strncmp(type, "GND", 4) == 0 || strncmp(type, "TWR", 4) == 0 || strncmp(type, "SERV", 4) == 0;
 }
 
 // Count one more aircraft of type today, and the day in the book. With the
@@ -509,7 +525,7 @@ void stats_update(const aircraft_t *list, int n, double lat, double lon, int ran
         // And its type, the same
         if (!e->typed && a->type[0]) {
             e->typed = true;
-            if (count_type(a->type, day_no(midnight(&tm)))) s_dirty = true;
+            if (count_type(a->type, day_no(&tm))) s_dirty = true;
         }
         if (!a->on_ground && a->alt_ft != AC_ALT_UNKNOWN && a->alt_ft <= ALT_MAX_FT) {
             record(&s_today.highest, a, a->alt_ft, now);
@@ -536,7 +552,7 @@ bool stats_new_type(const char *type)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     struct tm tm;
     localtime_r(&s_today.since, &tm);
-    const uint16_t today = day_no(midnight(&tm));
+    const uint16_t today = day_no(&tm);
     if (!book_learning(today)) {
         for (int b = 0; b < BOOK_N && s_types->book[b].type[0]; b++) {
             const book_entry_t *e = &s_types->book[b];
@@ -590,7 +606,7 @@ void stats_get(stats_t *out)
     // Types: the most today, and today's seen on the fewest days
     struct tm since_tm;
     localtime_r(&t->since, &since_tm);
-    const uint16_t today = day_no(midnight(&since_tm)); // the day being counted
+    const uint16_t today = day_no(&since_tm); // the day being counted
     for (int k = 0; s_types && k < TYPE_SLOTS && s_types->today[k].type[0]; k++) {
         const type_count_t *c = &s_types->today[k];
         if (not_aircraft(c->type)) continue; // counted by an older build
@@ -600,7 +616,7 @@ void stats_get(stats_t *out)
             const book_entry_t *e = &s_types->book[b];
             if (memcmp(e->type, c->type, 4) == 0) {
                 st.days = e->days;
-                st.first = (time_t)e->first * 86400 + 43200; // noon UTC that day: the right date anywhere
+                st.first = day_noon(e->first);
                 if (e->first == e->last && e->days == 1 && !book_learning(today)) out->new_today++;
                 break;
             }

@@ -30,17 +30,26 @@ static const char *TAG = "passes";
 
 // A pass in flash: 32 bytes, so 128 a sector. Written once; a sector is
 // erased as the ring comes round to it.
+//
+// The first records (v1.0.11 before its release) had a 32-bit sequence
+// number and the distance in the last byte, leaving 7 for the registration,
+// which cut RA-96017 to RA-9601. Now the distance shares the sequence
+// number's word, which needs 24 bits at most, and the registration has 8.
+// Which is which: the CRC's seed. Both are read.
 typedef struct {
-    uint32_t seq;   // 1 up; 0xffffffff where erased
+    uint32_t seq_dist; // the sequence number (1 up) in the low 24 bits, the
+                       // closest in tenths of a NM in the top 8; 0xffffffff where erased
     uint32_t at;
     uint16_t alt_ft;
-    uint16_t crc;   // CRC-16 of the record with this 0
-    char type[4];   // these three not terminated when full
+    uint16_t crc;      // CRC-16 of the record with this 0, from CRC_SEED
+    char type[4];      // these three not terminated when full
     char name[8];
-    char reg[7];
-    uint8_t dist_10; // tenths of a NM
+    char reg[8];
 } rec_t;
 _Static_assert(sizeof(rec_t) == 32, "a record is 32 bytes");
+#define CRC_SEED 0x5032    // these records
+#define CRC_SEED_V1 0      // the first: seq 32 bits, reg 7, the distance in the last byte
+#define SEQ_MAX 0xfffffe   // never all ones with a distance of 255: that is erased
 #define PER_SECTOR (SECTOR / (int)sizeof(rec_t))
 
 typedef struct {
@@ -68,18 +77,26 @@ static time_t s_oldest;
 
 // ---------------------------------------------------------------- records
 
-static uint16_t rec_crc(const rec_t *r)
+static uint16_t rec_crc(const rec_t *r, uint16_t seed)
 {
     rec_t c = *r;
     c.crc = 0;
-    return esp_rom_crc16_le(0, (const uint8_t *)&c, sizeof(c));
+    return esp_rom_crc16_le(seed, (const uint8_t *)&c, sizeof(c));
 }
 
-// A record that was written whole: anything else is erased flash, one cut
-// off by a power cut, or what the OpenAIP map left there
-static bool rec_ok(const rec_t *r)
+// A record that was written whole, and in which format: 2 now, 1 the first;
+// 0 for anything else, erased flash, one cut off by a power cut, or what the
+// OpenAIP map left there
+static int rec_ok(const rec_t *r)
 {
-    return r->seq != 0xffffffff && r->seq && r->at > 1700000000 && r->at < 4102444800u && r->crc == rec_crc(r);
+    if (r->seq_dist == 0xffffffff || r->at <= 1700000000 || r->at >= 4102444800u) return 0;
+    if (r->crc == rec_crc(r, CRC_SEED)) return r->seq_dist & 0xffffff ? 2 : 0;
+    return r->crc == rec_crc(r, CRC_SEED_V1) && r->seq_dist ? 1 : 0;
+}
+
+static uint32_t rec_seq(const rec_t *r, int format)
+{
+    return format == 2 ? r->seq_dist & 0xffffff : r->seq_dist;
 }
 
 // Copy up to n chars, stopping at a terminator
@@ -100,23 +117,27 @@ static void put_field(char *dst, size_t n, const char *src)
     memcpy(dst, src, strnlen(src, n));
 }
 
-static void to_pass(const rec_t *r, pass_t *p)
+// r, which rec_ok() said is format, into p
+static void to_pass(const rec_t *r, int format, pass_t *p)
 {
-    *p = (pass_t){.alt_ft = r->alt_ft, .dist_nm = r->dist_10 / 10.0f, .at = (time_t)r->at};
+    const uint8_t dist_10 = format == 2 ? r->seq_dist >> 24 : (uint8_t)r->reg[7];
+    *p = (pass_t){.alt_ft = r->alt_ft, .dist_nm = dist_10 / 10.0f, .at = (time_t)r->at};
     copy_field(p->type, sizeof(p->type), r->type, sizeof(r->type));
     copy_field(p->name, sizeof(p->name), r->name, sizeof(r->name));
-    copy_field(p->reg, sizeof(p->reg), r->reg, sizeof(r->reg));
+    copy_field(p->reg, sizeof(p->reg), r->reg, format == 2 ? sizeof(r->reg) : sizeof(r->reg) - 1);
 }
 
-static void to_rec(const pass_t *p, rec_t *r)
+// p as the record numbered seq
+static void to_rec(const pass_t *p, uint32_t seq, rec_t *r)
 {
-    *r = (rec_t){.at = (uint32_t)p->at};
-    r->alt_ft = p->alt_ft < 0 ? 0 : p->alt_ft > 65535 ? 65535 : (uint16_t)p->alt_ft;
     const float d = p->dist_nm * 10;
-    r->dist_10 = d > 255 ? 255 : (uint8_t)lroundf(d);
+    const uint32_t dist_10 = d > 255 ? 255 : (uint32_t)lroundf(d);
+    *r = (rec_t){.seq_dist = (seq & 0xffffff) | dist_10 << 24, .at = (uint32_t)p->at};
+    r->alt_ft = p->alt_ft < 0 ? 0 : p->alt_ft > 65535 ? 65535 : (uint16_t)p->alt_ft;
     put_field(r->type, sizeof(r->type), p->type);
     put_field(r->name, sizeof(r->name), p->name);
     put_field(r->reg, sizeof(r->reg), p->reg);
+    r->crc = rec_crc(r, CRC_SEED);
 }
 
 // ---------------------------------------------------------------- the flash log
@@ -145,11 +166,12 @@ static void log_open(void)
         if (read_sector(sct, s_sector) != ESP_OK) continue;
         for (int k = 0; k < PER_SECTOR; k++) {
             const rec_t *r = &s_sector[k];
-            if (!rec_ok(r)) continue;
+            const int format = rec_ok(r);
+            if (!format) continue;
             s_count++;
             if (!s_oldest || (time_t)r->at < s_oldest) s_oldest = r->at;
-            if (r->seq > s_seq) {
-                s_seq = r->seq;
+            if (rec_seq(r, format) > s_seq) {
+                s_seq = rec_seq(r, format);
                 newest = sct * PER_SECTOR + k;
             }
         }
@@ -195,20 +217,20 @@ static void log_write(const pass_t *p)
         // Round to an old sector: what it held goes, and the oldest is then
         // the first of the sector after it
         if (read_sector(sector, s_sector) == ESP_OK) {
-            for (int k = 0; k < PER_SECTOR; k++) s_count -= rec_ok(&s_sector[k]);
+            for (int k = 0; k < PER_SECTOR; k++) s_count -= rec_ok(&s_sector[k]) != 0;
         }
         if (esp_partition_erase_range(s_part, s_base + (size_t)sector * SECTOR, SECTOR) != ESP_OK) return;
         s_oldest = oldest_at();
     }
     rec_t r;
-    to_rec(p, &r);
-    r.seq = ++s_seq;
-    r.crc = rec_crc(&r);
+    if (s_seq < SEQ_MAX) s_seq++; // 16 million passes: decades
+    to_rec(p, s_seq, &r);
     if (esp_partition_write(s_part, s_base + (size_t)s_head * sizeof(rec_t), &r, sizeof(r)) != ESP_OK) {
         ESP_LOGW(TAG, "not logged");
         return;
     }
-    if (!s_count || !s_oldest) s_oldest = r.at;
+    // Logged as it ends, timed at its closest: it can be the oldest
+    if (!s_oldest || (time_t)r.at < s_oldest) s_oldest = r.at;
     s_count++;
     s_head = (s_head + 1) % s_recs;
 }
@@ -364,16 +386,19 @@ void passes_log_info(passes_log_t *out)
     xSemaphoreGive(s_lock);
 }
 
-// A logged pass: its time, and where it is
+// A logged pass: its time, where it is, and its number, which tells it from
+// another written there since it was found
 typedef struct {
     uint32_t at;
+    uint32_t seq;
     uint16_t idx;
 } found_t;
 
 static int newest_first(const void *a, const void *b)
 {
     const found_t *x = a, *y = b;
-    return x->at != y->at ? (x->at < y->at ? 1 : -1) : (x->idx < y->idx ? 1 : -1);
+    if (x->at != y->at) return x->at < y->at ? 1 : -1;
+    return x->seq < y->seq ? 1 : x->seq > y->seq ? -1 : 0;
 }
 
 static int oldest_first(const void *a, const void *b)
@@ -395,19 +420,27 @@ static int scan(time_t since, found_t *found, rec_t *buf)
         if (err != ESP_OK) continue;
         for (int k = 0; k < PER_SECTOR; k++) {
             const rec_t *r = &buf[k];
-            if (rec_ok(r) && (time_t)r->at >= since) found[n++] = (found_t){r->at, (uint16_t)(sct * PER_SECTOR + k)};
+            const int format = rec_ok(r);
+            if (format && (time_t)r->at >= since) {
+                found[n++] = (found_t){r->at, rec_seq(r, format), (uint16_t)(sct * PER_SECTOR + k)};
+            }
         }
     }
     return n;
 }
 
-// The record at idx; false if it has gone meanwhile
-static bool read_rec(int idx, rec_t *r)
+// The pass f found, into p; false if it has gone meanwhile, its slot
+// erased or written again as the ring came round
+static bool read_found(const found_t *f, pass_t *p)
 {
+    rec_t r;
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    const bool ok = esp_partition_read(s_part, s_base + (size_t)idx * sizeof(*r), r, sizeof(*r)) == ESP_OK && rec_ok(r);
+    const bool read = esp_partition_read(s_part, s_base + (size_t)f->idx * sizeof(r), &r, sizeof(r)) == ESP_OK;
     xSemaphoreGive(s_lock);
-    return ok;
+    const int format = read ? rec_ok(&r) : 0;
+    if (!format || rec_seq(&r, format) != f->seq) return false;
+    to_pass(&r, format, p);
+    return true;
 }
 
 int passes_since(time_t since, pass_t *out, int max)
@@ -423,10 +456,7 @@ int passes_since(time_t since, pass_t *out, int max)
         xSemaphoreGive(s_lock);
         const int f = scan(since, found, buf);
         qsort(found, f, sizeof(*found), newest_first);
-        rec_t r;
-        for (int k = 0; k < f && n < max; k++) {
-            if (read_rec(found[k].idx, &r)) to_pass(&r, &out[n++]);
-        }
+        for (int k = 0; k < f && n < max; k++) n += read_found(&found[k], &out[n]);
     }
     heap_caps_free(found);
     heap_caps_free(buf);
@@ -441,12 +471,9 @@ void passes_each(void (*each)(const pass_t *p, void *ctx), void *ctx)
     if (found && buf) {
         const int f = scan(0, found, buf);
         qsort(found, f, sizeof(*found), oldest_first);
-        rec_t r;
+        pass_t p;
         for (int k = 0; k < f; k++) {
-            if (!read_rec(found[k].idx, &r)) continue;
-            pass_t p;
-            to_pass(&r, &p);
-            each(&p, ctx);
+            if (read_found(&found[k], &p)) each(&p, ctx);
         }
     }
     heap_caps_free(found);

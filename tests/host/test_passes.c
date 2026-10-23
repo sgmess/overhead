@@ -7,6 +7,7 @@
 #define CONFIG_SPIRAM_XIP_FROM_PSRAM 1 // so it uses flash
 #include "passes.c"
 
+#include <math.h>
 #include <stdlib.h>
 
 #define SMALL (16 * SECTOR) // 2,048 passes
@@ -45,14 +46,24 @@ static void pass_over(const char *hex, const char *callsign)
     passes_update(NULL, 0, 51.5, -0.1);
 }
 
-static int sorted_ok, each_n;
+static int sorted_ok, each_n, newer_seen;
 static time_t each_last;
+static bool overwrite_in_each;
 static void each(const pass_t *p, void *ctx)
 {
     (void)ctx;
     if (p->at < each_last) sorted_ok = 0;
     each_last = p->at;
     each_n++;
+    if (p->name[0] == 'N') newer_seen++;
+    if (overwrite_in_each && each_n == 1) {
+        // As the fetch task would meanwhile: enough to come round to the start
+        for (int k = 0; k < 3 * PER_SECTOR; k++) {
+            pass_t n = {.alt_ft = 1, .dist_nm = 1, .at = 1792000000 + k}; // timed earlier, so out of order if read
+            snprintf(n.name, sizeof(n.name), "N%d", k % 1000);
+            log_write(&n);
+        }
+    }
 }
 
 int main(void)
@@ -195,6 +206,56 @@ int main(void)
     each_last = 0;
     passes_each(each, NULL);
     CHECK(sorted_ok && each_n == SMALL / 32, "the download still oldest first: %d", each_n);
+
+    printf("The third review\n");
+    // A registration of 8
+    memset(flash, 0xff, SMALL);
+    reboot();
+    pass_t r8 = {.alt_ft = 9000, .dist_nm = 3.4f, .at = t0};
+    strcpy(r8.name, "AFL1234");
+    strcpy(r8.reg, "RA-96017");
+    strcpy(r8.type, "IL96");
+    log_write(&r8);
+    n = passes_since(0, p, 3000);
+    CHECK(n == 1 && strcmp(p[0].reg, "RA-96017") == 0 && fabsf(p[0].dist_nm - 3.4f) < 0.01f,
+          "an 8-character registration kept: %s, %.1f NM", n ? p[0].reg : "", n ? p[0].dist_nm : 0);
+    // A record from before, as the first build wrote them, still read
+    rec_t v1 = {.seq_dist = 5, .at = (uint32_t)t0 - 100, .alt_ft = 4000};
+    memcpy(v1.type, "B738", 4);
+    memcpy(v1.name, "RYR1", 4);
+    memcpy(v1.reg, "EI-DCL", 6);
+    v1.reg[7] = 27; // its distance, 2.7 NM, in the last byte
+    v1.crc = rec_crc(&v1, CRC_SEED_V1);
+    memcpy(flash + 100 * 32, &v1, sizeof(v1));
+    reboot();
+    n = passes_since(0, p, 3000);
+    CHECK(n == 2 && strcmp(p[1].name, "RYR1") == 0 && strcmp(p[1].reg, "EI-DCL") == 0 && fabsf(p[1].dist_nm - 2.7f) < 0.01f,
+          "an old record read: %s %s %.1f NM", n > 1 ? p[1].name : "", n > 1 ? p[1].reg : "", n > 1 ? p[1].dist_nm : 0);
+    CHECK(s_seq >= 5, "numbering carries on past the old ones (%u)", (unsigned)s_seq);
+
+    // The oldest, after one logged late with an earlier time
+    pass_t early = r8;
+    early.at = t0 - 5000;
+    log_write(&early);
+    passes_log_info(&log);
+    CHECK(log.oldest == t0 - 5000, "the log's oldest follows a pass logged late");
+
+    // The ring comes round under a download: what it finds first is written
+    // over while each() runs, and the newer records mustn't stand in
+    memset(flash, 0xff, SMALL);
+    reboot();
+    for (int k = 0; k < SMALL / 32 - PER_SECTOR; k++) {
+        q.at = t0 + k;
+        snprintf(q.name, sizeof(q.name), "O%d", k % 10000);
+        log_write(&q);
+    }
+    sorted_ok = 1;
+    each_n = 0;
+    each_last = 0;
+    overwrite_in_each = true;
+    passes_each(each, NULL);
+    overwrite_in_each = false;
+    CHECK(sorted_ok && newer_seen == 0, "no newer record in its place: %d listed, %d newer", each_n, newer_seen);
 
     printf("In the end of the OpenAIP cache\n");
     const size_t aip = AIPCACHE_LOG_AT + SMALL;
