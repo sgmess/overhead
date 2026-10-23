@@ -12,8 +12,9 @@
 // here asks. Every answer costs credits, so only the aircraft someone picked
 // is looked up: a flight for 2 (4 when the aircraft's flights don't
 // have it and the callsign's are asked too), an aircraft for 1, up to
-// settings()->adb_daily a day. Answers are kept for the session; a flight's
-// times are asked for again after a while if it is still being looked at.
+// settings()->adb_daily a day. The last FLIGHTS_N flights and AIRCRAFT_N
+// aircraft are kept (16 and 32) until a restart; a flight's times are asked
+// for again after a while if it is still being looked at.
 
 void adb_start(void);
 

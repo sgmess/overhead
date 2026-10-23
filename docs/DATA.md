@@ -66,7 +66,9 @@ up, never the lists or the big view stepping to the nearest:
   times are asked for again after 15 minutes if it is still being looked
   at, or 3 hours once it has landed. "Departed" comes from the flight's
   status, not its runway time, which can be an estimate.
-- The aircraft, 1 credit, kept until a restart.
+- The aircraft, 1 credit, kept for the last 32 aircraft looked up until a
+  restart; picking one that has dropped out of those asks (and spends)
+  again. Flights likewise keep the last 16.
 
 The configuration page sets the most to spend a day (100 credits unless
 changed) and shows what has been spent. The count is stored in flash (NVS,

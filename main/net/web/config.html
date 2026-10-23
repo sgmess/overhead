@@ -242,7 +242,7 @@ h3{margin:18px 0 0;font-size:11px;font-weight:600;letter-spacing:1.2px;text-tran
     <p class="hint">Overhead keeps a list of every aircraft type it has seen. Types count as new once that list is
       three days old, so the first days don't alert for everything.</p>
     <label class="check hidden" id="alert-sound-row"><input type="checkbox" id="alert_sound"> Chime</label>
-    <p class="hint">Each aircraft chimes once. The screen comes up to full brightness at night while an alert lasts.</p>
+    <p class="hint">Each aircraft chimes once. A dimmed screen comes back to the daytime brightness while an alert lasts.</p>
   </section>
 
   <section class="card">
@@ -294,8 +294,8 @@ h3{margin:18px 0 0;font-size:11px;font-weight:600;letter-spacing:1.2px;text-tran
       (direct API access, which can run on credits earned by feeding ADS-B), the aircraft you pick on the screen
       shows when its flight left and gets in and how late it is, the flight number it's sold under, today's route,
       and the aircraft's full type, age and seats. Only the aircraft you tap is looked up: 2 credits for its flight,
-      sometimes 4 (its times again after 15 minutes if you are still looking), and 1 for the aircraft, each kept until a
-      restart.</p>
+      sometimes 4 (its times again after 15 minutes if you are still looking), and 1 for the aircraft. The last 16
+      flights and 32 aircraft looked up are kept until a restart; one that has dropped out of those costs again.</p>
     <label for="adb_key">AeroDataBox API key</label>
     <div class="pw">
       <input id="adb_key" type="password" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false">
