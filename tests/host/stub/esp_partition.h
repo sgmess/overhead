@@ -13,6 +13,8 @@ typedef struct {
     uint8_t *mem;
 } esp_partition_t;
 extern esp_partition_t g_parts[2]; // set by a test; size 0: absent
+extern int g_flash_fail_writes; // writes to fail, each after writing half
+extern int g_flash_fail_erases; // erases to fail, erasing nothing
 const esp_partition_t *esp_partition_find_first(esp_partition_type_t type, int subtype, const char *label);
 esp_err_t esp_partition_read(const esp_partition_t *p, size_t at, void *out, size_t n);
 esp_err_t esp_partition_write(const esp_partition_t *p, size_t at, const void *in, size_t n);

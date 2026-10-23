@@ -6,8 +6,10 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "passes.h"
 #include "radar_ui.h"
 #include "settings.h"
+#include "stats.h"
 
 static const char *TAG = "battery";
 
@@ -168,6 +170,9 @@ static void battery_task(void *arg)
         last_state = st.state;
 
         if (power_off) {
+            // Cutting the power skips the shutdown handlers a restart runs
+            stats_save_now();
+            passes_finish_all();
             board_power_off();
             critical_ms = 0; // still running: start over
             countdown_ms = -1;

@@ -257,6 +257,52 @@ int main(void)
     overwrite_in_each = false;
     CHECK(sorted_ok && newer_seen == 0, "no newer record in its place: %d listed, %d newer", each_n, newer_seen);
 
+    printf("Flash errors (the fourth review)\n");
+    // A write that fails part way: that slot is left, the pass written later
+    memset(flash, 0xff, SMALL);
+    reboot();
+    for (int k = 0; k < 2; k++) {
+        q.at = t0 + k;
+        snprintf(q.name, sizeof(q.name), "W%d", k % 10);
+        if (k == 1) g_flash_fail_writes = 1;
+        log_write(&q);
+    }
+    n = passes_since(0, p, 3000);
+    CHECK(n == 1 && s_retry_n == 1, "the second failed: %d readable, %d to try again", n, s_retry_n);
+    q.at = t0 + 2;
+    strcpy(q.name, "W2");
+    log_write(&q);
+    n = passes_since(0, p, 3000);
+    bool all3 = n == 3;
+    for (int k = 0; k < n; k++) all3 &= p[k].name[0] == 'W';
+    CHECK(all3 && s_retry_n == 0, "it goes in with the next, past the damaged slot: %d of 3, none waiting", n);
+    passes_log_info(&log);
+    CHECK(log.count == 3, "the count says 3: %d", log.count);
+    // An erase that fails: nothing counted twice, the pass written after
+    memset(flash, 0xff, SMALL);
+    reboot();
+    for (int k = 0; k < SMALL / 32; k++) {
+        q.at = t0 + k;
+        snprintf(q.name, sizeof(q.name), "E%d", k % 10000);
+        log_write(&q);
+    }
+    g_flash_fail_erases = 1;
+    q.at = t0 + 99999;
+    strcpy(q.name, "E-new");
+    log_write(&q);
+    passes_log_info(&log);
+    n = passes_since(0, p, 3000);
+    CHECK(log.count == SMALL / 32 && s_retry_n == 1, "a failed erase: %d counted, still %d, one waiting",
+          log.count, SMALL / 32);
+    log_write(&q); // the next pass: the erase goes through, and both are written
+    passes_log_info(&log);
+    static found_t all[SMALL / 32];
+    rec_t *buf = malloc(SECTOR);
+    const int readable = scan(0, all, buf);
+    free(buf);
+    CHECK(log.count == readable && s_retry_n == 0, "then the count matches what reads back: %d and %d",
+          log.count, readable);
+
     printf("In the end of the OpenAIP cache\n");
     const size_t aip = AIPCACHE_LOG_AT + SMALL;
     uint8_t *aipmem = malloc(aip);

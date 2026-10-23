@@ -447,8 +447,9 @@ static void save_unlocked(void)
 #endif
 }
 
-// As the device restarts: an update, or a settings change that needs one
-static void save_at_restart(void)
+// As the device restarts (an update, or a settings change that needs one)
+// or powers itself off
+void stats_save_now(void)
 {
     // A save in progress takes well under a second; then save what it missed
     if (!s_save_lock || xSemaphoreTake(s_save_lock, pdMS_TO_TICKS(2000)) != pdTRUE) return;
@@ -464,7 +465,7 @@ void stats_update(const aircraft_t *list, int n, double lat, double lon, int ran
         s_table = heap_caps_calloc(TABLE_N, sizeof(seen_t), MALLOC_CAP_SPIRAM);
         s_packed = heap_caps_malloc(TABLE_FULL * sizeof(uint32_t), MALLOC_CAP_SPIRAM);
         s_types = heap_caps_calloc(1, sizeof(types_t), MALLOC_CAP_SPIRAM);
-        esp_register_shutdown_handler(save_at_restart);
+        esp_register_shutdown_handler(stats_save_now);
     }
     if (!s_lock || !s_table || !s_types) return;
 

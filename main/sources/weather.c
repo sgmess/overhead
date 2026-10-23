@@ -270,22 +270,29 @@ void weather_start(void)
     s_resp = heap_caps_malloc(sizeof(resp_t), MALLOC_CAP_SPIRAM);
     s_arr = heap_caps_calloc(SAMPLES, sizeof(sample_t), MALLOC_CAP_SPIRAM);
     s_dep = heap_caps_calloc(SAMPLES, sizeof(sample_t), MALLOC_CAP_SPIRAM);
-    settings_t *set = heap_caps_malloc(sizeof(settings_t), MALLOC_CAP_SPIRAM);
-    if (!s_resp || !s_arr || !s_dep || !set) {
-        ESP_LOGE(TAG, "not started: no memory");
-        return; // s_lock unset: weather_get() says nothing, weather_traffic() does nothing
-    }
+    settings_t *set = heap_caps_malloc(sizeof(settings_t), MALLOC_CAP_SPIRAM); // the task's copy
     SemaphoreHandle_t lock = xSemaphoreCreateMutex();
-    if (lock) s_lock = lock; // before the task: it takes it at once
-    // TLS and the request are on the heap; this is call depth, as for route.c
-    if (lock &&
-        (xTaskCreateWithCaps(weather_task, "weather", 8192, set, 2, &s_task, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) ==
-             pdPASS ||
-         xTaskCreate(weather_task, "weather", 8192, set, 2, &s_task) == pdPASS)) {
-        return;
+    if (s_resp && s_arr && s_dep && set && lock) {
+        s_lock = lock; // before the task: it takes it at once
+        // TLS and the request are on the heap; this is call depth, as for route.c
+        if (xTaskCreateWithCaps(weather_task, "weather", 8192, set, 2, &s_task, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) ==
+                pdPASS ||
+            xTaskCreate(weather_task, "weather", 8192, set, 2, &s_task) == pdPASS) {
+            return;
+        }
     }
+    // Nothing started: s_lock unset, weather_get() says nothing and
+    // weather_traffic() does nothing
     ESP_LOGE(TAG, "not started: no memory");
+    s_lock = NULL;
     s_task = NULL;
+    if (lock) vSemaphoreDelete(lock);
+    heap_caps_free(set);
+    heap_caps_free(s_resp);
+    heap_caps_free(s_arr);
+    heap_caps_free(s_dep);
+    s_resp = NULL;
+    s_arr = s_dep = NULL;
 }
 
 void weather_refresh(void)

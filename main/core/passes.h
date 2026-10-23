@@ -49,6 +49,10 @@ int passes_active(pass_t *out, int max);
 // of a second for a full log. Safe from any task.
 int passes_since(time_t since, pass_t *out, int max);
 
+// Log those overhead now, as the device restarts (a shutdown handler) or
+// before it powers itself off. Safe from any task.
+void passes_finish_all(void);
+
 // Each logged pass, oldest first by time, to each(p, ctx), for a download.
 // The lock is held only while a sector or a record is read, so a slow
 // each() holds nothing up.

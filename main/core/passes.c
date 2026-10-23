@@ -74,6 +74,9 @@ static int s_head;        // the next to write
 static uint32_t s_seq;    // the newest's
 static int s_count;       // valid records
 static time_t s_oldest;
+#define RETRY_N 8
+static pass_t s_retry[RETRY_N]; // passes a write failed for, to try again
+static int s_retry_n;
 
 // ---------------------------------------------------------------- records
 
@@ -209,30 +212,49 @@ static time_t oldest_at(void)
 }
 
 // p into the log; with the lock held
-static void log_write(const pass_t *p)
+// p into the next slot; false if it didn't go. With the lock held. A slot a
+// write failed on may hold part of the record, and flash can't be written
+// over without an erase, so it is left behind; a failed erase leaves the
+// sector, its count and the head as they were, for the next try.
+static bool write_one(const pass_t *p)
 {
-    if (!s_recs) return;
     const int sector = s_head / PER_SECTOR;
     if (s_head % PER_SECTOR == 0) {
-        // Round to an old sector: what it held goes, and the oldest is then
-        // the first of the sector after it
+        // Round to an old sector: what it held goes, once it has gone
+        int dropped = 0;
         if (read_sector(sector, s_sector) == ESP_OK) {
-            for (int k = 0; k < PER_SECTOR; k++) s_count -= rec_ok(&s_sector[k]) != 0;
+            for (int k = 0; k < PER_SECTOR; k++) dropped += rec_ok(&s_sector[k]) != 0;
         }
-        if (esp_partition_erase_range(s_part, s_base + (size_t)sector * SECTOR, SECTOR) != ESP_OK) return;
+        if (esp_partition_erase_range(s_part, s_base + (size_t)sector * SECTOR, SECTOR) != ESP_OK) return false;
+        s_count -= dropped;
         s_oldest = oldest_at();
     }
     rec_t r;
     if (s_seq < SEQ_MAX) s_seq++; // 16 million passes: decades
     to_rec(p, s_seq, &r);
-    if (esp_partition_write(s_part, s_base + (size_t)s_head * sizeof(rec_t), &r, sizeof(r)) != ESP_OK) {
-        ESP_LOGW(TAG, "not logged");
-        return;
-    }
+    const esp_err_t err = esp_partition_write(s_part, s_base + (size_t)s_head * sizeof(rec_t), &r, sizeof(r));
+    s_head = (s_head + 1) % s_recs; // past it either way
+    if (err != ESP_OK) return false;
     // Logged as it ends, timed at its closest: it can be the oldest
     if (!s_oldest || (time_t)r.at < s_oldest) s_oldest = r.at;
     s_count++;
-    s_head = (s_head + 1) % s_recs;
+    return true;
+}
+
+// p into the log, after any that failed before; with the lock held. Those
+// that fail are kept to try again with the next, RETRY_N at most.
+static void log_write(const pass_t *p)
+{
+    if (!s_recs) return;
+    int kept = 0;
+    for (int k = 0; k < s_retry_n; k++) {
+        if (!write_one(&s_retry[k])) s_retry[kept++] = s_retry[k];
+    }
+    s_retry_n = kept;
+    if (write_one(p)) return;
+    ESP_LOGW(TAG, "not logged yet: %s", p->name);
+    if (s_retry_n == RETRY_N) memmove(&s_retry[0], &s_retry[1], sizeof(s_retry[0]) * --s_retry_n); // the oldest goes
+    s_retry[s_retry_n++] = *p;
 }
 #else
 static void log_open(void) {}
@@ -270,8 +292,8 @@ static void start_day(void)
     s_n = s_next = 0;
 }
 
-// As the device restarts: those overhead now are passes too
-static void finish_at_restart(void)
+// As the device restarts or powers off: those overhead now are passes too
+void passes_finish_all(void)
 {
     if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(1000)) != pdTRUE) return;
     for (int k = 0; k < ACTIVE_N; k++) {
@@ -299,7 +321,7 @@ void passes_update(const aircraft_t *list, int n, double lat, double lon)
         }
         log_open();
         s_lock = lock; // last: the others take it as everything ready
-        esp_register_shutdown_handler(finish_at_restart);
+        esp_register_shutdown_handler(passes_finish_all);
     }
     const time_t now = time(NULL);
     struct tm tm;

@@ -64,6 +64,10 @@ void stats_update(const aircraft_t *list, int n, double lat, double lon, int ran
 // A copy of the numbers. Safe from any task.
 void stats_get(stats_t *out);
 
+// Save what changed since the last save: as the device restarts (a
+// shutdown handler), or before it powers itself off. Safe from any task.
+void stats_save_now(void);
+
 // Whether type was first seen today, after the days the type book takes to
 // learn what is usual here. Safe from any task.
 bool stats_new_type(const char *type);
