@@ -94,9 +94,11 @@ jobs:
 
   # The debug endpoints and benchmarks are only compiled with
   # OVERHEAD_DEBUG, which no release build sets: build them here too, so a
-  # change elsewhere can't break them unnoticed
+  # change elsewhere can't break them unnoticed. Pushes to main only: a
+  # version tag is a commit main has already built them for.
   debug:
     name: Build ${{ matrix.board }} debug
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

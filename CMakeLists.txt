@@ -33,7 +33,8 @@ set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/boards/${OVERHEAD_BOARD}")
 
 # -D OVERHEAD_DEBUG=1, in a build directory of its own: the debug endpoints
 # and benchmarks (sdkconfig.defaults.debug), with their own sdkconfig, so the
-# normal build's is left alone. CI builds it too, so that code can't rot.
+# normal build's is left alone. CI builds it on pushes to main, so that code
+# can't rot.
 set(OVERHEAD_DEBUG OFF CACHE BOOL "Debug endpoints and benchmarks")
 set(SDKCONFIG_DEFAULTS "sdkconfig.defaults;sdkconfig.defaults.${OVERHEAD_BOARD}")
 set(SDKCONFIG "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.${OVERHEAD_BOARD}")

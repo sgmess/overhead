@@ -157,8 +157,11 @@ tests/host/run.sh
 
 ## Releases, web flasher and updates
 
-`.github/workflows/firmware.yml` builds the firmware on every push to main.
-A version tag publishes it:
+`.github/workflows/firmware.yml` builds the firmware for both boards on
+every push to main, with the debug builds (`OVERHEAD_DEBUG`, so the debug
+endpoints can't break unnoticed) and the host tests (`tests/host/`). A
+version tag builds it again with the host tests, then publishes it, the
+release first and the web flasher only once that is out:
 
 ```bash
 git tag v0.2.0
@@ -337,7 +340,7 @@ and about 25–29% with it on (a turn every 8 s, drawn in four segments);
 with the settings screen open, next to none.
 
 `/api/debug/bench?what=` (debug builds: `idf.py -B build_tab5_debug -D
-OVERHEAD_BOARD=tab5 -D OVERHEAD_DEBUG=1 build`, which CI builds too) times the display for five seconds: `settings` scrolls the
+OVERHEAD_BOARD=tab5 -D OVERHEAD_DEBUG=1 build`, which CI builds on pushes to main) times the display for five seconds: `settings` scrolls the
 settings screen, `scope` redraws the whole scope every frame, `radar` leaves
 it as it is, `big` the big view, and `covered` holds the settings screen
 still over it. It gives frames a second, the average and longest frame, the
@@ -398,10 +401,15 @@ loads, without them.
 
 The overhead list (`main/core/passes.c`) uses the overhead alert's distance
 and ceiling, whether the alert is on or not. Each pass is written to flash
-as it ends, a 32-byte record (CRC-16 checked) in a ring of 4 KB sectors, the
-oldest sector erased as the ring comes round to it, and those overhead as
-the device restarts are written then; at boot the newest record says where
-it got to, and today's are read back. It has a `passes` partition of its
+as it ends, a 32-byte record (CRC-16 checked; registrations up to 8
+characters) in a ring of 4 KB sectors, the oldest sector erased as the ring
+comes round to it. Those overhead as the device restarts, or before the
+low-battery power-off, are written then (as the statistics are saved). At
+boot the newest record says where it got to. Reading it back looks at every
+slot and sorts by time, because a pass is logged as it ends but timed at
+its closest, and a power cut can leave a gap; a write that fails leaves its
+slot behind and the pass waits, to be written with the next or within a
+minute. It has a `passes` partition of its
 own (512 KB, 16,384 passes), added in v1.0.11 after `stats` without moving
 anything, so only on devices flashed over USB or from the web flasher since.
 A device updated over WiFi keeps it in the end of `aipcache` instead
