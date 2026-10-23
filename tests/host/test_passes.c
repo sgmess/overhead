@@ -23,6 +23,8 @@ static void reboot(void)
     s_oldest = 0;
     s_day = -1;
     s_n = s_next = 0;
+    s_retry_n = 0; // in RAM: a restart forgets them
+    s_retry_us = 0;
     passes_update(NULL, 0, 51.5, -0.1); // opens the log and reloads today's
 }
 
@@ -278,6 +280,29 @@ int main(void)
     CHECK(all3 && s_retry_n == 0, "it goes in with the next, past the damaged slot: %d of 3, none waiting", n);
     passes_log_info(&log);
     CHECK(log.count == 3, "the count says 3: %d", log.count);
+    // A write that fails, then no more traffic: written within a minute, and
+    // as the device shuts down if that comes first (the fifth review)
+    memset(flash, 0xff, SMALL);
+    reboot();
+    g_flash_fail_writes = 1;
+    pass_over("400021", "IDLE1");
+    CHECK(s_retry_n == 1, "a write fails, and the sky goes quiet: 1 waiting (%d)", s_retry_n);
+    for (int k = 0; k < 6; k++) { // a minute of quiet polls
+        g_now += 15;
+        g_now_us += 15 * 1000000LL;
+        passes_update(NULL, 0, 51.5, -0.1);
+    }
+    reboot();
+    n = passes_since(0, p, 3000);
+    CHECK(n == 1 && strcmp(p[0].name, "IDLE1") == 0, "written within a minute, with nothing new: %d after a restart", n);
+    g_flash_fail_writes = 1;
+    pass_over("400022", "IDLE2");
+    CHECK(s_retry_n == 1, "another fails");
+    g_shutdown(); // the restart comes first
+    reboot();
+    n = passes_since(0, p, 3000);
+    CHECK(n == 2 && strcmp(p[0].name, "IDLE2") == 0, "written as the device shuts down: %d after the restart", n);
+
     // An erase that fails: nothing counted twice, the pass written after
     memset(flash, 0xff, SMALL);
     reboot();

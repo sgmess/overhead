@@ -75,8 +75,10 @@ static uint32_t s_seq;    // the newest's
 static int s_count;       // valid records
 static time_t s_oldest;
 #define RETRY_N 8
+#define RETRY_US (60 * 1000000LL) // waiting passes tried again this often with no new one
 static pass_t s_retry[RETRY_N]; // passes a write failed for, to try again
 static int s_retry_n;
+static int64_t s_retry_us;      // when they were last tried
 
 // ---------------------------------------------------------------- records
 
@@ -241,16 +243,25 @@ static bool write_one(const pass_t *p)
     return true;
 }
 
-// p into the log, after any that failed before; with the lock held. Those
-// that fail are kept to try again with the next, RETRY_N at most.
-static void log_write(const pass_t *p)
+// The passes waiting since a write failed, each tried once more; with the
+// lock held. Each failure leaves a slot behind, so not too often.
+static void retry_writes(void)
 {
-    if (!s_recs) return;
     int kept = 0;
     for (int k = 0; k < s_retry_n; k++) {
         if (!write_one(&s_retry[k])) s_retry[kept++] = s_retry[k];
     }
     s_retry_n = kept;
+    s_retry_us = esp_timer_get_time();
+}
+
+// p into the log, after any that failed before; with the lock held. Those
+// that fail are kept to try again with the next pass, or within RETRY_US
+// without one (passes_update()), or as the device restarts; RETRY_N at most.
+static void log_write(const pass_t *p)
+{
+    if (!s_recs) return;
+    retry_writes();
     if (write_one(p)) return;
     ESP_LOGW(TAG, "not logged yet: %s", p->name);
     if (s_retry_n == RETRY_N) memmove(&s_retry[0], &s_retry[1], sizeof(s_retry[0]) * --s_retry_n); // the oldest goes
@@ -259,6 +270,7 @@ static void log_write(const pass_t *p)
 #else
 static void log_open(void) {}
 static void log_write(const pass_t *p) { (void)p; }
+static void retry_writes(void) {}
 static esp_err_t read_sector(int sector, rec_t *out)
 {
     (void)sector;
@@ -299,6 +311,7 @@ void passes_finish_all(void)
     for (int k = 0; k < ACTIVE_N; k++) {
         if (s_active[k].hex[0]) finish(&s_active[k]);
     }
+    if (s_retry_n) retry_writes(); // one last try for any still waiting
     xSemaphoreGive(s_lock);
 }
 
@@ -367,6 +380,8 @@ void passes_update(const aircraft_t *list, int n, double lat, double lon)
     for (int k = 0; k < ACTIVE_N; k++) {
         if (s_active[k].hex[0] && now_us - s_active[k].seen_us > GONE_US) finish(&s_active[k]);
     }
+    // Passes a write failed for, when no new one has tried them for a while
+    if (s_retry_n && now_us - s_retry_us > RETRY_US) retry_writes();
     xSemaphoreGive(s_lock);
 }
 
